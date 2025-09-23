@@ -3,6 +3,7 @@ use std::{path::Path, sync::Arc, ffi::CString, ptr};
 use std::os::raw::{c_char, c_void};
 
 /// Represents a loaded LLM model
+#[derive(Debug)]
 pub struct Model {
     pub(crate) model_ptr: *mut sys::llama_model,
 }
@@ -330,7 +331,7 @@ impl Model {
     
     /// Get model training context size
     pub fn n_ctx_train(&self) -> i32 {
-        unsafe { sys::llama_model_n_ctx_train(self.model_ptr) }
+        unsafe { sys::llama_model_n_ctx_train(self.model_ptr) as i32 }
     }
 
     /// Get model embedding dimension

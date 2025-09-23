@@ -12,7 +12,7 @@ pub struct MemoryManager {
     // - Pointers to allocated memory regions
     // - Memory usage tracking
     // - GPU/CPU memory management
-    _placeholder: usize,
+    pub _placeholder: usize,
 }
 
 impl MemoryManager {

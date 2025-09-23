@@ -2,27 +2,111 @@
 name = "mullama"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "A safe Rust wrapper for llama.cpp with built-in compilation"
+authors = ["Mullama Contributors"]
+description = "Comprehensive Rust bindings for llama.cpp with memory-safe API and advanced features"
 license = "MIT"
 repository = "https://github.com/yourusername/mullama"
+documentation = "https://docs.rs/mullama"
+homepage = "https://github.com/yourusername/mullama"
 readme = "README.md"
-keywords = ["llm", "llama", "ai", "nlp", "bindings"]
-categories = ["api-bindings", "science"]
+keywords = ["llm", "llama", "ai", "inference", "bindings"]
+categories = ["api-bindings", "science", "text-processing"]
 links = "llama"
 build = "build.rs"
+
+[features]
+default = []
+multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio-util"]
+format-conversion = ["multimodal", "ffmpeg-next"]
+streaming-audio = ["multimodal", "cpal", "ringbuf"]
+cuda = []
+rocm = []
+async = ["tokio", "futures"]
+streaming = ["async", "async-stream"]
+web = ["async", "axum", "tower", "tower-http"]
+websockets = ["async", "axum", "tokio-tungstenite"]
+parallel = ["rayon"]
+tokio-runtime = ["tokio", "tokio-util"]
+windows-optimization = ["windows"]
+macos-optimization = ["core-foundation", "coreaudio-rs"]
+full = ["async", "streaming", "web", "websockets", "multimodal", "parallel", "tokio-runtime", "format-conversion", "streaming-audio"]
 
 [dependencies]
 thiserror = "1.0"
 libloading = "0.8"
 num_enum = "0.7"
 num_cpus = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3.0"
+
+# Async support
+tokio = { version = "1.0", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["codec", "io"], optional = true }
+futures = { version = "0.3", optional = true }
+async-stream = { version = "0.3", optional = true }
+
+# Web framework integration
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
+
+# WebSocket support
+tokio-tungstenite = { version = "0.20", optional = true }
+
+# Parallel processing
+rayon = { version = "1.7", optional = true }
+
+# Audio processing (for multimodal)
+rodio = { version = "0.17", optional = true }
+hound = { version = "3.5", optional = true }
+symphonia = { version = "0.5", features = ["all"], optional = true }
+rubato = { version = "0.14", optional = true }
+dasp = { version = "0.11", features = ["all"], optional = true }
+cpal = { version = "0.15", optional = true }
+
+# Image processing (for multimodal)
+image = { version = "0.24", features = ["jpeg", "png", "webp", "tiff", "bmp"], optional = true }
+imageproc = { version = "0.23", optional = true }
+
+# Format conversion and streaming
+ffmpeg-next = { version = "6.0", optional = true }
+gstreamer = { version = "0.21", optional = true }
+
+# Real-time audio streaming
+ringbuf = { version = "0.3", optional = true }
+
+# Platform-specific dependencies
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.48", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_DirectSound",
+    "Win32_System_Com",
+    "Win32_Foundation",
+    "Win32_System_Threading"
+], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = { version = "0.9", optional = true }
+coreaudio-rs = { version = "0.11", optional = true }
 
 [build-dependencies]
 cc = "1.0"
 cmake = "0.1"
 pkg-config = "0.3"
 bindgen = "0.69"
+
+# Platform-specific build dependencies
+[target.'cfg(windows)'.build-dependencies]
+winapi = { version = "0.3", features = ["winuser", "consoleapi", "processenv"] }
+
+[target.'cfg(unix)'.build-dependencies]
+pkg-config = "0.3"
 
 [dev-dependencies]
 anyhow = "1.0"
