@@ -105,7 +105,7 @@ pub struct CustomQuantizationScheme {
 }
 
 /// Quantization methods
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QuantizationMethod {
     /// Linear quantization
     Linear,
@@ -203,9 +203,10 @@ impl QuantizationEngine {
         }
 
         // Perform quantization based on type
-        match &self.params.quantization_type {
+        let qtype = self.params.quantization_type.clone();
+        match qtype {
             QuantizationType::Custom(scheme) => {
-                self.quantize_custom(scheme)
+                self.quantize_custom(&scheme)
             }
             _ => {
                 self.quantize_standard()
@@ -215,34 +216,90 @@ impl QuantizationEngine {
 
     /// Quantize with standard quantization types
     fn quantize_standard(&mut self) -> Result<Model, MullamaError> {
-        let temp_path = self.params.output_path.clone()
-            .unwrap_or_else(|| "temp_quantized.gguf".to_string());
+        // We need the source model path - for now we'll return an error
+        // In a real implementation, the engine would store the source path
+        Err(MullamaError::NotImplemented(
+            "Standard quantization requires source model path. Use quantize_file() instead.".to_string()
+        ))
+    }
 
-        // Convert quantization type to llama.cpp format
-        let llama_params = self.create_llama_quantize_params()?;
+    /// Quantize a model file to a new file
+    ///
+    /// # Arguments
+    /// * `input_path` - Path to the input model file
+    /// * `output_path` - Path for the quantized output model
+    ///
+    /// # Returns
+    /// The quantized model loaded from output_path
+    pub fn quantize_file<P: AsRef<Path>>(
+        input_path: P,
+        output_path: P,
+        params: &QuantizationParams,
+    ) -> Result<Model, MullamaError> {
+        let input_str = input_path.as_ref().to_string_lossy().to_string();
+        let output_str = output_path.as_ref().to_string_lossy().to_string();
 
-        // Perform quantization using llama.cpp
-        // Placeholder for actual quantization
-        let result = 0; // Success
+        let c_input = std::ffi::CString::new(input_str.clone())
+            .map_err(|_| MullamaError::InvalidInput("Invalid input path".to_string()))?;
+        let c_output = std::ffi::CString::new(output_str.clone())
+            .map_err(|_| MullamaError::InvalidInput("Invalid output path".to_string()))?;
+
+        // Get default params and configure
+        let mut llama_params = unsafe { sys::llama_model_quantize_default_params() };
+
+        // Map our quantization type to llama ftype
+        llama_params.ftype = match &params.quantization_type {
+            QuantizationType::F32 => sys::llama_ftype::LLAMA_FTYPE_ALL_F32,
+            QuantizationType::F16 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_F16,
+            QuantizationType::Q8_0 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q8_0,
+            QuantizationType::Q4_0 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_0,
+            QuantizationType::Q4_1 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_1,
+            QuantizationType::Q5_0 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q5_0,
+            QuantizationType::Q5_1 => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q5_1,
+            QuantizationType::Q2_K => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q2_K,
+            QuantizationType::Q3_K_S => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q3_K_S,
+            QuantizationType::Q3_K_M => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q3_K_M,
+            QuantizationType::Q3_K_L => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q3_K_L,
+            QuantizationType::Q4_K_S => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_K_S,
+            QuantizationType::Q4_K_M => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_K_M,
+            QuantizationType::Q5_K_S => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q5_K_S,
+            QuantizationType::Q5_K_M => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q5_K_M,
+            QuantizationType::Q6_K => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q6_K,
+            QuantizationType::Q8_K => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q8_0, // Q8_K maps to Q8_0
+            QuantizationType::IQ2_XXS => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ2_XXS,
+            QuantizationType::IQ2_XS => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ2_XS,
+            QuantizationType::IQ3_XXS => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ3_XXS,
+            QuantizationType::IQ3_XS => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ3_XS,
+            QuantizationType::IQ4_NL => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ4_NL,
+            QuantizationType::IQ4_XS => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_IQ4_XS,
+            QuantizationType::MXFP4_MOE => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_K_M, // Best approximation
+            QuantizationType::Custom(_) => {
+                return Err(MullamaError::NotImplemented(
+                    "Custom quantization schemes not yet implemented".to_string()
+                ));
+            }
+        };
+
+        llama_params.nthread = params.n_threads;
+
+        // Perform quantization
+        let result = unsafe {
+            sys::llama_model_quantize(
+                c_input.as_ptr(),
+                c_output.as_ptr(),
+                &llama_params,
+            )
+        };
 
         if result != 0 {
-            return Err(MullamaError::QuantizationError(
-                "Quantization failed".to_string()
-            ));
+            return Err(MullamaError::QuantizationError(format!(
+                "Quantization failed with error code: {}",
+                result
+            )));
         }
 
-        // Load the quantized model
-        let quantized_model = Model::load(&temp_path)?;
-
-        // Calculate quality metrics
-        self.calculate_metrics(&quantized_model)?;
-
-        // Clean up temporary file if not specified as output
-        if self.params.output_path.is_none() {
-            std::fs::remove_file(&temp_path).ok();
-        }
-
-        Ok(quantized_model)
+        // Load and return the quantized model
+        Model::load(&output_str)
     }
 
     /// Quantize with custom quantization scheme
@@ -290,9 +347,9 @@ impl QuantizationEngine {
 
     /// Calculate importance matrix for quality-aware quantization
     fn calculate_importance_matrix(&mut self) -> Result<(), MullamaError> {
-        if let Some(calibration_data) = &self.params.calibration_data {
+        if let Some(calibration_data) = self.params.calibration_data.clone() {
             // Use calibration data to calculate importance
-            self.calculate_importance_from_data(calibration_data)?;
+            self.calculate_importance_from_data(&calibration_data)?;
         } else {
             // Use default importance calculation
             self.calculate_default_importance()?;
@@ -381,12 +438,10 @@ impl QuantizationEngine {
 
     /// Create llama.cpp quantization parameters
     fn create_llama_quantize_params(&self) -> Result<sys::llama_model_quantize_params, MullamaError> {
-        // Simplified quantization parameters
-        Ok(sys::llama_model_quantize_params {
-            output_tensor_type: sys::ggml_type::GGML_TYPE_F16,
-            token_embedding_type: sys::ggml_type::GGML_TYPE_F16,
-            kv_overrides: std::ptr::null(),
-        })
+        // Get default parameters and modify them
+        let mut params = unsafe { sys::llama_model_quantize_default_params() };
+        params.nthread = self.params.n_threads;
+        Ok(params)
     }
 
     /// Get the last calculated quality metrics

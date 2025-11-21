@@ -212,6 +212,88 @@ impl Sampler {
         }
     }
 
+    /// Create a softmax sampler (normalizes probabilities)
+    pub fn softmax() -> Self {
+        let sampler_ptr = unsafe { sys::llama_sampler_init_softmax() };
+        Self {
+            sampler_ptr,
+            _model: None,
+        }
+    }
+
+    /// Create a top-n sigma sampler
+    pub fn top_n_sigma(n: f32) -> Self {
+        let sampler_ptr = unsafe { sys::llama_sampler_init_top_n_sigma(n) };
+        Self {
+            sampler_ptr,
+            _model: None,
+        }
+    }
+
+    /// Create an XTC (Exclude Top Choices) sampler
+    ///
+    /// Randomly excludes top tokens to increase diversity.
+    pub fn xtc(p: f32, t: f32, min_keep: usize, seed: u32) -> Self {
+        let sampler_ptr = unsafe { sys::llama_sampler_init_xtc(p, t, min_keep, seed) };
+        Self {
+            sampler_ptr,
+            _model: None,
+        }
+    }
+
+    /// Create a DRY (Don't Repeat Yourself) sampler
+    ///
+    /// Penalizes repetition at the n-gram level.
+    pub fn dry(
+        model: Arc<Model>,
+        n_ctx_train: i32,
+        multiplier: f32,
+        base: f32,
+        allowed_length: i32,
+        penalty_last_n: i32,
+        seq_breakers: &[&str],
+    ) -> Self {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
+
+        // Convert seq_breakers to C strings
+        let c_strings: Vec<CString> = seq_breakers
+            .iter()
+            .filter_map(|s| CString::new(*s).ok())
+            .collect();
+        let c_ptrs: Vec<*const i8> = c_strings
+            .iter()
+            .map(|s| s.as_ptr())
+            .collect();
+
+        let sampler_ptr = unsafe {
+            sys::llama_sampler_init_dry(
+                vocab_ptr,
+                n_ctx_train,
+                multiplier,
+                base,
+                allowed_length,
+                penalty_last_n,
+                c_ptrs.as_ptr(),
+                c_ptrs.len(),
+            )
+        };
+
+        Self {
+            sampler_ptr,
+            _model: Some(model),
+        }
+    }
+
+    /// Create an infill sampler for code completion
+    pub fn infill(model: Arc<Model>) -> Self {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
+        let sampler_ptr = unsafe { sys::llama_sampler_init_infill(vocab_ptr) };
+        Self {
+            sampler_ptr,
+            _model: Some(model),
+        }
+    }
+
     /// Sample a token from the given context at the specified position
     pub fn sample(&mut self, context: &mut Context, idx: i32) -> TokenId {
         let token = unsafe {
@@ -390,6 +472,16 @@ impl SamplerChain {
         unsafe {
             sys::llama_sampler_reset(self.chain_ptr);
         }
+    }
+
+    /// Get the seed used by the chain's distribution sampler
+    pub fn get_seed(&self) -> u32 {
+        unsafe { sys::llama_sampler_get_seed(self.chain_ptr) }
+    }
+
+    /// Get the internal pointer (for advanced use)
+    pub(crate) fn as_ptr(&self) -> *mut sys::llama_sampler {
+        self.chain_ptr
     }
 }
 

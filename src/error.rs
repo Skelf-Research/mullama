@@ -69,9 +69,6 @@ pub enum MullamaError {
     FeatureNotAvailable(String),
 
     #[error("Configuration error: {0}")]
-    ConfigurationError(String),
-
-    #[error("Config error: {0}")]
     ConfigError(String),
 
     #[error("WebSocket error: {0}")]
