@@ -8,12 +8,12 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use std::collections::HashMap;
 
 /// Memory manager for model contexts
 ///
 /// Wraps llama.cpp's memory management API for KV cache and sequence operations.
 /// Can be used standalone or obtained from a Context.
+#[allow(dead_code)]
 pub struct MemoryManager {
     /// The underlying llama memory handle
     memory_ptr: sys::llama_memory_t,
@@ -76,8 +76,12 @@ impl MemoryManager {
     /// Create a memory manager from a context
     ///
     /// This extracts the memory handle from the context for direct memory operations.
-    pub fn from_context(ctx_ptr: *mut sys::llama_context) -> Option<Self> {
-        let memory_ptr = unsafe { sys::llama_get_memory(ctx_ptr) };
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `ctx_ptr` is a valid pointer to a llama_context.
+    pub unsafe fn from_context(ctx_ptr: *mut sys::llama_context) -> Option<Self> {
+        let memory_ptr = sys::llama_get_memory(ctx_ptr);
         if memory_ptr.is_null() {
             None
         } else {

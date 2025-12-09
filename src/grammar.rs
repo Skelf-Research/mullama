@@ -510,7 +510,7 @@ impl Grammar {
         if let Some(rule) = self.rules.get(rule_name) {
             for alternative in &rule.alternatives {
                 for element in &alternative.elements {
-                    if let Some(referenced_rule) = self.get_referenced_rule(element) {
+                    if let Some(referenced_rule) = Self::get_referenced_rule(element) {
                         if self.has_cycle(&referenced_rule, visited, rec_stack)? {
                             return Ok(true);
                         }
@@ -524,14 +524,14 @@ impl Grammar {
     }
 
     /// Get the rule name referenced by an element
-    fn get_referenced_rule(&self, element: &GrammarElement) -> Option<String> {
+    fn get_referenced_rule(element: &GrammarElement) -> Option<String> {
         match element {
             GrammarElement::NonTerminal(name) => Some(name.clone()),
             GrammarElement::Optional(elem)
             | GrammarElement::ZeroOrMore(elem)
             | GrammarElement::OneOrMore(elem)
             | GrammarElement::Repeat(elem, _)
-            | GrammarElement::RepeatRange(elem, _, _) => self.get_referenced_rule(elem),
+            | GrammarElement::RepeatRange(elem, _, _) => Self::get_referenced_rule(elem),
             _ => None,
         }
     }
@@ -566,15 +566,9 @@ impl CompiledGrammar {
     /// * `vocab` - The vocabulary to use (from model)
     ///
     /// # Safety
-    /// The vocab pointer must be valid for the lifetime of the sampler
-    pub fn create_sampler(&self, vocab: *const sys::llama_vocab) -> *mut sys::llama_sampler {
-        unsafe {
-            sys::llama_sampler_init_grammar(
-                vocab,
-                self.gbnf_string.as_ptr(),
-                self.root_rule.as_ptr(),
-            )
-        }
+    /// The caller must ensure that `vocab` is a valid pointer to a llama_vocab.
+    pub unsafe fn create_sampler(&self, vocab: *const sys::llama_vocab) -> *mut sys::llama_sampler {
+        sys::llama_sampler_init_grammar(vocab, self.gbnf_string.as_ptr(), self.root_rule.as_ptr())
     }
 
     /// Create a lazy grammar sampler that only activates on trigger words
@@ -583,7 +577,10 @@ impl CompiledGrammar {
     /// * `model` - The model pointer
     /// * `trigger_words` - Words that trigger grammar enforcement
     /// * `trigger_tokens` - Tokens that trigger grammar enforcement
-    pub fn create_lazy_sampler(
+    ///
+    /// # Safety
+    /// The caller must ensure that `model` is a valid pointer to a llama_model.
+    pub unsafe fn create_lazy_sampler(
         &self,
         model: *const sys::llama_model,
         trigger_words: &[&str],
@@ -599,17 +596,15 @@ impl CompiledGrammar {
         let c_trigger_ptrs: Vec<*const std::os::raw::c_char> =
             c_trigger_words.iter().map(|s| s.as_ptr()).collect();
 
-        let sampler = unsafe {
-            sys::llama_sampler_init_grammar_lazy(
-                model,
-                self.gbnf_string.as_ptr(),
-                self.root_rule.as_ptr(),
-                c_trigger_ptrs.as_ptr(),
-                c_trigger_ptrs.len(),
-                trigger_tokens.as_ptr(),
-                trigger_tokens.len(),
-            )
-        };
+        let sampler = sys::llama_sampler_init_grammar_lazy(
+            model,
+            self.gbnf_string.as_ptr(),
+            self.root_rule.as_ptr(),
+            c_trigger_ptrs.as_ptr(),
+            c_trigger_ptrs.len(),
+            trigger_tokens.as_ptr(),
+            trigger_tokens.len(),
+        );
 
         Ok(sampler)
     }
@@ -622,14 +617,20 @@ pub struct GrammarSampler {
 
 impl GrammarSampler {
     /// Create a new grammar sampler from a compiled grammar
-    pub fn new(grammar: &CompiledGrammar, vocab: *const sys::llama_vocab) -> Self {
+    ///
+    /// # Safety
+    /// The caller must ensure that `vocab` is a valid pointer to a llama_vocab.
+    pub unsafe fn new(grammar: &CompiledGrammar, vocab: *const sys::llama_vocab) -> Self {
         Self {
             sampler_ptr: grammar.create_sampler(vocab),
         }
     }
 
     /// Create from a GBNF string directly
-    pub fn from_gbnf(
+    ///
+    /// # Safety
+    /// The caller must ensure that `vocab` is a valid pointer to a llama_vocab.
+    pub unsafe fn from_gbnf(
         vocab: *const sys::llama_vocab,
         gbnf: &str,
         root: &str,
@@ -640,7 +641,7 @@ impl GrammarSampler {
             .map_err(|_| MullamaError::GrammarError("Invalid root rule".to_string()))?;
 
         let sampler_ptr =
-            unsafe { sys::llama_sampler_init_grammar(vocab, c_grammar.as_ptr(), c_root.as_ptr()) };
+            sys::llama_sampler_init_grammar(vocab, c_grammar.as_ptr(), c_root.as_ptr());
 
         Ok(Self { sampler_ptr })
     }

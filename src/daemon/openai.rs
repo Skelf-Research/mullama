@@ -173,8 +173,12 @@ pub struct ErrorDetail {
     pub code: Option<String>,
 }
 
-fn default_max_tokens() -> u32 { 512 }
-fn default_temperature() -> f32 { 0.7 }
+fn default_max_tokens() -> u32 {
+    512
+}
+fn default_temperature() -> f32 {
+    0.7
+}
 
 // ==================== Handlers ====================
 
@@ -193,20 +197,22 @@ async fn chat_completions(
     };
 
     match daemon.handle_request(request).await {
-        super::protocol::Response::ChatCompletion(resp) => {
-            Ok(Json(ChatCompletionResponse {
-                id: resp.id,
-                object: resp.object,
-                created: resp.created,
-                model: resp.model,
-                choices: resp.choices.into_iter().map(|c| ChatChoice {
+        super::protocol::Response::ChatCompletion(resp) => Ok(Json(ChatCompletionResponse {
+            id: resp.id,
+            object: resp.object,
+            created: resp.created,
+            model: resp.model,
+            choices: resp
+                .choices
+                .into_iter()
+                .map(|c| ChatChoice {
                     index: c.index,
                     message: c.message,
                     finish_reason: c.finish_reason,
-                }).collect(),
-                usage: resp.usage,
-            }))
-        }
+                })
+                .collect(),
+            usage: resp.usage,
+        })),
         super::protocol::Response::Error { code, message, .. } => {
             Err(ApiError::new(format!("{:?}: {}", code, message)))
         }
@@ -228,20 +234,22 @@ async fn completions(
     };
 
     match daemon.handle_request(request).await {
-        super::protocol::Response::Completion(resp) => {
-            Ok(Json(CompletionResponse {
-                id: resp.id,
-                object: resp.object,
-                created: resp.created,
-                model: resp.model,
-                choices: resp.choices.into_iter().map(|c| CompletionChoice {
+        super::protocol::Response::Completion(resp) => Ok(Json(CompletionResponse {
+            id: resp.id,
+            object: resp.object,
+            created: resp.created,
+            model: resp.model,
+            choices: resp
+                .choices
+                .into_iter()
+                .map(|c| CompletionChoice {
                     index: c.index,
                     text: c.text,
                     finish_reason: c.finish_reason,
-                }).collect(),
-                usage: resp.usage,
-            }))
-        }
+                })
+                .collect(),
+            usage: resp.usage,
+        })),
         super::protocol::Response::Error { code, message, .. } => {
             Err(ApiError::new(format!("{:?}: {}", code, message)))
         }

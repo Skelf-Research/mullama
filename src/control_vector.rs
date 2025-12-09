@@ -381,7 +381,7 @@ impl ControlVector {
                 metadata_json
                     .get("recommended_strength")
                     .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.get(0))
+                    .and_then(|arr| arr.first())
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.1) as f32,
                 metadata_json

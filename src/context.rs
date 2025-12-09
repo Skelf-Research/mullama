@@ -144,7 +144,7 @@ impl Context {
         }
 
         // Create a batch for the prompt tokens
-        let batch = Batch::from_tokens(prompt_tokens);
+        let _batch = Batch::from_tokens(prompt_tokens);
 
         // Process the prompt
         self.decode(prompt_tokens)?;
@@ -748,14 +748,17 @@ impl Context {
     /// Set an abort callback for long operations
     ///
     /// The callback will be called periodically and can return true to abort.
-    pub fn set_abort_callback(
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `user_data` points to valid memory that will remain
+    /// valid for the lifetime of this callback, or is null.
+    pub unsafe fn set_abort_callback(
         &mut self,
         callback: Option<unsafe extern "C" fn(data: *mut std::os::raw::c_void) -> sys::c_bool>,
         user_data: *mut std::os::raw::c_void,
     ) {
-        unsafe {
-            sys::llama_set_abort_callback(self.ctx_ptr, callback, user_data);
-        }
+        sys::llama_set_abort_callback(self.ctx_ptr, callback, user_data);
     }
 }
 
