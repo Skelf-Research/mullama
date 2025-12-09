@@ -2,17 +2,28 @@
 name = "mullama"
 version = "0.1.0"
 edition = "2021"
-authors = ["Mullama Contributors"]
+rust-version = "1.75"
+authors = ["Neul Labs <hello@neul-labs.com>"]
 description = "Comprehensive Rust bindings for llama.cpp with memory-safe API and advanced features"
 license = "MIT"
-repository = "https://github.com/yourusername/mullama"
+repository = "https://github.com/neul-labs/mullama"
 documentation = "https://docs.rs/mullama"
-homepage = "https://github.com/yourusername/mullama"
+homepage = "https://github.com/neul-labs/mullama"
 readme = "README.md"
 keywords = ["llm", "llama", "ai", "inference", "bindings"]
 categories = ["api-bindings", "science", "text-processing"]
-links = "llama"
 build = "build.rs"
+include = [
+    "src/**/*",
+    "examples/**/*",
+    "tests/**/*",
+    "build.rs",
+    "wrapper.h",
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+    "CONTRIBUTING.md",
+]
 
 [features]
 default = []
