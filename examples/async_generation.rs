@@ -43,7 +43,7 @@ async fn main() -> Result<(), MullamaError> {
             n_batch: 512,
             n_threads: 8,
             embeddings: false,
-            flash_attn: true,
+            flash_attn_type: mullama::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED,
             ..Default::default()
         };
 

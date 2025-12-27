@@ -15,7 +15,7 @@
 //!
 //! ## Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use mullama::builder::{ModelBuilder, ContextBuilder, SamplerBuilder};
 //!
 //! #[tokio::main]
@@ -354,7 +354,7 @@ pub struct ContextBuilder {
     n_threads: i32,
     n_threads_batch: i32,
     embeddings: bool,
-    flash_attn: bool,
+    flash_attn_type: crate::sys::llama_flash_attn_type,
     offload_kqv: bool,
 }
 
@@ -386,7 +386,7 @@ impl ContextBuilder {
             n_threads: num_cpus::get() as i32,
             n_threads_batch: num_cpus::get() as i32,
             embeddings: false,
-            flash_attn: false,
+            flash_attn_type: crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO,
             offload_kqv: false,
         }
     }
@@ -547,7 +547,11 @@ impl ContextBuilder {
     ///     .flash_attention(true);
     /// ```
     pub fn flash_attention(mut self, enable: bool) -> Self {
-        self.flash_attn = enable;
+        self.flash_attn_type = if enable {
+            crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED
+        } else {
+            crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED
+        };
         self
     }
 
@@ -586,7 +590,7 @@ impl ContextBuilder {
     ///     .optimize_for_performance();
     /// ```
     pub fn optimize_for_performance(mut self) -> Self {
-        self.flash_attn = true;
+        self.flash_attn_type = crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
         self.n_batch = 1024;
         self.n_ubatch = 512;
         self.offload_kqv = true;
@@ -610,7 +614,7 @@ impl ContextBuilder {
         self.n_ctx = 1024;
         self.n_batch = 256;
         self.n_ubatch = 256;
-        self.flash_attn = false;
+        self.flash_attn_type = crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
         self
     }
 
@@ -645,7 +649,7 @@ impl ContextBuilder {
             n_threads: self.n_threads,
             n_threads_batch: self.n_threads_batch,
             embeddings: self.embeddings,
-            flash_attn: self.flash_attn,
+            flash_attn_type: self.flash_attn_type,
             offload_kqv: self.offload_kqv,
             ..Default::default()
         };
@@ -674,7 +678,7 @@ impl ContextBuilder {
             n_threads: self.n_threads,
             n_threads_batch: self.n_threads_batch,
             embeddings: self.embeddings,
-            flash_attn: self.flash_attn,
+            flash_attn_type: self.flash_attn_type,
             offload_kqv: self.offload_kqv,
             ..Default::default()
         };

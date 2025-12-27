@@ -1,4 +1,11 @@
-use crate::{batch::Batch, error::MullamaError, model::Model, sys, token::TokenId};
+use crate::{
+    batch::Batch,
+    error::MullamaError,
+    model::Model,
+    sampling::SamplerParams,
+    sys,
+    token::TokenId,
+};
 use std::sync::Arc;
 
 /// Parameters for creating a context
@@ -13,6 +20,7 @@ pub struct ContextParams {
     pub rope_scaling_type: sys::llama_rope_scaling_type,
     pub pooling_type: sys::llama_pooling_type,
     pub attention_type: sys::llama_attention_type,
+    pub flash_attn_type: sys::llama_flash_attn_type,
     pub rope_freq_base: f32,
     pub rope_freq_scale: f32,
     pub yarn_ext_factor: f32,
@@ -22,7 +30,6 @@ pub struct ContextParams {
     pub yarn_orig_ctx: u32,
     pub defrag_thold: f32,
     pub embeddings: bool,
-    pub flash_attn: bool,
     pub offload_kqv: bool,
     pub no_perf: bool,
     pub op_offload: bool,
@@ -42,6 +49,7 @@ impl Default for ContextParams {
             rope_scaling_type: sys::llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED,
             pooling_type: sys::llama_pooling_type::LLAMA_POOLING_TYPE_UNSPECIFIED,
             attention_type: sys::llama_attention_type::LLAMA_ATTENTION_TYPE_UNSPECIFIED,
+            flash_attn_type: sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO,
             rope_freq_base: 0.0,
             rope_freq_scale: 0.0,
             yarn_ext_factor: -1.0,
@@ -51,7 +59,6 @@ impl Default for ContextParams {
             yarn_orig_ctx: 0,
             defrag_thold: -1.0,
             embeddings: false,
-            flash_attn: false,
             offload_kqv: true,
             no_perf: false,
             op_offload: false,
@@ -83,6 +90,7 @@ impl Context {
         llama_params.rope_scaling_type = params.rope_scaling_type;
         llama_params.pooling_type = params.pooling_type;
         llama_params.attention_type = params.attention_type;
+        llama_params.flash_attn_type = params.flash_attn_type;
         llama_params.rope_freq_base = params.rope_freq_base;
         llama_params.rope_freq_scale = params.rope_freq_scale;
         llama_params.yarn_ext_factor = params.yarn_ext_factor;
@@ -93,7 +101,6 @@ impl Context {
         llama_params.defrag_thold = params.defrag_thold;
         llama_params.embeddings = params.embeddings;
         llama_params.offload_kqv = params.offload_kqv;
-        llama_params.flash_attn = params.flash_attn;
         llama_params.no_perf = params.no_perf;
         llama_params.op_offload = params.op_offload;
         llama_params.swa_full = params.swa_full;
@@ -112,30 +119,74 @@ impl Context {
     }
 
     /// Process a batch of tokens
+    ///
+    /// If the number of tokens exceeds the batch size (n_batch), they will be
+    /// automatically processed in chunks.
     pub fn decode(&mut self, tokens: &[TokenId]) -> Result<(), MullamaError> {
-        // Create a simple batch for these tokens
-        let mut batch = Batch::from_tokens(tokens);
+        if tokens.is_empty() {
+            return Ok(());
+        }
 
-        // Get the llama_batch and call llama_decode
-        if let Some(llama_batch) = batch.take_llama_batch() {
-            let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+        let batch_size = self.n_batch() as usize;
 
-            if result != 0 {
-                return Err(MullamaError::GenerationError(format!(
-                    "Decode failed with code: {}",
-                    result
-                )));
+        // Process tokens in chunks if they exceed batch size
+        for chunk in tokens.chunks(batch_size) {
+            let mut batch = Batch::from_tokens(chunk);
+
+            // Get the llama_batch and call llama_decode
+            if let Some(llama_batch) = batch.take_llama_batch() {
+                let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+
+                if result != 0 {
+                    return Err(MullamaError::GenerationError(format!(
+                        "Decode failed with code: {}",
+                        result
+                    )));
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Simple text generation (placeholder - full implementation would use sampling)
+    /// Generate text from prompt tokens using default sampling parameters
+    ///
+    /// This is the main generation method that:
+    /// 1. Processes the prompt through the model
+    /// 2. Samples tokens using a sampler chain
+    /// 3. Returns the generated text
+    ///
+    /// For custom sampling parameters, use `generate_with_params()`.
     pub fn generate(
         &mut self,
         prompt_tokens: &[TokenId],
         max_tokens: usize,
+    ) -> Result<String, MullamaError> {
+        self.generate_with_params(prompt_tokens, max_tokens, &SamplerParams::default())
+    }
+
+    /// Generate text with custom sampling parameters
+    ///
+    /// # Arguments
+    /// * `prompt_tokens` - Tokenized prompt
+    /// * `max_tokens` - Maximum number of tokens to generate
+    /// * `sampler_params` - Sampling parameters (temperature, top-k, top-p, etc.)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let params = SamplerParams {
+    ///     temperature: 0.7,
+    ///     top_k: 50,
+    ///     top_p: 0.9,
+    ///     ..Default::default()
+    /// };
+    /// let text = context.generate_with_params(&tokens, 100, &params)?;
+    /// ```
+    pub fn generate_with_params(
+        &mut self,
+        prompt_tokens: &[TokenId],
+        max_tokens: usize,
+        sampler_params: &SamplerParams,
     ) -> Result<String, MullamaError> {
         if prompt_tokens.is_empty() {
             return Err(MullamaError::GenerationError(
@@ -143,43 +194,124 @@ impl Context {
             ));
         }
 
-        // Create a batch for the prompt tokens
-        let _batch = Batch::from_tokens(prompt_tokens);
+        // Process the prompt
+        self.decode(prompt_tokens)?;
+
+        // Create sampler chain with the provided parameters
+        let mut sampler = sampler_params.build_chain(self.model.clone())?;
+
+        // Generation loop
+        let mut generated_tokens = Vec::new();
+        for _ in 0..max_tokens {
+            // Sample next token (idx=-1 for last token's logits)
+            let token = sampler.sample(self, -1);
+            sampler.accept(token);
+
+            // Check for end of generation
+            if self.model.token_is_eog(token) {
+                break;
+            }
+
+            generated_tokens.push(token);
+
+            // Decode the new token for next iteration
+            self.decode(&[token])?;
+        }
+
+        // Convert tokens to text
+        self.model.detokenize(&generated_tokens, false, false)
+    }
+
+    /// Generate text with streaming callback for real-time output
+    ///
+    /// The callback is called for each generated token with the token's text.
+    /// Return `false` from the callback to stop generation early.
+    ///
+    /// # Arguments
+    /// * `prompt_tokens` - Tokenized prompt
+    /// * `max_tokens` - Maximum number of tokens to generate
+    /// * `sampler_params` - Sampling parameters
+    /// * `callback` - Called with each token's text; return false to stop
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// context.generate_streaming(&tokens, 100, &SamplerParams::default(), |text| {
+    ///     print!("{}", text);
+    ///     std::io::stdout().flush().unwrap();
+    ///     true // Continue generation
+    /// })?;
+    /// ```
+    pub fn generate_streaming<F>(
+        &mut self,
+        prompt_tokens: &[TokenId],
+        max_tokens: usize,
+        sampler_params: &SamplerParams,
+        mut callback: F,
+    ) -> Result<String, MullamaError>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        if prompt_tokens.is_empty() {
+            return Err(MullamaError::GenerationError(
+                "Empty prompt tokens".to_string(),
+            ));
+        }
 
         // Process the prompt
         self.decode(prompt_tokens)?;
 
-        // Note: A full implementation would:
-        // 1. Get logits using self.logits()
-        // 2. Apply sampling using a sampler
-        // 3. Generate tokens one by one
-        // 4. Convert tokens back to text
-        // For now, return a meaningful placeholder
-        Ok(format!(
-            "[Placeholder] Generated {} tokens from prompt of {} tokens",
-            max_tokens,
-            prompt_tokens.len()
-        ))
+        // Create sampler chain
+        let mut sampler = sampler_params.build_chain(self.model.clone())?;
+
+        // Generation loop with streaming
+        let mut generated_tokens = Vec::new();
+        for _ in 0..max_tokens {
+            // Sample next token
+            let token = sampler.sample(self, -1);
+            sampler.accept(token);
+
+            // Check for end of generation
+            if self.model.token_is_eog(token) {
+                break;
+            }
+
+            generated_tokens.push(token);
+
+            // Convert token to text and call callback
+            let piece = self.model.token_to_str(token, 0, false)?;
+            if !callback(&piece) {
+                // User requested stop
+                break;
+            }
+
+            // Decode the new token for next iteration
+            self.decode(&[token])?;
+        }
+
+        // Return the full generated text
+        self.model.detokenize(&generated_tokens, false, false)
     }
 
     /// Get logits from the last evaluation
+    ///
+    /// Returns a slice of logits for the last token in the batch.
+    /// Use get_logits() for all tokens or get_logits_ith() for specific positions.
     pub fn logits(&self) -> Result<&[f32], MullamaError> {
-        // In a real implementation, this would:
-        // 1. Call llama_get_logits to get the raw pointer
-        // 2. Determine the size (vocab size * batch size)
-        // 3. Create a slice from the pointer
-        // For now, return an empty slice as a placeholder
-        Ok(&[])
+        let logits = self.get_logits();
+        if logits.is_empty() {
+            return Err(MullamaError::GenerationError(
+                "No logits available - call decode() first".to_string(),
+            ));
+        }
+        Ok(logits)
     }
 
     /// Get embeddings (if enabled)
+    ///
+    /// Returns embeddings if the context was created with embeddings=true.
+    /// Use get_embeddings_ith() or get_embeddings_seq() for specific positions.
     pub fn embeddings(&self) -> Result<Option<&[f32]>, MullamaError> {
-        // In a real implementation, this would:
-        // 1. Call llama_get_embeddings to get the raw pointer
-        // 2. Determine the size
-        // 3. Create a slice from the pointer
-        // For now, return None as a placeholder
-        Ok(None)
+        Ok(self.get_embeddings())
     }
 
     /// Get the model associated with this context

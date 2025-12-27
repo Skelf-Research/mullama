@@ -362,8 +362,9 @@ pub use format_conversion::{
 };
 #[cfg(feature = "multimodal")]
 pub use multimodal::{
-    AudioFeatures, AudioFormat, AudioInput, ImageInput, MultimodalInput, MultimodalOutput,
-    MultimodalProcessor, VideoInput,
+    AudioFeatures, AudioFormat, AudioInput, Bitmap, ChunkType, ImageInput, InputChunk,
+    InputChunks, MtmdContext, MtmdParams, MultimodalInput, MultimodalOutput, MultimodalProcessor,
+    VideoInput,
 };
 #[cfg(feature = "parallel")]
 pub use parallel::{BatchGenerationConfig, GenerationResult, ParallelProcessor, ThreadPoolConfig};

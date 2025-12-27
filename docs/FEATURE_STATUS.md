@@ -87,32 +87,55 @@ let context = Context::new(&model, params)?
     .with_control_vector(control_vector, 0.8)?; // strength = 0.8
 ```
 
-## ❌ Not Yet Implemented
+## ✅ Recently Implemented
 
 ### LoRA (Low-Rank Adaptation) Support
-**Priority**: High | **Timeline**: v0.2.0
+**Status**: Complete | **Since**: v0.1.0
 
 LoRA allows fine-tuning models with minimal computational overhead.
 
-**Planned Features:**
+**Implemented Features:**
 - LoRA adapter loading and management
 - Multiple LoRA adapter support
-- Dynamic LoRA weight adjustment
-- LoRA composition and merging
+- Dynamic LoRA weight adjustment via scale parameter
+- Adapter metadata access
 
 ```rust
-// Planned API
 use mullama::lora::LoRAAdapter;
 
-let lora_adapter = LoRAAdapter::load("path/to/lora.bin")?;
-let model = Model::from_file("base_model.gguf")?
-    .with_lora_adapter(lora_adapter, 0.8)?; // scale = 0.8
+// Load LoRA adapter with scale
+let lora = LoRAAdapter::load(&model, "path/to/adapter.gguf", 1.0)?;
+
+// Access adapter metadata
+println!("Adapter has {} parameters", lora.info().parameters);
 ```
 
-**Why Not Yet Available:**
-- Complex memory management requirements
-- Performance optimization challenges
-- API design considerations for multi-adapter scenarios
+### Text Generation
+**Status**: Complete | **Since**: v0.1.0
+
+Full text generation pipeline with streaming support.
+
+**Implemented Features:**
+- Basic generation with `generate()`
+- Custom sampling with `generate_with_params()`
+- Streaming generation with `generate_streaming()`
+- Automatic batch chunking for long prompts
+
+```rust
+// Basic generation
+let text = context.generate(&tokens, 100)?;
+
+// With custom sampling
+let text = context.generate_with_params(&tokens, 100, &sampler_params)?;
+
+// Streaming with callback
+context.generate_streaming(&tokens, 100, &params, |token_text| {
+    print!("{}", token_text);
+    true // continue generation
+})?;
+```
+
+## ❌ Not Yet Implemented
 
 ### Speculative Decoding
 **Priority**: Medium | **Timeline**: v0.3.0
@@ -306,19 +329,25 @@ let sampler = SamplerParams::default()
 
 ## 🗺️ Roadmap
 
-### Version 0.2.0 (Q1 2024)
-- **LoRA Support**: Complete LoRA adapter system
+### Version 0.1.x (Current - Dec 2025)
+- **llama.cpp b7542**: Latest upstream integration
+- **LoRA Support**: Complete LoRA adapter system ✅
+- **Text Generation**: Full generation pipeline with streaming ✅
+- **Flash Attention**: Auto/enabled/disabled modes ✅
+- **23+ Samplers**: Comprehensive sampling chain ✅
+
+### Version 0.2.0 (Q1 2026)
 - **Enhanced Grammar**: Performance optimizations and advanced patterns
 - **Advanced GPU Features**: Memory optimization and profiling
 - **Control Vector API**: High-level Rust API completion
+- **Speculative Decoding**: Draft model acceleration
 
-### Version 0.3.0 (Q2 2024)
-- **Speculative Decoding**: Full implementation with performance optimization
+### Version 0.3.0 (Q2 2026)
 - **Enterprise Features**: Distributed inference and monitoring
 - **Advanced Quantization**: Runtime quantization and quality metrics
 - **Comprehensive Benchmarking**: Performance regression testing
 
-### Version 0.4.0 (Q3 2024)
+### Version 0.4.0 (Q3 2026)
 - **Multimodal Support**: Vision-language model support
 - **Advanced Sampling**: Research-based sampling innovations
 - **API Stabilization**: Long-term API compatibility guarantees
@@ -395,7 +424,8 @@ We believe in transparent development:
 
 ---
 
-**Last Updated**: September 2024
+**Last Updated**: December 2025
+**llama.cpp Version**: b7542
 **Next Review**: With v0.2.0 release
 
 For the most current information, check our [GitHub Issues](https://github.com/username/mullama/issues) and [Discussions](https://github.com/username/mullama/discussions).
