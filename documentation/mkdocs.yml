@@ -1,0 +1,79 @@
+site_name: Mullama
+site_description: A comprehensive Rust wrapper for llama.cpp with multimodal support
+site_url: https://mullama.dev
+repo_url: https://github.com/anthropics/mullama
+repo_name: anthropics/mullama
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - autorefs
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - User Guide:
+    - Loading Models: guide/models.md
+    - Text Generation: guide/generation.md
+    - Multimodal (Vision/Audio): guide/multimodal.md
+    - Streaming: guide/streaming.md
+    - Async Support: guide/async.md
+    - Embeddings: guide/embeddings.md
+  - API Reference:
+    - Model: api/model.md
+    - Context: api/context.md
+    - Sampling: api/sampling.md
+    - Multimodal: api/multimodal.md
+  - Examples:
+    - Basic Usage: examples/basic.md
+    - Multimodal: examples/multimodal.md
+    - Web Service: examples/web-service.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/anthropics/mullama
