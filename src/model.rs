@@ -11,6 +11,8 @@ use std::{ffi::CString, path::Path, ptr, sync::Arc};
 #[derive(Debug)]
 struct ModelInner {
     model_ptr: *mut sys::llama_model,
+    /// Cached vocab pointer to avoid repeated FFI calls
+    vocab_ptr: *const sys::llama_vocab,
 }
 
 impl Drop for ModelInner {
@@ -180,8 +182,11 @@ impl Model {
             ));
         }
 
+        // Cache the vocab pointer to avoid repeated FFI calls during generation
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model_ptr) };
+
         Ok(Model {
-            inner: Arc::new(ModelInner { model_ptr }),
+            inner: Arc::new(ModelInner { model_ptr, vocab_ptr }),
         })
     }
 
@@ -348,10 +353,9 @@ impl Model {
             }
         }
 
-        // Convert to string, handling UTF-8 properly
+        // Convert to string - into_owned avoids double allocation for invalid UTF-8
         let result_bytes = &buf[..n_chars as usize];
-        let result = String::from_utf8_lossy(result_bytes).to_string();
-        Ok(result)
+        Ok(String::from_utf8_lossy(result_bytes).into_owned())
     }
 
     /// Get model training context size
@@ -422,9 +426,10 @@ pub struct Token {
 }
 
 impl Model {
-    /// Get the vocab pointer for this model
+    /// Get the cached vocab pointer for this model (no FFI call)
+    #[inline]
     fn vocab(&self) -> *const sys::llama_vocab {
-        unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) }
+        self.inner.vocab_ptr
     }
 
     /// Get complete token information including attributes
@@ -516,7 +521,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            String::from_utf8_lossy(&buf).to_string()
+            String::from_utf8_lossy(&buf).into_owned()
         } else {
             String::new()
         }
@@ -582,7 +587,7 @@ impl Model {
             None
         } else {
             let cstr = unsafe { std::ffi::CStr::from_ptr(template_ptr) };
-            Some(cstr.to_string_lossy().to_string())
+            Some(cstr.to_string_lossy().into_owned())
         }
     }
 
@@ -686,7 +691,7 @@ impl Model {
         }
 
         buffer.truncate(written as usize);
-        Ok(String::from_utf8_lossy(&buffer).to_string())
+        Ok(String::from_utf8_lossy(&buffer).into_owned())
     }
 
     // ==================== Model Metadata ====================
@@ -709,7 +714,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }
@@ -729,7 +734,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }
@@ -748,7 +753,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }

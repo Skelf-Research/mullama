@@ -149,6 +149,24 @@ impl Context {
         Ok(())
     }
 
+    /// Decode a single token - optimized to avoid allocation
+    #[inline]
+    pub fn decode_single(&mut self, token: TokenId) -> Result<(), MullamaError> {
+        // Use stack-allocated array and llama_batch_get_one directly
+        let mut tokens = [token];
+        let llama_batch = unsafe {
+            sys::llama_batch_get_one(tokens.as_mut_ptr(), 1)
+        };
+        let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+        if result != 0 {
+            return Err(MullamaError::GenerationError(format!(
+                "Decode failed with code: {}",
+                result
+            )));
+        }
+        Ok(())
+    }
+
     /// Generate text from prompt tokens using default sampling parameters
     ///
     /// This is the main generation method that:

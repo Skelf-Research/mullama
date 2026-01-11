@@ -2,19 +2,24 @@
 //!
 //! Provides REST endpoints compatible with the OpenAI API specification.
 
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     extract::{Json, State},
     http::StatusCode,
-    response::{IntoResponse, Response, Sse},
+    response::{sse::Event, IntoResponse, Response, Sse},
     routing::{get, post},
     Router,
 };
+use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
+use tokio_stream::StreamExt as _;
+use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::protocol::{ChatMessage, EmbeddingInput, Usage};
+use super::protocol::{ChatMessage, EmbeddingInput, StreamChunk, Usage};
 use super::server::Daemon;
 
 /// Shared state for the HTTP server
@@ -84,6 +89,31 @@ pub struct ChatChoice {
     pub index: u32,
     pub message: ChatMessage,
     pub finish_reason: Option<String>,
+}
+
+/// Streaming chat completion chunk (OpenAI compatible)
+#[derive(Debug, Serialize)]
+pub struct ChatCompletionChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<ChatChoiceDelta>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatChoiceDelta {
+    pub index: u32,
+    pub delta: DeltaContent,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeltaContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 /// Text completion request
@@ -186,13 +216,19 @@ fn default_temperature() -> f32 {
 async fn chat_completions(
     State(daemon): State<AppState>,
     Json(req): Json<ChatCompletionRequest>,
-) -> Result<Json<ChatCompletionResponse>, ApiError> {
+) -> Result<Response, ApiError> {
+    // Handle streaming requests
+    if req.stream {
+        return chat_completions_stream(daemon, req).await;
+    }
+
+    // Non-streaming request
     let request = super::protocol::Request::ChatCompletion {
         model: req.model,
         messages: req.messages,
         max_tokens: req.max_tokens,
         temperature: req.temperature,
-        stream: req.stream,
+        stream: false,
         stop: req.stop.unwrap_or_default(),
     };
 
@@ -212,12 +248,103 @@ async fn chat_completions(
                 })
                 .collect(),
             usage: resp.usage,
-        })),
+        })
+        .into_response()),
         super::protocol::Response::Error { code, message, .. } => {
             Err(ApiError::new(format!("{:?}: {}", code, message)))
         }
         _ => Err(ApiError::new("Unexpected response")),
     }
+}
+
+/// Handle streaming chat completions with SSE
+async fn chat_completions_stream(
+    daemon: AppState,
+    req: ChatCompletionRequest,
+) -> Result<Response, ApiError> {
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Start streaming generation
+    let (rx, _prompt_tokens, request_id, model_alias) = daemon
+        .handle_chat_completion_streaming(
+            req.model,
+            req.messages,
+            req.max_tokens,
+            req.temperature,
+            req.stop.unwrap_or_default(),
+        )
+        .await
+        .map_err(|resp| {
+            if let super::protocol::Response::Error { message, .. } = resp {
+                ApiError::new(message)
+            } else {
+                ApiError::new("Failed to start streaming")
+            }
+        })?;
+
+    // Convert mpsc receiver to SSE stream
+    let stream = ReceiverStream::new(rx);
+    let request_id_clone = request_id.clone();
+    let model_clone = model_alias.clone();
+
+    let sse_stream = stream
+        .map(move |chunk| {
+            let sse_chunk = ChatCompletionChunk {
+                id: request_id_clone.clone(),
+                object: "chat.completion.chunk".to_string(),
+                created,
+                model: model_clone.clone(),
+                choices: vec![ChatChoiceDelta {
+                    index: chunk.index,
+                    delta: DeltaContent {
+                        role: if chunk.index == 0 {
+                            Some("assistant".to_string())
+                        } else {
+                            None
+                        },
+                        content: Some(chunk.delta),
+                    },
+                    finish_reason: None,
+                }],
+            };
+
+            Event::default()
+                .data(serde_json::to_string(&sse_chunk).unwrap_or_default())
+        })
+        .chain(stream::once(async move {
+            // Send final chunk with finish_reason
+            let final_chunk = ChatCompletionChunk {
+                id: request_id,
+                object: "chat.completion.chunk".to_string(),
+                created,
+                model: model_alias,
+                choices: vec![ChatChoiceDelta {
+                    index: 0,
+                    delta: DeltaContent {
+                        role: None,
+                        content: None,
+                    },
+                    finish_reason: Some("stop".to_string()),
+                }],
+            };
+            Event::default()
+                .data(serde_json::to_string(&final_chunk).unwrap_or_default())
+        }))
+        .chain(stream::once(async {
+            Event::default().data("[DONE]")
+        }))
+        .map(Ok::<_, Infallible>);
+
+    Ok(Sse::new(sse_stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response())
 }
 
 /// POST /v1/completions

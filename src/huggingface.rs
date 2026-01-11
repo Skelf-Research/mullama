@@ -753,21 +753,21 @@ impl HFClient {
         filename: &str,
         progress_callback: Option<ProgressCallback>,
     ) -> Result<(), MullamaError> {
-        // Use a simple HTTP download implementation
-        // In production, you'd use reqwest or similar
-
         let temp_path = dest.with_extension("download");
 
-        // For now, we'll use curl via command if available, or provide instructions
         #[cfg(unix)]
         {
-            use std::process::Command;
+            use std::process::{Command, Stdio};
+            use std::thread;
+            use std::time::{Duration, Instant};
 
             let mut cmd = Command::new("curl");
             cmd.arg("-L") // Follow redirects
                 .arg("-o")
                 .arg(&temp_path)
-                .arg("--progress-bar");
+                .arg("-s") // Silent mode
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
 
             if let Some(ref token) = self.token {
                 cmd.arg("-H")
@@ -776,15 +776,61 @@ impl HFClient {
 
             cmd.arg(url);
 
-            let output = cmd.output().map_err(|e| {
+            let mut child = cmd.spawn().map_err(|e| {
                 MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e))
             })?;
 
-            if !output.status.success() {
-                return Err(MullamaError::HuggingFaceError(format!(
-                    "Download failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )));
+            // Poll file size for progress updates
+            let start_time = Instant::now();
+            let temp_path_clone = temp_path.clone();
+            let filename_clone = filename.to_string();
+
+            loop {
+                // Check if curl is still running
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Process finished
+                        if !status.success() {
+                            // Clean up temp file
+                            let _ = fs::remove_file(&temp_path);
+                            return Err(MullamaError::HuggingFaceError(
+                                "Download failed".to_string(),
+                            ));
+                        }
+                        break;
+                    }
+                    Ok(None) => {
+                        // Still running, check file size
+                        if let Ok(metadata) = fs::metadata(&temp_path_clone) {
+                            let downloaded = metadata.len();
+                            let elapsed = start_time.elapsed().as_secs_f64();
+                            let speed = if elapsed > 0.0 {
+                                (downloaded as f64 / elapsed) as u64
+                            } else {
+                                0
+                            };
+                            let remaining = expected_size.saturating_sub(downloaded);
+                            let eta = if speed > 0 { remaining / speed } else { 0 };
+
+                            if let Some(ref callback) = progress_callback {
+                                callback(DownloadProgress {
+                                    downloaded,
+                                    total: expected_size,
+                                    speed_bps: speed,
+                                    eta_seconds: eta,
+                                    filename: filename_clone.clone(),
+                                });
+                            }
+                        }
+                        thread::sleep(Duration::from_millis(500));
+                    }
+                    Err(e) => {
+                        return Err(MullamaError::HuggingFaceError(format!(
+                            "Failed to check curl status: {}",
+                            e
+                        )));
+                    }
+                }
             }
 
             // Move temp file to final destination
