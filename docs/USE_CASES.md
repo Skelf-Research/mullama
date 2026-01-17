@@ -7,6 +7,7 @@ This document showcases real-world applications and use cases for Mullama's inte
 - [🎵 Audio & Voice Applications](#-audio--voice-applications)
 - [🌐 Web Services & APIs](#-web-services--apis)
 - [🎭 Multimodal Applications](#-multimodal-applications)
+- [🔍 Semantic Search & RAG](#-semantic-search--rag)
 - [⚡ High-Performance Systems](#-high-performance-systems)
 - [🔄 Data Processing Pipelines](#-data-processing-pipelines)
 - [🏢 Enterprise Solutions](#-enterprise-solutions)
@@ -518,9 +519,256 @@ async fn create_educational_content(topic: &str, grade_level: &str) -> Result<Ed
 
 ---
 
+## 🔍 Semantic Search & RAG
+
+### 7. Document Retrieval with ColBERT-Style Search
+
+**Description**: High-precision semantic search using late interaction (ColBERT-style) multi-vector embeddings for retrieval-augmented generation (RAG).
+
+**Features Used**: `late-interaction`, `parallel`, `async`
+
+**Code Example**:
+```rust
+use mullama::late_interaction::{
+    MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer
+};
+use std::sync::Arc;
+
+struct SemanticSearchEngine {
+    generator: MultiVectorGenerator,
+    document_embeddings: Vec<MultiVectorEmbedding>,
+    documents: Vec<Document>,
+}
+
+impl SemanticSearchEngine {
+    async fn new(model_path: &str) -> Result<Self, MullamaError> {
+        let model = Arc::new(Model::from_file(model_path)?);
+
+        let config = MultiVectorConfig::default()
+            .normalize(true)
+            .skip_special_tokens(true);
+
+        let generator = MultiVectorGenerator::new(model, config)?;
+
+        Ok(Self {
+            generator,
+            document_embeddings: Vec::new(),
+            documents: Vec::new(),
+        })
+    }
+
+    /// Index documents for retrieval
+    fn index_documents(&mut self, documents: Vec<Document>) -> Result<(), MullamaError> {
+        println!("📚 Indexing {} documents...", documents.len());
+
+        for doc in &documents {
+            let embedding = self.generator.embed_text(&doc.content)?;
+            self.document_embeddings.push(embedding);
+        }
+
+        self.documents = documents;
+        println!("✅ Indexed {} documents", self.documents.len());
+        Ok(())
+    }
+
+    /// Search with MaxSim scoring
+    fn search(&mut self, query: &str, top_k: usize) -> Result<Vec<SearchResult>, MullamaError> {
+        let query_embedding = self.generator.embed_text(query)?;
+
+        // Use parallel scoring for large document collections
+        #[cfg(feature = "parallel")]
+        let results = LateInteractionScorer::find_top_k_parallel(
+            &query_embedding,
+            &self.document_embeddings,
+            top_k
+        );
+
+        #[cfg(not(feature = "parallel"))]
+        let results = LateInteractionScorer::find_top_k(
+            &query_embedding,
+            &self.document_embeddings,
+            top_k
+        );
+
+        Ok(results.into_iter().map(|(idx, score)| {
+            SearchResult {
+                document: self.documents[idx].clone(),
+                score,
+                rank: idx,
+            }
+        }).collect())
+    }
+
+    /// Analyze which tokens matched best
+    fn explain_match(&mut self, query: &str, doc_idx: usize) -> Result<MatchExplanation, MullamaError> {
+        let query_emb = self.generator.embed_text(query)?;
+        let doc_emb = &self.document_embeddings[doc_idx];
+
+        // Get token-level similarity matrix
+        let matrix = LateInteractionScorer::similarity_matrix(&query_emb, doc_emb);
+
+        // Find best matching tokens
+        let best_matches = LateInteractionScorer::best_matches(&query_emb, doc_emb);
+
+        Ok(MatchExplanation {
+            similarity_matrix: matrix,
+            best_matches,
+            overall_score: LateInteractionScorer::max_sim(&query_emb, doc_emb),
+        })
+    }
+}
+
+// RAG Pipeline using semantic search
+async fn rag_pipeline(
+    search_engine: &mut SemanticSearchEngine,
+    llm: &AsyncModel,
+    user_query: &str,
+) -> Result<String, MullamaError> {
+    // 1. Retrieve relevant documents
+    let search_results = search_engine.search(user_query, 3)?;
+
+    println!("🔍 Found {} relevant documents", search_results.len());
+    for (i, result) in search_results.iter().enumerate() {
+        println!("  {}. Score: {:.3} - {}", i + 1, result.score, result.document.title);
+    }
+
+    // 2. Build context from retrieved documents
+    let context: String = search_results.iter()
+        .map(|r| format!("Document: {}\n{}\n", r.document.title, r.document.content))
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+
+    // 3. Generate response with context
+    let prompt = format!(
+        "Based on the following documents:\n\n{}\n\nAnswer this question: {}\n\nAnswer:",
+        context, user_query
+    );
+
+    let response = llm.generate(&prompt, 300).await?;
+
+    Ok(response)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), MullamaError> {
+    // Initialize search engine with embedding model
+    // Recommended: LiquidAI/LFM2-ColBERT-350M-GGUF
+    let mut search_engine = SemanticSearchEngine::new("colbert-model.gguf").await?;
+
+    // Index your document collection
+    let documents = vec![
+        Document { title: "Machine Learning Basics".into(), content: "Machine learning is a subset of AI...".into() },
+        Document { title: "Neural Networks".into(), content: "Neural networks are computing systems...".into() },
+        Document { title: "Deep Learning".into(), content: "Deep learning uses multiple layers...".into() },
+    ];
+
+    search_engine.index_documents(documents)?;
+
+    // Load LLM for generation
+    let llm = ModelBuilder::new().path("llm-model.gguf").build().await?;
+
+    // Run RAG query
+    let query = "What is the relationship between machine learning and neural networks?";
+    let answer = rag_pipeline(&mut search_engine, &llm, query).await?;
+
+    println!("\n📝 Question: {}", query);
+    println!("🤖 Answer: {}", answer);
+
+    Ok(())
+}
+```
+
+**Why Late Interaction / ColBERT?**
+
+| Approach | Similarity | Precision | Speed |
+|----------|-----------|-----------|-------|
+| Single-vector (pooled) | Coarse | Lower | Fast |
+| Late interaction (per-token) | Fine-grained | Higher | Moderate |
+| Cross-encoder | Token-level | Highest | Slow |
+
+Late interaction provides the best balance: fine-grained token-level matching with efficient scoring.
+
+**Deployment**: Search engines, knowledge bases, chatbots with RAG, document QA systems
+
+---
+
+### 8. Real-time Knowledge Base Search
+
+**Description**: Live search interface with instant results as users type.
+
+**Features Used**: `late-interaction`, `parallel`, `websockets`, `async`
+
+**Code Example**:
+```rust
+use mullama::late_interaction::{MultiVectorGenerator, LateInteractionScorer};
+use mullama::{WebSocketServer, WebSocketConfig, WSMessage};
+
+struct LiveSearchServer {
+    generator: Arc<Mutex<MultiVectorGenerator>>,
+    index: Arc<RwLock<SearchIndex>>,
+}
+
+impl LiveSearchServer {
+    async fn handle_search_query(&self, query: &str, conn: &mut WSConnection) -> Result<(), MullamaError> {
+        // Generate query embedding
+        let query_emb = {
+            let mut gen = self.generator.lock().await;
+            gen.embed_text(query)?
+        };
+
+        // Search with parallel scoring
+        let index = self.index.read().await;
+
+        #[cfg(feature = "parallel")]
+        let results = LateInteractionScorer::find_top_k_parallel(
+            &query_emb,
+            &index.embeddings,
+            10
+        );
+
+        // Stream results to client
+        for (idx, score) in results {
+            conn.send(WSMessage::SearchResult {
+                document: index.documents[idx].clone(),
+                score,
+                highlight_tokens: extract_highlights(&query_emb, &index.embeddings[idx]),
+            }).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), MullamaError> {
+    let server = LiveSearchServer::new("embedding-model.gguf").await?;
+
+    let ws_config = WebSocketConfig::new()
+        .port(8080)
+        .max_connections(100);
+
+    let ws_server = WebSocketServer::new(ws_config)
+        .on_message(|msg, conn| {
+            if let WSMessage::Text { content } = msg {
+                server.handle_search_query(&content, conn).await
+            } else {
+                Ok(())
+            }
+        })
+        .build().await?;
+
+    println!("🔍 Live Search Server running on ws://localhost:8080");
+    ws_server.start().await
+}
+```
+
+**Deployment**: Documentation sites, help desks, e-commerce product search
+
+---
+
 ## ⚡ High-Performance Systems
 
-### 8. Batch Processing Pipeline
+### 9. Batch Processing Pipeline
 
 **Description**: High-throughput document processing with parallel execution.
 

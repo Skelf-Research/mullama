@@ -19,10 +19,10 @@ Add Mullama to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mullama = "0.1.0"
+mullama = "0.1.1"
 
 # For complete feature experience
-mullama = { version = "0.1.0", features = ["full"] }
+mullama = { version = "0.1.1", features = ["full"] }
 ```
 
 ### Platform-Specific Setup
@@ -221,6 +221,9 @@ features = ["multimodal", "streaming-audio", "format-conversion"]
 # High-performance
 features = ["parallel", "tokio-runtime", "async"]
 
+# Semantic search / RAG
+features = ["late-interaction", "parallel"]
+
 # Everything
 features = ["full"]
 ```
@@ -237,6 +240,7 @@ features = ["full"]
 | `streaming-audio` | Live audio processing | Voice assistants |
 | `format-conversion` | Media format support | File processing |
 | `parallel` | Batch processing | High throughput |
+| `late-interaction` | ColBERT-style search | Semantic search, RAG |
 | `tokio-runtime` | Advanced async control | Production services |
 
 ## 🎮 Your First Application

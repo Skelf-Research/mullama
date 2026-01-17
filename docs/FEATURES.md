@@ -177,6 +177,56 @@ let converted_stream = streaming_converter.convert_audio_stream(
 ).await?;
 ```
 
+### 9. **Late Interaction / ColBERT** (`late-interaction` feature)
+- **Multi-Vector Embeddings**: Per-token embeddings instead of single pooled vector
+- **MaxSim Scoring**: Fine-grained token-level similarity matching
+- **Top-K Retrieval**: Efficient document ranking for semantic search
+- **Model Agnostic**: Works with any embedding model (ColBERT-trained models optimal)
+- **Parallel Scoring**: Rayon-powered parallel document scoring
+- **Analysis Tools**: Similarity matrices and token-level match inspection
+
+**Example:**
+```rust
+use mullama::late_interaction::{
+    MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer
+};
+use std::sync::Arc;
+
+// Create generator with any embedding model
+let model = Arc::new(Model::load("model.gguf")?);
+let config = MultiVectorConfig::default()
+    .normalize(true)
+    .skip_special_tokens(true);
+let mut generator = MultiVectorGenerator::new(model, config)?;
+
+// Generate multi-vector embeddings (per-token)
+let query = generator.embed_text("What is machine learning?")?;
+let documents: Vec<_> = texts.iter()
+    .map(|t| generator.embed_text(t))
+    .collect::<Result<Vec<_>, _>>()?;
+
+// Score with MaxSim: sum of max similarities per query token
+let score = LateInteractionScorer::max_sim(&query, &documents[0]);
+
+// Top-k retrieval
+let top_k = LateInteractionScorer::find_top_k(&query, &documents, 10);
+
+// Analyze token-level matches
+let matrix = LateInteractionScorer::similarity_matrix(&query, &documents[0]);
+let matches = LateInteractionScorer::best_matches(&query, &documents[0]);
+```
+
+**With parallel processing** (combine with `parallel` feature):
+```rust
+// Parallel scoring across large document collections
+let top_k = LateInteractionScorer::find_top_k_parallel(&query, &documents, 10);
+let scores = LateInteractionScorer::batch_score_parallel(&queries, &documents);
+```
+
+**Recommended models:**
+- `LiquidAI/LFM2-ColBERT-350M-GGUF` - Purpose-trained ColBERT model
+- Any GGUF embedding model (functional but suboptimal for retrieval)
+
 ## 🎯 Advanced Integration Patterns
 
 ### 1. **Complete Workflow Integration**
@@ -344,6 +394,7 @@ let config = MullamaConfig::new()
 ### Use Cases:
 - **Real-time AI Assistants**: Voice-enabled AI with streaming responses
 - **Multimodal Applications**: Combined text, image, and audio processing
+- **Semantic Search & RAG**: ColBERT-style retrieval with MaxSim scoring
 - **High-Performance Services**: Batch processing with parallel execution
 - **Web Applications**: RESTful APIs with WebSocket streaming
 - **Edge Computing**: Optimized for resource-constrained environments

@@ -45,6 +45,7 @@ let response = model.generate("Hello", 100).await?;
 - **Async/Await Native** - Full Tokio integration for non-blocking operations
 - **Real-time Streaming** - Token-by-token generation with backpressure handling
 - **Multimodal Processing** - Text, image, and audio in a single pipeline
+- **Late Interaction / ColBERT** - Multi-vector embeddings with MaxSim scoring for retrieval
 - **Web Framework Ready** - Direct Axum integration with REST APIs
 - **WebSocket Support** - Real-time bidirectional communication
 - **Parallel Processing** - Work-stealing parallelism for batch operations
@@ -57,10 +58,10 @@ let response = model.generate("Hello", 100).await?;
 
 ```toml
 [dependencies]
-mullama = "0.1.0"
+mullama = "0.1.1"
 
 # With all features
-mullama = { version = "0.1.0", features = ["full"] }
+mullama = { version = "0.1.1", features = ["full"] }
 ```
 
 ### Prerequisites
@@ -102,7 +103,7 @@ async fn main() -> Result<(), MullamaError> {
 
 ```toml
 [dependencies.mullama]
-version = "0.1.0"
+version = "0.1.1"
 features = [
     "async",              # Async/await support
     "streaming",          # Token streaming
@@ -112,6 +113,7 @@ features = [
     "streaming-audio",    # Real-time audio capture
     "format-conversion",  # Audio/image format conversion
     "parallel",           # Rayon parallel processing
+    "late-interaction",   # ColBERT-style multi-vector embeddings
     "daemon",             # Daemon mode with TUI client
     "full"                # All features
 ]
@@ -128,6 +130,9 @@ features = ["multimodal", "streaming-audio", "format-conversion"]
 
 # High-performance batch processing
 features = ["parallel", "async"]
+
+# Semantic search / RAG with ColBERT-style retrieval
+features = ["late-interaction", "parallel"]
 
 # Daemon with TUI chat interface
 features = ["daemon"]
@@ -239,6 +244,48 @@ for model in client.list_models()? {
 }
 ```
 
+## Late Interaction / ColBERT
+
+Mullama supports ColBERT-style late interaction retrieval with multi-vector embeddings. Unlike traditional embeddings that pool all tokens into a single vector, late interaction preserves per-token embeddings for fine-grained matching using MaxSim scoring.
+
+```rust
+use mullama::late_interaction::{
+    MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer
+};
+use std::sync::Arc;
+
+// Create generator (works with any embedding model)
+let model = Arc::new(Model::load("model.gguf")?);
+let config = MultiVectorConfig::default()
+    .normalize(true)
+    .skip_special_tokens(true);
+let mut generator = MultiVectorGenerator::new(model, config)?;
+
+// Generate multi-vector embeddings
+let query = generator.embed_text("What is machine learning?")?;
+let doc = generator.embed_text("Machine learning is a branch of AI...")?;
+
+// Score with MaxSim
+let score = LateInteractionScorer::max_sim(&query, &doc);
+
+// Top-k retrieval
+let documents: Vec<_> = texts.iter()
+    .map(|t| generator.embed_text(t))
+    .collect::<Result<Vec<_>, _>>()?;
+let top_k = LateInteractionScorer::find_top_k(&query, &documents, 10);
+```
+
+**With parallel processing:**
+```rust
+// Enable both features: ["late-interaction", "parallel"]
+let top_k = LateInteractionScorer::find_top_k_parallel(&query, &documents, 10);
+let scores = LateInteractionScorer::batch_score_parallel(&queries, &documents);
+```
+
+**Recommended models:**
+- `LiquidAI/LFM2-ColBERT-350M-GGUF` - Purpose-trained ColBERT model
+- Any GGUF embedding model (works but suboptimal for retrieval)
+
 ## GPU Acceleration
 
 ```bash
@@ -282,6 +329,10 @@ cargo run --example web_service --features "web,websockets"
 
 # Audio processing
 cargo run --example streaming_audio_demo --features "streaming-audio,multimodal"
+
+# Late interaction / ColBERT retrieval
+cargo run --example late_interaction --features late-interaction
+cargo run --example late_interaction --features late-interaction -- model.gguf
 ```
 
 ## Contributing
