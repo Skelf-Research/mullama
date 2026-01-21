@@ -17,6 +17,17 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_CLBLAST");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_PATH");
 
+    // Track UI assets for embedded-ui feature
+    // This ensures Cargo rebuilds when UI files change
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let ui_dist_path = Path::new(&manifest_dir).join("ui").join("dist");
+    if ui_dist_path.exists() {
+        // Track the dist directory itself
+        println!("cargo:rerun-if-changed={}", ui_dist_path.display());
+        // Track all files in dist recursively
+        track_ui_files(&ui_dist_path);
+    }
+
     // Set up platform-specific configurations
     setup_platform_specific();
 
@@ -40,6 +51,19 @@ fn main() {
 
     // Generate bindings
     generate_bindings(&llama_cpp_path, &dst);
+}
+
+/// Recursively track all files in a directory for Cargo's rebuild detection
+fn track_ui_files(dir: &Path) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            println!("cargo:rerun-if-changed={}", path.display());
+            if path.is_dir() {
+                track_ui_files(&path);
+            }
+        }
+    }
 }
 
 /// Get the path to llama.cpp, downloading it if necessary

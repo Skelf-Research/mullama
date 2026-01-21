@@ -22,9 +22,36 @@ cargo run --example simple --features async
 cargo run --example streaming_audio_demo --features "streaming-audio,multimodal"
 cargo run --example web_service --features "web,websockets"
 
+# Build daemon CLI
+cargo build --release --features daemon
+
+# Build daemon with embedded Web UI
+cd ui && npm install && npm run build && cd ..
+cargo build --release --features daemon,embedded-ui
+
 # Run tests
 cargo test
 cargo test --features full
+```
+
+### Daemon Commands
+```bash
+# Run with model alias (auto-spawns daemon)
+mullama run llama3.2:1b "Hello!"
+
+# Start daemon explicitly
+mullama serve --model llama3.2:1b
+
+# Daemon management
+mullama daemon start
+mullama daemon stop
+mullama daemon status
+
+# Model management
+mullama list
+mullama pull llama3.2:1b
+mullama create my-model -f Modelfile
+mullama show my-model --modelfile
 ```
 
 ### Platform-Specific Setup Requirements

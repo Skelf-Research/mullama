@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 
 use super::models::{ModelLoadConfig, ModelManager, RequestGuard};
 use super::protocol::*;
@@ -941,7 +941,7 @@ impl Daemon {
         }
     }
 
-    fn build_chat_prompt(&self, model: &crate::Model, messages: &[ChatMessage]) -> String {
+    pub fn build_chat_prompt(&self, model: &crate::Model, messages: &[ChatMessage]) -> String {
         // Convert ChatMessage to the format expected by apply_chat_template
         // Extract text content from each message (ignoring images for the prompt template)
         let text_contents: Vec<String> = messages.iter().map(|m| m.content.text()).collect();
@@ -988,14 +988,14 @@ impl Daemon {
         }
     }
 
-    async fn generate_text(
+    pub async fn generate_text(
         &self,
         loaded: &super::models::LoadedModel,
         prompt: &str,
         max_tokens: u32,
         temperature: f32,
         stop_sequences: &[String],
-    ) -> Result<(String, u32, u32), MullamaError> {
+    ) -> Result<(String, u32, u32), crate::MullamaError> {
         // Tokenize - respect model's BOS token setting to avoid double BOS
         let add_bos = loaded.model.add_bos_token();
         let tokens = loaded.model.tokenize(prompt, add_bos, false)?;
