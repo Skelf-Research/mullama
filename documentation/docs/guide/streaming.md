@@ -1,275 +1,649 @@
-# Streaming Generation
+# Streaming
 
-Stream tokens in real-time as they're generated for responsive applications.
+Stream tokens in real-time as they are generated for responsive user experiences. Streaming reduces perceived latency by showing output incrementally rather than waiting for the complete response.
+
+!!! abstract "Feature Gate"
+    Basic callback-based streaming is available without any feature flags. For async `TokenStream` with backpressure, enable the `streaming` feature in Rust:
+
+    ```toml
+    [dependencies]
+    mullama = { version = "0.1", features = ["streaming"] }
+    ```
+
+## Why Streaming Matters
+
+Without streaming, users must wait for the entire response before seeing any output. With streaming:
+
+- **Time-to-first-token** is typically under 100ms, giving immediate feedback
+- Users can read output as it arrives, improving perceived responsiveness
+- Applications can implement early stopping to save compute
+- Server-sent events (SSE) enable real-time web interfaces
 
 ## Basic Streaming
 
-```rust
-use mullama::{Model, Context, ContextParams};
-use std::sync::Arc;
-use std::io::Write;
+The simplest way to stream tokens as they are generated:
 
-let model = Arc::new(Model::load("model.gguf")?);
-let mut context = Context::new(model, ContextParams::default())?;
+=== "Node.js"
 
-context.generate_streaming("Write a poem:", 200, |token| {
-    print!("{}", token);
-    std::io::stdout().flush().ok();
-    true  // Continue generating
-})?;
-```
+    ```javascript
+    import { Model, Context } from 'mullama';
 
-## Early Stopping
+    const model = await Model.load('./model.gguf');
+    const context = new Context(model);
 
-Return `false` from the callback to stop generation:
-
-```rust
-let mut total_tokens = 0;
-
-context.generate_streaming("Generate text:", 1000, |token| {
-    print!("{}", token);
-    total_tokens += 1;
-
-    // Stop after 100 tokens
-    if total_tokens >= 100 {
-        return false;
+    // Async iterator pattern
+    for await (const token of context.generateStream("Write a poem:", 200)) {
+      process.stdout.write(token.text);
     }
+    console.log();
+    ```
 
-    // Stop on specific content
-    if token.contains("THE END") {
-        return false;
-    }
+=== "Python"
 
-    true
-})?;
-```
+    ```python
+    from mullama import Model, Context
 
-## Collecting Output
+    model = Model.load("./model.gguf")
+    context = Context(model)
 
-Build the complete response while streaming:
+    # Generator pattern
+    for token in context.generate_stream("Write a poem:", max_tokens=200):
+        print(token.text, end="", flush=True)
+    print()
+    ```
 
-```rust
-let mut response = String::new();
+=== "Rust"
 
-context.generate_streaming("Hello:", 200, |token| {
-    print!("{}", token);
-    std::io::stdout().flush().ok();
-    response.push_str(&token);
-    true
-})?;
+    ```rust
+    use mullama::{Model, Context, ContextParams};
+    use std::sync::Arc;
+    use std::io::Write;
 
-println!("\n\nFull response: {}", response);
-```
-
-## Progress Tracking
-
-Track generation progress:
-
-```rust
-use std::time::Instant;
-
-let start = Instant::now();
-let mut token_count = 0;
-
-context.generate_streaming("Write an essay:", 500, |token| {
-    token_count += 1;
-
-    // Print progress every 50 tokens
-    if token_count % 50 == 0 {
-        let elapsed = start.elapsed().as_secs_f32();
-        let tokens_per_sec = token_count as f32 / elapsed;
-        eprintln!("\n[{} tokens, {:.1} t/s]", token_count, tokens_per_sec);
-    }
-
-    print!("{}", token);
-    std::io::stdout().flush().ok();
-    true
-})?;
-
-let total_time = start.elapsed();
-println!("\n\nGenerated {} tokens in {:.2}s", token_count, total_time.as_secs_f32());
-```
-
-## With Channels
-
-Send tokens to another thread:
-
-```rust
-use std::sync::mpsc;
-use std::thread;
-
-let (tx, rx) = mpsc::channel();
-
-// Consumer thread
-let handle = thread::spawn(move || {
-    let mut full_response = String::new();
-    while let Ok(token) = rx.recv() {
-        full_response.push_str(&token);
-        // Process token (e.g., send to websocket)
-    }
-    full_response
-});
-
-// Producer
-context.generate_streaming("Hello:", 200, |token| {
-    tx.send(token.to_string()).ok();
-    true
-})?;
-
-drop(tx);  // Signal end
-let response = handle.join().unwrap();
-```
-
-## Async Streaming
-
-With the `async` feature:
-
-```rust
-use mullama::{Model, Context, ContextParams};
-use tokio::sync::mpsc;
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> Result<(), mullama::MullamaError> {
     let model = Arc::new(Model::load("model.gguf")?);
     let mut context = Context::new(model, ContextParams::default())?;
 
-    let (tx, mut rx) = mpsc::channel(32);
+    context.generate_streaming("Write a poem:", 200, |token| {
+        print!("{}", token);
+        std::io::stdout().flush().ok();
+        true  // Return true to continue, false to stop
+    })?;
+    println!();
+    ```
 
-    // Spawn generation task
-    let gen_handle = tokio::task::spawn_blocking(move || {
-        context.generate_streaming("Hello:", 200, |token| {
-            tx.blocking_send(token.to_string()).is_ok()
-        })
+=== "CLI"
+
+    ```bash
+    # CLI streams by default
+    mullama run llama3.2:1b "Write a poem:"
+
+    # Disable streaming (wait for full response)
+    mullama run llama3.2:1b "Write a poem:" --no-stream
+    ```
+
+## Stream Configuration
+
+Configure streaming behavior with buffer sizes, timeouts, and sampling parameters:
+
+=== "Node.js"
+
+    ```javascript
+    import { Model, Context, StreamConfig } from 'mullama';
+
+    const model = await Model.load('./model.gguf');
+    const context = new Context(model);
+
+    const config = new StreamConfig({
+      maxTokens: 500,
+      temperature: 0.7,
+      topK: 40,
+      topP: 0.9,
+      stopSequences: ["END"],
+      bufferSize: 64,
+      timeoutMs: 30000,
     });
 
-    // Process tokens asynchronously
-    while let Some(token) = rx.recv().await {
-        print!("{}", token);
-        tokio::io::stdout().flush().await.ok();
+    for await (const token of context.generateStream("Hello:", config)) {
+      process.stdout.write(token.text);
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    from mullama import Model, Context, StreamConfig
+
+    model = Model.load("./model.gguf")
+    context = Context(model)
+
+    config = StreamConfig(
+        max_tokens=500,
+        temperature=0.7,
+        top_k=40,
+        top_p=0.9,
+        stop_sequences=["END"],
+        buffer_size=64,
+        timeout_ms=30000,
+    )
+
+    for token in context.generate_stream("Hello:", config=config):
+        print(token.text, end="", flush=True)
+    ```
+
+=== "Rust"
+
+    ```rust
+    use mullama::StreamConfig;
+
+    let config = StreamConfig::new()
+        .max_tokens(500)
+        .temperature(0.7)
+        .top_k(40)
+        .top_p(0.9)
+        .stop_sequences(vec!["END".to_string()])
+        .stream_delay_ms(0);
+
+    let mut stream = model.generate_stream("Hello:", config).await?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run llama3.2:1b "Hello:" \
+      --temperature 0.7 \
+      --top-k 40 \
+      --top-p 0.9 \
+      --stop "END"
+    ```
+
+### Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maxTokens` | `usize` | 256 | Maximum number of tokens to generate |
+| `temperature` | `f32` | 1.0 | Sampling temperature |
+| `topK` | `u32` | 40 | Top-K candidates |
+| `topP` | `f32` | 0.9 | Nucleus sampling threshold |
+| `stopSequences` | `Vec<String>` | `[]` | Stop generation at these strings |
+| `bufferSize` | `usize` | 64 | Internal token buffer size |
+| `timeoutMs` | `u64` | 30000 | Maximum time for generation (milliseconds) |
+
+## Async TokenStream
+
+With the `streaming` feature enabled (Rust) or in Node.js/Python, use async streaming with proper backpressure handling:
+
+=== "Node.js"
+
+    ```javascript
+    import { AsyncModel, StreamConfig } from 'mullama';
+
+    const model = await AsyncModel.load('./model.gguf');
+
+    const config = new StreamConfig({ maxTokens: 200, temperature: 0.7 });
+    const stream = model.generateStream("Tell me about Rust:", config);
+
+    let tokenCount = 0;
+    for await (const token of stream) {
+      process.stdout.write(token.text);
+      tokenCount++;
     }
 
-    gen_handle.await??;
-    Ok(())
-}
-```
+    console.log(`\nGenerated ${tokenCount} tokens`);
+    console.log(`Tokens/sec: ${stream.tokensPerSecond().toFixed(1)}`);
+    ```
 
-## Server-Sent Events
+=== "Python"
 
-Stream to web clients:
+    ```python
+    import asyncio
+    from mullama import AsyncModel, StreamConfig
 
-```rust
-use axum::{
-    response::sse::{Event, Sse},
-    routing::post,
-    Router,
-};
-use futures::stream;
-use std::sync::mpsc;
+    async def main():
+        model = await AsyncModel.load("./model.gguf")
 
-async fn generate_sse(prompt: String) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let (tx, rx) = mpsc::channel();
+        config = StreamConfig(max_tokens=200, temperature=0.7)
 
-    // Start generation in background
-    tokio::task::spawn_blocking(move || {
-        let model = Model::load("model.gguf").unwrap();
-        let mut context = Context::new(Arc::new(model), ContextParams::default()).unwrap();
+        token_count = 0
+        async for token in model.generate_stream("Tell me about Rust:", config=config):
+            print(token.text, end="", flush=True)
+            token_count += 1
 
-        context.generate_streaming(&prompt, 200, |token| {
-            tx.send(token.to_string()).is_ok()
-        }).ok();
-    });
+        print(f"\nGenerated {token_count} tokens")
 
-    // Convert to SSE stream
-    let stream = stream::unfold(rx, |rx| async move {
-        rx.recv().ok().map(|token| {
-            let event = Event::default().data(token);
-            (Ok(event), rx)
-        })
-    });
+    asyncio.run(main())
+    ```
 
-    Sse::new(stream)
-}
-```
+=== "Rust"
 
-## WebSocket Streaming
+    ```rust
+    use mullama::{AsyncModel, StreamConfig};
+    use tokio_stream::StreamExt;
 
-Real-time bidirectional streaming:
+    #[tokio::main]
+    async fn main() -> Result<(), mullama::MullamaError> {
+        let model = AsyncModel::load("model.gguf").await?;
 
-```rust
-use tokio_tungstenite::tungstenite::Message;
+        let config = StreamConfig::new()
+            .max_tokens(200)
+            .temperature(0.7);
 
-async fn handle_websocket(ws: WebSocket) {
-    let (mut sender, mut receiver) = ws.split();
+        let mut stream = model.generate_stream("Tell me about Rust:", config).await?;
 
-    while let Some(msg) = receiver.next().await {
-        if let Ok(Message::Text(prompt)) = msg {
-            // Stream response back
-            let (tx, mut rx) = mpsc::channel(32);
+        while let Some(token_result) = stream.next().await {
+            let token_data = token_result?;
+            print!("{}", token_data.text);
+        }
 
-            tokio::task::spawn_blocking(move || {
-                context.generate_streaming(&prompt, 200, |token| {
-                    tx.blocking_send(token.to_string()).is_ok()
-                })
-            });
+        println!("\nTokens generated: {}", stream.tokens_generated());
+        Ok(())
+    }
+    ```
 
-            while let Some(token) = rx.recv().await {
-                sender.send(Message::Text(token)).await.ok();
+=== "CLI"
+
+    ```bash
+    # CLI streams by default with performance stats
+    mullama run llama3.2:1b "Tell me about Rust:" --verbose
+    ```
+
+## Backpressure Handling
+
+When the consumer is slower than the producer, the stream automatically pauses generation to prevent unbounded memory growth:
+
+=== "Node.js"
+
+    ```javascript
+    // Slow consumer -- generator pauses automatically
+    for await (const token of context.generateStream("Generate text:", config)) {
+      process.stdout.write(token.text);
+
+      // Simulate slow processing
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    import asyncio
+
+    # Slow consumer -- generator pauses automatically
+    async for token in model.generate_stream("Generate text:", config=config):
+        print(token.text, end="", flush=True)
+
+        # Simulate slow processing
+        await asyncio.sleep(0.05)
+    ```
+
+=== "Rust"
+
+    ```rust
+    use tokio::time::{sleep, Duration};
+
+    let mut stream = model.generate_stream("Generate text:", config).await?;
+
+    while let Some(token_result) = stream.next().await {
+        let token_data = token_result?;
+        print!("{}", token_data.text);
+
+        // Slow consumer -- generator will pause automatically
+        sleep(Duration::from_millis(50)).await;
+    }
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Pipe to a slow consumer; backpressure handled automatically
+    mullama run llama3.2:1b "Generate text:" | while read -r line; do
+      echo "$line"
+      sleep 0.1
+    done
+    ```
+
+!!! info "Buffer Behavior"
+    The internal buffer prevents unbounded memory growth. When the buffer is full, the generator blocks until the consumer catches up. The default buffer size of 64 tokens is sufficient for most use cases.
+
+## Error Recovery in Streams
+
+Handle errors gracefully during streaming:
+
+=== "Node.js"
+
+    ```javascript
+    try {
+      for await (const token of context.generateStream("Hello:", config)) {
+        process.stdout.write(token.text);
+      }
+    } catch (error) {
+      if (error.code === 'STREAM_TIMEOUT') {
+        console.error('\nGeneration timed out');
+      } else if (error.code === 'GENERATION_ERROR') {
+        console.error(`\nGeneration failed: ${error.message}`);
+      } else {
+        throw error;
+      }
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    from mullama import MullamaError, StreamTimeoutError
+
+    try:
+        for token in context.generate_stream("Hello:", config=config):
+            print(token.text, end="", flush=True)
+    except StreamTimeoutError:
+        print("\nGeneration timed out")
+    except MullamaError as e:
+        print(f"\nGeneration failed: {e}")
+    ```
+
+=== "Rust"
+
+    ```rust
+    let mut stream = model.generate_stream("Hello:", config).await?;
+
+    while let Some(token_result) = stream.next().await {
+        match token_result {
+            Ok(token_data) => print!("{}", token_data.text),
+            Err(mullama::MullamaError::StreamingError(msg)) => {
+                eprintln!("\nStreaming error: {}", msg);
+                break;
+            }
+            Err(e) => {
+                eprintln!("\nUnexpected error: {}", e);
+                break;
             }
         }
     }
-}
-```
+    ```
 
-## Buffered Streaming
+=== "CLI"
 
-Buffer tokens for smoother output:
+    ```bash
+    # CLI handles errors automatically with descriptive messages
+    mullama run llama3.2:1b "Hello:" --timeout 30000
+    ```
 
-```rust
-use std::collections::VecDeque;
+## Early Stopping
 
-let mut buffer: VecDeque<String> = VecDeque::new();
-let buffer_size = 5;
+Stop generation before reaching max tokens:
 
-context.generate_streaming("Hello:", 200, |token| {
-    buffer.push_back(token.to_string());
+=== "Node.js"
 
-    // Flush when buffer is full
-    if buffer.len() >= buffer_size {
-        while let Some(t) = buffer.pop_front() {
-            print!("{}", t);
+    ```javascript
+    let output = '';
+    let tokenCount = 0;
+
+    for await (const token of context.generateStream("Generate a list:", 1000)) {
+      output += token.text;
+      tokenCount++;
+      process.stdout.write(token.text);
+
+      // Stop after 5 list items
+      const itemCount = (output.match(/\n-/g) || []).length;
+      if (itemCount >= 5) {
+        break;  // Breaking the loop stops generation
+      }
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    output = ""
+    token_count = 0
+
+    for token in context.generate_stream("Generate a list:", max_tokens=1000):
+        output += token.text
+        token_count += 1
+        print(token.text, end="", flush=True)
+
+        # Stop after 5 list items
+        if output.count("\n-") >= 5:
+            break  # Breaking the loop stops generation
+    ```
+
+=== "Rust"
+
+    ```rust
+    let mut output = String::new();
+    let mut total_tokens = 0;
+
+    context.generate_streaming("Generate a list:", 1000, |token| {
+        output.push_str(&token);
+        total_tokens += 1;
+
+        // Stop after 5 list items
+        let item_count = output.matches("\n-").count();
+        if item_count >= 5 {
+            return false;  // Stop generation
         }
-        std::io::stdout().flush().ok();
+
+        print!("{}", token);
+        true
+    })?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Ctrl+C to stop generation
+    mullama run llama3.2:1b "Generate a list:" --max-tokens 1000
+    ```
+
+## SSE (Server-Sent Events) Integration
+
+Stream tokens to web clients using Server-Sent Events:
+
+=== "Node.js"
+
+    ```javascript
+    import express from 'express';
+    import { Model, Context, StreamConfig } from 'mullama';
+
+    const app = express();
+    const model = await Model.load('./model.gguf');
+
+    app.post('/generate', async (req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const context = new Context(model);
+      const config = new StreamConfig({ maxTokens: 500 });
+
+      for await (const token of context.generateStream(req.body.prompt, config)) {
+        res.write(`data: ${JSON.stringify({ text: token.text })}\n\n`);
+      }
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+
+    app.listen(3000);
+    ```
+
+=== "Python"
+
+    ```python
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+    from mullama import Model, Context, StreamConfig
+
+    app = FastAPI()
+    model = Model.load("./model.gguf")
+
+    @app.post("/generate")
+    async def generate(prompt: str):
+        async def event_stream():
+            context = Context(model)
+            config = StreamConfig(max_tokens=500)
+
+            for token in context.generate_stream(prompt, config=config):
+                yield f"data: {{'text': '{token.text}'}}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+    ```
+
+=== "Rust"
+
+    ```rust
+    use axum::{
+        response::sse::{Event, Sse},
+        routing::post,
+        Router, Json,
+    };
+    use futures::stream;
+    use std::sync::mpsc;
+
+    async fn generate_sse(
+        Json(body): Json<GenerateRequest>,
+    ) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
+        let (tx, rx) = mpsc::channel();
+
+        tokio::task::spawn_blocking(move || {
+            let model = Model::load("model.gguf").unwrap();
+            let mut context = Context::new(Arc::new(model), ContextParams::default()).unwrap();
+
+            context.generate_streaming(&body.prompt, 500, |token| {
+                tx.send(token.to_string()).is_ok()
+            }).ok();
+        });
+
+        let stream = stream::unfold(rx, |rx| async move {
+            rx.recv().ok().map(|token| {
+                let event = Event::default().data(token);
+                (Ok(event), rx)
+            })
+        });
+
+        Sse::new(stream)
     }
+    ```
 
-    true
-})?;
+=== "CLI"
 
-// Flush remaining
-for t in buffer {
-    print!("{}", t);
-}
-```
+    ```bash
+    # Start the daemon with OpenAI-compatible streaming API
+    mullama serve --model llama3.2:1b
 
-## Error Handling
+    # Test with curl (SSE format)
+    curl -X POST http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "llama3.2:1b",
+        "messages": [{"role": "user", "content": "Hello!"}],
+        "stream": true
+      }'
+    ```
 
-```rust
-match context.generate_streaming("Hello:", 200, |token| {
-    print!("{}", token);
-    true
-}) {
-    Ok(()) => println!("\nGeneration complete"),
-    Err(mullama::MullamaError::GenerationError(msg)) => {
-        eprintln!("\nGeneration failed: {}", msg);
+## Combining Streaming with Web Frameworks
+
+### WebSocket Streaming
+
+For bidirectional real-time communication:
+
+=== "Node.js"
+
+    ```javascript
+    import { WebSocketServer } from 'ws';
+    import { Model, Context } from 'mullama';
+
+    const model = await Model.load('./model.gguf');
+    const wss = new WebSocketServer({ port: 8080 });
+
+    wss.on('connection', (ws) => {
+      const context = new Context(model);
+
+      ws.on('message', async (data) => {
+        const prompt = data.toString();
+
+        for await (const token of context.generateStream(prompt, 500)) {
+          ws.send(JSON.stringify({ type: 'token', text: token.text }));
+        }
+
+        ws.send(JSON.stringify({ type: 'done' }));
+      });
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    import asyncio
+    import websockets
+    import json
+    from mullama import Model, Context
+
+    model = Model.load("./model.gguf")
+
+    async def handler(websocket):
+        context = Context(model)
+
+        async for message in websocket:
+            for token in context.generate_stream(message, max_tokens=500):
+                await websocket.send(json.dumps({
+                    "type": "token", "text": token.text
+                }))
+            await websocket.send(json.dumps({"type": "done"}))
+
+    asyncio.run(websockets.serve(handler, "localhost", 8080))
+    ```
+
+=== "Rust"
+
+    ```rust
+    use tokio::sync::mpsc;
+
+    async fn handle_websocket(ws: WebSocket) {
+        let (mut sender, mut receiver) = ws.split();
+
+        while let Some(msg) = receiver.next().await {
+            if let Ok(Message::Text(prompt)) = msg {
+                let (tx, mut rx) = mpsc::channel(32);
+
+                tokio::task::spawn_blocking(move || {
+                    context.generate_streaming(&prompt, 500, |token| {
+                        tx.blocking_send(token.to_string()).is_ok()
+                    })
+                });
+
+                while let Some(token) = rx.recv().await {
+                    sender.send(Message::Text(token)).await.ok();
+                }
+            }
+        }
     }
-    Err(e) => eprintln!("\nError: {}", e),
-}
-```
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Start daemon with WebSocket support
+    mullama serve --model llama3.2:1b --websocket
+
+    # Test with websocat
+    echo "Hello!" | websocat ws://localhost:8080/ws
+    ```
 
 ## Best Practices
 
-1. **Flush output** - Call `flush()` after each token for immediate display
-2. **Use channels** - For cross-thread streaming
-3. **Handle early stopping** - Return `false` to stop gracefully
-4. **Track progress** - Log tokens/second for debugging
-5. **Buffer when needed** - Smooth output for slow consumers
+1. **Always flush output** -- Call `flush()` after each token for immediate display
+2. **Handle early stopping** -- Break from loops or return `false` from callbacks to stop gracefully
+3. **Set buffer sizes appropriately** -- 32-128 tokens is typically sufficient for the internal buffer
+4. **Track throughput** -- Log tokens/second to identify performance bottlenecks
+5. **Use SSE for web apps** -- Standard, well-supported by all browsers and HTTP clients
+6. **Implement timeouts** -- Prevent runaway generation with the `timeoutMs` configuration
+
+!!! tip "Performance Monitoring"
+    Stream objects expose `tokensPerSecond()` / `tokens_per_second()` after generation completes, making it easy to track inference performance.
+
+## See Also
+
+- [Async Support](async.md) -- Non-blocking generation with async/await
+- [Text Generation](generation.md) -- Core generation parameters and configuration
+- [Advanced: WebSockets](../advanced/websockets.md) -- Production WebSocket integration
+- [API Reference: Streaming](../api/streaming.md) -- Complete Streaming API documentation

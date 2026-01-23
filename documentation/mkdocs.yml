@@ -1,11 +1,18 @@
 site_name: Mullama
-site_description: A comprehensive Rust wrapper for llama.cpp with multimodal support
-site_url: https://mullama.dev
-repo_url: https://github.com/anthropics/mullama
-repo_name: anthropics/mullama
+site_description: "Run LLMs locally with native performance. High-performance inference engine with Node.js, Python, Go, PHP, and C/C++ bindings, plus OpenAI-compatible API server."
+site_url: https://docs.neullabs.com/
+repo_url: https://github.com/neul-labs/mullama
+repo_name: neul-labs/mullama
+edit_uri: edit/main/documentation/docs/
 
 theme:
   name: material
+  custom_dir: overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - scheme: default
       primary: deep purple
@@ -21,19 +28,29 @@ theme:
         name: Switch to light mode
   features:
     - navigation.instant
+    - navigation.instant.progress
     - navigation.tracking
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.indexes
+    - navigation.path
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
     - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+    - announce.dismiss
 
 plugins:
-  - search
-  - autorefs
+  - search:
+      separator: '[\s\-\.]+'
+  - tags
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -41,39 +58,123 @@ markdown_extensions:
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ['docs']
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
   - admonition
   - pymdownx.details
   - attr_list
   - md_in_html
   - tables
+  - def_list
+  - footnotes
+  - pymdownx.keys
+  - pymdownx.mark
   - toc:
       permalink: true
+      toc_depth: 3
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - User Guide:
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Platform Setup: getting-started/platform-setup.md
+    - GPU Acceleration: getting-started/gpu.md
+    - Your First Project: getting-started/first-project.md
+  - Why Mullama:
+    - comparison/index.md
+    - Mullama vs Ollama: comparison/vs-ollama.md
+    - Benchmarks: comparison/benchmarks.md
+    - Migration from Ollama: comparison/migration-from-ollama.md
+    - Feature Matrix: comparison/feature-matrix.md
+  - Library Guide:
+    - guide/index.md
     - Loading Models: guide/models.md
     - Text Generation: guide/generation.md
-    - Multimodal (Vision/Audio): guide/multimodal.md
     - Streaming: guide/streaming.md
     - Async Support: guide/async.md
     - Embeddings: guide/embeddings.md
+    - Sampling Strategies: guide/sampling.md
+    - Structured Output: guide/structured-output.md
+    - Grammar Constraints: guide/grammar.md
+    - LoRA Adapters: guide/lora.md
+    - Multimodal: guide/multimodal.md
+    - Sessions & State: guide/sessions.md
+    - Memory Management: guide/memory.md
+  - Daemon & CLI:
+    - daemon/index.md
+    - CLI Reference: daemon/cli.md
+    - Model Management: daemon/model-management.md
+    - Model Aliases: daemon/model-aliases.md
+    - Modelfile Format: daemon/modelfile.md
+    - REST API: daemon/rest-api.md
+    - OpenAI Compatibility: daemon/openai-api.md
+    - Anthropic Compatibility: daemon/anthropic-api.md
+    - Web UI: daemon/web-ui.md
+    - TUI Chat: daemon/tui.md
+    - Configuration: daemon/configuration.md
+    - Deployment: daemon/deployment.md
+  - Language Bindings:
+    - bindings/index.md
+    - Node.js: bindings/nodejs.md
+    - Python: bindings/python.md
+    - Go: bindings/go.md
+    - PHP: bindings/php.md
+    - C/C++: bindings/c-cpp.md
+  - Advanced:
+    - advanced/index.md
+    - Web Framework (Axum): advanced/web-framework.md
+    - WebSockets: advanced/websockets.md
+    - Streaming Audio: advanced/streaming-audio.md
+    - Format Conversion: advanced/format-conversion.md
+    - Parallel Processing: advanced/parallel.md
+    - Late Interaction (ColBERT): advanced/late-interaction.md
+    - SIMD Optimizations: advanced/simd.md
+    - Control Vectors: advanced/control-vectors.md
   - API Reference:
+    - api/index.md
     - Model: api/model.md
     - Context: api/context.md
     - Sampling: api/sampling.md
+    - Batch: api/batch.md
+    - Embeddings: api/embeddings.md
     - Multimodal: api/multimodal.md
-  - Examples:
-    - Basic Usage: examples/basic.md
+    - Async: api/async.md
+    - Streaming: api/streaming.md
+    - Configuration: api/configuration.md
+    - Errors: api/errors.md
+  - Tutorials & Examples:
+    - examples/index.md
+    - Chatbot: examples/chatbot.md
+    - RAG Pipeline: examples/rag.md
+    - Voice Assistant: examples/voice-assistant.md
+    - API Server: examples/api-server.md
+    - Streaming Generation: examples/streaming.md
+    - Batch Processing: examples/batch.md
     - Multimodal: examples/multimodal.md
-    - Web Service: examples/web-service.md
+    - Semantic Search: examples/semantic-search.md
+    - Edge Deployment: examples/edge-deployment.md
+  - Use Cases: use-cases.md
+  - Contributing: contributing.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/anthropics/mullama
+      link: https://github.com/neul-labs/mullama
+  generator: false
+
+extra_css:
+  - stylesheets/custom.css
