@@ -129,7 +129,7 @@ rustup target add x86_64-pc-windows-msvc
 #### Basic Build
 ```powershell
 # Clone repository
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 
 # Basic build
@@ -399,7 +399,7 @@ aplay /usr/share/sounds/alsa/Front_Left.wav
 #### Build Mullama
 ```bash
 # Clone and build
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 
 # Install additional Rust components
@@ -575,7 +575,7 @@ say "Audio test successful"
 #### Apple Silicon (M1/M2/M3) Build
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 
 # Apple Silicon optimized build

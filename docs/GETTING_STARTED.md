@@ -172,7 +172,7 @@ Test your setup with a simple build:
 
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 
 # Test basic build
