@@ -5,7 +5,33 @@ description: Multi-model LLM server with REST API, OpenAI/Anthropic compatibilit
 
 # Daemon & CLI
 
-The Mullama daemon provides a high-performance, multi-model LLM server with multiple client interfaces. It manages model lifecycles, serves OpenAI and Anthropic-compatible APIs, communicates via IPC for local tooling, and offers both a browser-based Web UI and a terminal-based TUI for interactive use.
+Mullama is a **library-first** LLM toolkit. You can embed it directly in your application with [native bindings](../bindings/index.md) for Python, Node.js, Go, PHP, Rust, and C/C++ -- no server required, no HTTP overhead.
+
+**When you need a server**, Mullama includes a full-featured daemon with OpenAI and Anthropic-compatible APIs, a Web UI, TUI chat, and CLI tools.
+
+!!! tip "Coming from Ollama?"
+    The daemon works just like Ollama: same CLI commands (`run`, `pull`, `serve`, `list`), same Modelfile format, same GGUF models. Just replace `ollama` with `mullama`.
+
+    **What you gain:** Native language bindings, Anthropic API, Web UI, TUI, ColBERT embeddings, and the option to embed directly in your app with zero HTTP overhead.
+
+---
+
+## Library vs Daemon: When to Use Each
+
+| Use Case | Recommended | Why |
+|----------|-------------|-----|
+| High-frequency inference | **Library** | Direct function calls (microseconds vs milliseconds) |
+| Embedding in your app | **Library** | No separate process, no IPC overhead |
+| Multiple clients / languages | **Daemon** | Shared server, OpenAI SDK compatibility |
+| Development / testing | **Daemon** | Quick iteration with CLI and Web UI |
+| Ollama replacement | **Daemon** | Identical CLI commands |
+| Production API server | **Daemon** | REST API, monitoring, multi-model |
+
+---
+
+## What the Daemon Provides
+
+The Mullama daemon is a high-performance, multi-model LLM server with multiple client interfaces. It manages model lifecycles, serves OpenAI and Anthropic-compatible APIs, and offers a Web UI and TUI for interactive use.
 
 ## What the Daemon Provides
 
