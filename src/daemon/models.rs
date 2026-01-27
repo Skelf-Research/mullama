@@ -30,6 +30,27 @@ use crate::{MtmdContext, MtmdParams};
 /// This allows N concurrent requests to the same model without blocking
 const CONTEXT_POOL_SIZE: usize = 4;
 
+/// Runtime configuration for a loaded model (from Ollama, Modelfile, or defaults)
+///
+/// This stores configuration that was downloaded from Ollama registry or parsed
+/// from a Modelfile, allowing the daemon to apply model-specific settings during
+/// inference (stop sequences, sampling parameters, etc.)
+#[derive(Debug, Clone, Default)]
+pub struct ModelConfig {
+    /// Stop sequences for generation (from Ollama template or parameters)
+    pub stop_sequences: Vec<String>,
+    /// System prompt to prepend to conversations
+    pub system_prompt: Option<String>,
+    /// Default temperature for sampling
+    pub temperature: Option<f32>,
+    /// Default top_p for sampling
+    pub top_p: Option<f32>,
+    /// Default top_k for sampling
+    pub top_k: Option<i32>,
+    /// Context size override (from Ollama num_ctx)
+    pub context_size: Option<u32>,
+}
+
 /// A loaded model instance with its context pool
 ///
 /// ## Context Pool
@@ -51,6 +72,8 @@ pub struct LoadedModel {
     next_context: AtomicUsize,
     pub info: ModelInfo,
     pub active_requests: AtomicU32,
+    /// Runtime configuration from Ollama, Modelfile, or defaults
+    pub config: ModelConfig,
     /// Multimodal context for vision/audio models (requires mmproj file)
     #[cfg(feature = "multimodal")]
     pub mtmd_context: Option<TokioRwLock<MtmdContext>>,
@@ -66,6 +89,7 @@ impl LoadedModel {
         info: ModelInfo,
         mtmd_context: Option<MtmdContext>,
         ctx_params: ContextParams,
+        config: ModelConfig,
     ) -> Result<Self, MullamaError> {
         // Create the context pool (first context is the one passed in)
         let mut contexts = Vec::with_capacity(CONTEXT_POOL_SIZE);
@@ -84,6 +108,7 @@ impl LoadedModel {
             next_context: AtomicUsize::new(0),
             info,
             active_requests: AtomicU32::new(0),
+            config,
             mtmd_context: mtmd_context.map(TokioRwLock::new),
         })
     }
@@ -96,6 +121,7 @@ impl LoadedModel {
         context: Context,
         info: ModelInfo,
         ctx_params: ContextParams,
+        config: ModelConfig,
     ) -> Result<Self, MullamaError> {
         // Create the context pool (first context is the one passed in)
         let mut contexts = Vec::with_capacity(CONTEXT_POOL_SIZE);
@@ -114,6 +140,7 @@ impl LoadedModel {
             next_context: AtomicUsize::new(0),
             info,
             active_requests: AtomicU32::new(0),
+            config,
         })
     }
 
@@ -178,6 +205,8 @@ pub struct ModelLoadConfig {
     pub threads: i32,
     /// Path to multimodal projector file (mmproj) for vision/audio models
     pub mmproj_path: Option<String>,
+    /// Runtime configuration from Ollama registry or Modelfile
+    pub model_config: Option<ModelConfig>,
 }
 
 impl ModelLoadConfig {
@@ -189,6 +218,7 @@ impl ModelLoadConfig {
             context_size: 4096,
             threads: num_cpus::get() as i32,
             mmproj_path: None,
+            model_config: None,
         }
     }
 
@@ -210,6 +240,12 @@ impl ModelLoadConfig {
     /// Set the multimodal projector path for vision/audio models
     pub fn mmproj(mut self, path: impl Into<String>) -> Self {
         self.mmproj_path = Some(path.into());
+        self
+    }
+
+    /// Set the model runtime configuration (from Ollama or Modelfile)
+    pub fn with_config(mut self, config: ModelConfig) -> Self {
+        self.model_config = Some(config);
         self
     }
 }
@@ -306,6 +342,8 @@ impl ModelManager {
         };
 
         // Create LoadedModel with context pool
+        let model_config = config.model_config.clone().unwrap_or_default();
+
         #[cfg(feature = "multimodal")]
         let loaded = Arc::new(LoadedModel::new(
             config.alias.clone(),
@@ -314,6 +352,7 @@ impl ModelManager {
             info.clone(),
             mtmd_context,
             ctx_params,
+            model_config,
         )?);
 
         #[cfg(not(feature = "multimodal"))]
@@ -323,6 +362,7 @@ impl ModelManager {
             context,
             info.clone(),
             ctx_params,
+            model_config,
         )?);
 
         // Add to models (DashMap handles locking internally per-shard)

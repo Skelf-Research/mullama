@@ -162,17 +162,16 @@ enum Commands {
         timeout: u64,
     },
 
-    /// One-shot text generation
+    /// Run a model with a prompt (auto-starts daemon if needed)
     Run {
-        /// The prompt to send
-        prompt: String,
+        /// Model to run (e.g., llama3.2:1b, phi3, hf:TheBloke/Llama-2-7B-GGUF)
+        model: String,
 
-        /// Model to use (default: daemon's default model)
-        #[arg(short, long)]
-        model: Option<String>,
+        /// The prompt to send (optional - opens interactive mode if not provided)
+        prompt: Option<String>,
 
         /// Maximum tokens to generate
-        #[arg(short = 'n', long, default_value = "256")]
+        #[arg(short = 'n', long, default_value = "512")]
         max_tokens: u32,
 
         /// Temperature for sampling
@@ -190,6 +189,14 @@ enum Commands {
         /// HTTP port for vision requests (uses HTTP API instead of IPC)
         #[arg(long, default_value = "8080")]
         http_port: u16,
+
+        /// Number of GPU layers to offload
+        #[arg(short, long, default_value = "0")]
+        gpu_layers: i32,
+
+        /// Context size
+        #[arg(short, long, default_value = "4096")]
+        context_size: u32,
 
         /// Show generation stats
         #[arg(long)]
@@ -537,36 +544,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Run {
-            prompt,
             model,
+            prompt,
             max_tokens,
             temperature,
             socket,
             image,
             http_port,
+            gpu_layers,
+            context_size,
             stats,
         } => {
-            if image.is_some() {
-                run_vision_prompt(
-                    http_port,
-                    &prompt,
-                    model.as_deref(),
-                    max_tokens,
-                    temperature,
-                    image.as_ref().unwrap(),
-                    stats,
-                )
-                .await?;
-            } else {
-                run_prompt(
-                    &socket,
-                    &prompt,
-                    model.as_deref(),
-                    max_tokens,
-                    temperature,
-                    stats,
-                )?;
-            }
+            run_model_with_prompt(
+                &model,
+                prompt.as_deref(),
+                max_tokens,
+                temperature,
+                &socket,
+                image.as_ref(),
+                http_port,
+                gpu_layers,
+                context_size,
+                stats,
+            )
+            .await?;
         }
 
         Commands::Models { socket, verbose } => {
@@ -693,46 +694,77 @@ async fn run_server(
     }
     println!();
 
-    // Resolve model paths (download HF models if needed)
+    // Resolve model paths (download HF/Ollama models if needed)
     let mut resolved_models: Vec<(String, PathBuf)> = Vec::new();
     for spec in &models {
-        if HfModelSpec::is_hf_spec(spec) {
-            println!("Resolving HuggingFace model: {}", spec);
-            match resolve_model_path(spec, true).await {
-                Ok((alias, path)) => {
-                    println!("  -> {} at {}", alias, path.display());
-                    resolved_models.push((alias, path));
-                }
-                Err(e) => {
-                    eprintln!("Failed to resolve {}: {}", spec, e);
-                    continue;
-                }
-            }
-        } else {
-            // Local path - parse alias:path format
-            let (alias, path) = if let Some(pos) = spec.find(':') {
-                let alias = &spec[..pos];
-                let path_str = &spec[pos + 1..];
-                // Check for Windows drive letter
-                if alias.len() == 1 && path_str.starts_with('\\') {
-                    let p = PathBuf::from(spec);
-                    let a = p
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "model".to_string());
-                    (a, p)
-                } else {
-                    (alias.to_string(), PathBuf::from(path_str))
-                }
-            } else {
-                let p = PathBuf::from(spec);
-                let a = p
+        use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
+
+        match resolve_model_name(spec) {
+            ResolvedModel::LocalPath(path) => {
+                let alias = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "model".to_string());
-                (a, p)
-            };
-            resolved_models.push((alias, path));
+                resolved_models.push((alias, path));
+            }
+            ResolvedModel::HuggingFace { spec: hf_spec, .. } => {
+                println!("Resolving HuggingFace model: {}", hf_spec);
+                match resolve_model_path(&hf_spec, true).await {
+                    Ok((alias, path)) => {
+                        println!("  -> {} at {}", alias, path.display());
+                        resolved_models.push((alias, path));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to resolve {}: {}", spec, e);
+                        continue;
+                    }
+                }
+            }
+            ResolvedModel::Ollama { name, tag } => {
+                use mullama::daemon::OllamaClient;
+                let model_name = format!("{}:{}", name, tag);
+                // Use name-tag format for alias to avoid colon conflicts with alias:path format
+                let alias = format!("{}-{}", name, tag);
+                println!("Resolving Ollama model: {}", model_name);
+                let client = match OllamaClient::new() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to initialize Ollama client: {}", e);
+                        continue;
+                    }
+                };
+                // Check if cached, if not pull it
+                if let Some(model) = client.get_cached(&model_name) {
+                    println!("  -> {} at {}", alias, model.gguf_path.display());
+                    resolved_models.push((alias.clone(), model.gguf_path.clone()));
+                } else {
+                    println!("  Pulling from Ollama registry...");
+                    match client.pull(&model_name, true).await {
+                        Ok(model) => {
+                            println!("  -> {} at {}", alias, model.gguf_path.display());
+                            resolved_models.push((alias.clone(), model.gguf_path.clone()));
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to pull {}: {}", model_name, e);
+                            continue;
+                        }
+                    }
+                }
+            }
+            ResolvedModel::Unknown(name) => {
+                // Try as a local path
+                let path = PathBuf::from(&name);
+                if path.exists() {
+                    let alias = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "model".to_string());
+                    resolved_models.push((alias, path));
+                } else {
+                    eprintln!("Unknown model: {} (not found locally or in registries)", name);
+                    continue;
+                }
+            }
         }
     }
     println!();
@@ -956,6 +988,212 @@ fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error
     // Start TUI
     let mut app = TuiApp::new(client);
     app.run()?;
+
+    Ok(())
+}
+
+/// Run a model with a prompt (Ollama-style: auto-starts daemon and loads model)
+async fn run_model_with_prompt(
+    model_spec: &str,
+    prompt: Option<&str>,
+    max_tokens: u32,
+    temperature: f32,
+    socket: &str,
+    image: Option<&PathBuf>,
+    http_port: u16,
+    gpu_layers: i32,
+    context_size: u32,
+    stats: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
+    use mullama::daemon::OllamaClient;
+
+    // Step 1: Resolve the model to get the path and alias
+    let (model_alias, model_path) = match resolve_model_name(model_spec) {
+        ResolvedModel::Ollama { name, tag } => {
+            let model_name = format!("{}:{}", name, tag);
+            let alias = format!("{}-{}", name, tag); // Use dash for daemon alias
+
+            // Check if cached, if not pull it
+            let client = OllamaClient::new()?;
+            let model = if let Some(m) = client.get_cached(&model_name) {
+                m
+            } else {
+                eprintln!("Pulling {}...", model_name);
+                client.pull(&model_name, true).await?
+            };
+            (alias, model.gguf_path)
+        }
+        ResolvedModel::HuggingFace { spec, mmproj: _ } => {
+            eprintln!("Resolving HuggingFace model: {}", spec);
+            let (alias, path) = resolve_model_path(&spec, true).await?;
+            (alias, path)
+        }
+        ResolvedModel::LocalPath(path) => {
+            let alias = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "model".to_string());
+            (alias, path)
+        }
+        ResolvedModel::Unknown(name) => {
+            // Try as local path
+            let path = PathBuf::from(&name);
+            if path.exists() {
+                let alias = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "model".to_string());
+                (alias, path)
+            } else {
+                return Err(format!("Unknown model: {} (not found locally or in registries)", name).into());
+            }
+        }
+    };
+
+    // Step 2: Check if daemon is running, auto-start if needed
+    let client = match connect(socket) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("Starting daemon...");
+
+            // Start daemon in background
+            let config = SpawnConfig {
+                binary_path: None,
+                socket: socket.to_string(),
+                http_port,
+                gpu_layers,
+                context_size,
+                startup_timeout: std::time::Duration::from_secs(60),
+                background: true,
+                log_file: Some(default_log_path()),
+            };
+
+            match spawn_daemon(&config) {
+                SpawnResult::AlreadyRunning => {}
+                SpawnResult::Spawned { .. } => {}
+                SpawnResult::Failed(e) => {
+                    return Err(format!("Failed to start daemon: {}", e).into());
+                }
+            }
+
+            // Wait for daemon to be ready
+            let mut attempts = 0;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if let Ok(c) = connect(socket) {
+                    break c;
+                }
+                attempts += 1;
+                if attempts > 150 {  // 30 seconds
+                    return Err("Timed out waiting for daemon to start".into());
+                }
+            }
+        }
+    };
+
+    // Step 3: Check if model is loaded, load if needed
+    let loaded_models = client.list_models()?;
+    let model_loaded = loaded_models.iter().any(|m| m.alias == model_alias);
+
+    if !model_loaded {
+        eprintln!("Loading {}...", model_alias);
+
+        match client.load_model_with_options(
+            &model_alias,
+            &model_path.display().to_string(),
+            gpu_layers,
+            context_size,
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("Failed to load model: {}", e).into());
+            }
+        }
+    }
+
+    // Step 4: Run the prompt or enter interactive mode
+    if let Some(prompt_text) = prompt {
+        if image.is_some() {
+            run_vision_prompt(
+                http_port,
+                prompt_text,
+                Some(&model_alias),
+                max_tokens,
+                temperature,
+                image.unwrap(),
+                stats,
+            )
+            .await?;
+        } else {
+            let result = client.chat(prompt_text, Some(&model_alias), max_tokens, temperature)?;
+            println!("{}", result.text);
+
+            if stats {
+                eprintln!();
+                eprintln!(
+                    "--- {} tokens in {}ms ({:.1} tok/s) using {} ---",
+                    result.completion_tokens,
+                    result.duration_ms,
+                    result.tokens_per_second(),
+                    result.model
+                );
+            }
+        }
+    } else {
+        // Interactive mode - simple REPL
+        eprintln!(">>> Send a message (/? for help)");
+
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout();
+
+        loop {
+            print!(">>> ");
+            stdout.flush()?;
+
+            let mut input = String::new();
+            stdin.read_line(&mut input)?;
+            let input = input.trim();
+
+            if input.is_empty() {
+                continue;
+            }
+
+            match input {
+                "/bye" | "/exit" | "/quit" => break,
+                "/?" | "/help" => {
+                    eprintln!("Available commands:");
+                    eprintln!("  /bye, /exit, /quit  - Exit interactive mode");
+                    eprintln!("  /clear              - Clear conversation");
+                    eprintln!("  /?                  - Show this help");
+                    continue;
+                }
+                "/clear" => {
+                    eprintln!("(Conversation cleared)");
+                    continue;
+                }
+                _ => {}
+            }
+
+            match client.chat(input, Some(&model_alias), max_tokens, temperature) {
+                Ok(result) => {
+                    println!("{}", result.text);
+                    if stats {
+                        eprintln!(
+                            "--- {} tokens in {}ms ({:.1} tok/s) ---",
+                            result.completion_tokens,
+                            result.duration_ms,
+                            result.tokens_per_second()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
+            println!();
+        }
+    }
 
     Ok(())
 }
@@ -1331,23 +1569,64 @@ fn embed_text(
 
 async fn pull_model(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::error::Error>> {
     use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
+    use mullama::daemon::OllamaClient;
 
-    // First try to resolve as an alias
-    let resolved_spec = match resolve_model_name(spec) {
-        ResolvedModel::HuggingFace { spec: hf_spec, .. } => hf_spec,
-        ResolvedModel::LocalPath(path) => {
-            return Err(format!("'{}' is a local path, not a downloadable model", path.display()).into());
+    // First try to resolve the model name
+    let resolved = resolve_model_name(spec);
+
+    match resolved {
+        ResolvedModel::Ollama { name, tag } => {
+            // Pull from Ollama registry
+            let client = OllamaClient::new()?;
+            let model_name = format!("{}:{}", name, tag);
+
+            let model = client.pull(&model_name, show_progress).await?;
+
+            println!();
+            println!("Model pulled successfully!");
+            println!("  Name: {}:{}", model.name, model.tag);
+            println!("  Path: {}", model.gguf_path.display());
+            println!("  Size: {}", format_size(model.total_size));
+
+            if model.template.is_some() {
+                println!("  Template: included");
+            }
+            if model.system_prompt.is_some() {
+                println!("  System prompt: included");
+            }
+            if model.projector_path.is_some() {
+                println!("  Vision projector: included");
+            }
+
+            println!();
+            println!("To use this model:");
+            println!("  mullama run {}:{} \"Hello!\"", model.name, model.tag);
+            println!("  mullama serve --model {}:{}", model.name, model.tag);
+
+            Ok(())
         }
+
+        ResolvedModel::HuggingFace { spec: hf_spec, .. } => {
+            // Pull from HuggingFace
+            pull_from_huggingface(&hf_spec, show_progress).await
+        }
+
+        ResolvedModel::LocalPath(path) => {
+            Err(format!("'{}' is a local path, not a downloadable model", path.display()).into())
+        }
+
         ResolvedModel::Unknown(_) => {
             // Not a known alias, try as direct HF spec
-            spec.to_string()
+            pull_from_huggingface(spec, show_progress).await
         }
-    };
+    }
+}
 
-    let hf_spec = HfModelSpec::parse(&resolved_spec).ok_or_else(|| {
+async fn pull_from_huggingface(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let hf_spec = HfModelSpec::parse(spec).ok_or_else(|| {
         format!(
             "Unknown model '{}'\n\
-             Use an alias (e.g., llama3.2:1b, phi3:mini) or HF format: hf:owner/repo:filename.gguf",
+             Use Ollama format (e.g., llama3:1b) or HF format: hf:owner/repo:filename.gguf",
             spec
         )
     })?;
@@ -1685,10 +1964,19 @@ fn format_time_ago(time: &chrono::DateTime<chrono::Utc>) -> String {
     }
 }
 
-/// List all local models (cached HuggingFace + custom models)
+/// List all local models (cached HuggingFace + Ollama + custom models)
 async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use mullama::daemon::OllamaClient;
+
     let downloader = HfDownloader::new()?;
     let cached = downloader.list_cached();
+
+    // Load Ollama models
+    let ollama_client = OllamaClient::new().ok();
+    let ollama_models: Vec<_> = ollama_client
+        .as_ref()
+        .map(|c| c.list_cached())
+        .unwrap_or_default();
 
     // Also check ~/.mullama/models/ for custom models
     let mullama_dir = dirs::home_dir()
@@ -1720,6 +2008,21 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
     if json_output {
         let mut models_json = Vec::new();
 
+        // Ollama models first
+        for model in &ollama_models {
+            let model_name = format!("{}:{}", model.name, model.tag);
+            models_json.push(serde_json::json!({
+                "name": model_name,
+                "source": "ollama",
+                "size": model.total_size,
+                "size_formatted": format_size(model.total_size),
+                "modified": model.pulled_at,
+                "path": model.gguf_path,
+                "template": model.template.is_some(),
+                "system_prompt": model.system_prompt.is_some(),
+            }));
+        }
+
         for model in &cached {
             models_json.push(serde_json::json!({
                 "name": format!("{}:{}", model.repo_id.replace('/', "-"),
@@ -1749,7 +2052,7 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
         return Ok(());
     }
 
-    if cached.is_empty() && custom_models.is_empty() {
+    if cached.is_empty() && custom_models.is_empty() && ollama_models.is_empty() {
         println!("No models found.");
         println!();
         println!("Download models with:");
@@ -1759,6 +2062,38 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
     }
 
     println!("NAME                                      SIZE       MODIFIED");
+
+    // Print Ollama models first
+    for model in &ollama_models {
+        let name = format!("{}:{}", model.name, model.tag);
+        let name_display = if name.len() > 40 {
+            format!("{}...", &name[..37])
+        } else {
+            name.clone()
+        };
+
+        let modified = chrono::DateTime::parse_from_rfc3339(&model.pulled_at)
+            .map(|dt| format_time_ago(&dt.with_timezone(&chrono::Utc)))
+            .unwrap_or_else(|_| model.pulled_at.clone());
+
+        println!("{:<42} {:>10} {}",
+            name_display,
+            format_size(model.total_size),
+            modified
+        );
+
+        if verbose {
+            println!("    Source:   Ollama Registry");
+            println!("    Path:     {}", model.gguf_path.display());
+            if model.template.is_some() {
+                println!("    Template: Yes");
+            }
+            if model.system_prompt.is_some() {
+                println!("    System:   Yes");
+            }
+            println!();
+        }
+    }
 
     // Print cached HF models
     for model in &cached {
@@ -1782,8 +2117,9 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
         );
 
         if verbose {
-            println!("    Path: {}", model.local_path.display());
-            println!("    Repo: {}", model.repo_id);
+            println!("    Source: HuggingFace");
+            println!("    Path:   {}", model.local_path.display());
+            println!("    Repo:   {}", model.repo_id);
             println!();
         }
     }
@@ -1803,14 +2139,16 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
         );
 
         if verbose {
-            println!("    Path: {}", path.display());
+            println!("    Source: Local");
+            println!("    Path:   {}", path.display());
             println!();
         }
     }
 
-    let total_count = cached.len() + custom_models.len();
+    let total_count = cached.len() + custom_models.len() + ollama_models.len();
     let total_size: u64 = cached.iter().map(|m| m.size_bytes).sum::<u64>()
-        + custom_models.iter().map(|(_, _, s, _)| s).sum::<u64>();
+        + custom_models.iter().map(|(_, _, s, _)| s).sum::<u64>()
+        + ollama_models.iter().map(|m| m.total_size).sum::<u64>();
 
     println!();
     println!("{} model(s), {} total", total_count, format_size(total_size));
@@ -2217,6 +2555,27 @@ async fn resolve_base_model(
             println!("Downloading '{}' from HuggingFace...", from);
             let (_, resolved_path) = resolve_model_path(&spec, show_progress).await?;
             Ok(resolved_path)
+        }
+        ResolvedModel::Ollama { name, tag } => {
+            use mullama::daemon::OllamaClient;
+
+            let model_name = format!("{}:{}", name, tag);
+
+            // Check if Ollama model is cached
+            let client = OllamaClient::new()?;
+            if let Some(model) = client.get_cached(&model_name) {
+                Ok(model.gguf_path)
+            } else if download {
+                println!();
+                println!("Pulling '{}' from Ollama registry...", model_name);
+                let model = client.pull(&model_name, show_progress).await?;
+                Ok(model.gguf_path)
+            } else {
+                Err(format!(
+                    "Ollama model '{}' not downloaded. Use --download=true or run 'mullama pull {}'",
+                    model_name, model_name
+                ).into())
+            }
         }
         ResolvedModel::Unknown(name) => {
             // Check if it's cached
