@@ -10,7 +10,7 @@ Idiomatic Go bindings for the Mullama LLM library, built with [cgo](https://pkg.
 ## Installation
 
 ```bash
-go get github.com/neul-labs/mullama-go
+go get github.com/skelf-research/mullama-go
 ```
 
 ### Prerequisites
@@ -48,7 +48,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 func main() {
@@ -621,7 +621,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 func main() {
@@ -661,7 +661,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 func main() {
@@ -699,7 +699,7 @@ import (
     "log"
     "sort"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 type SearchResult struct {
@@ -770,7 +770,7 @@ import (
     "log"
     "sync"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 func main() {
@@ -898,7 +898,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/neul-labs/mullama-go"
+    "github.com/skelf-research/mullama-go"
 )
 
 var model *mullama.Model

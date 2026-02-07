@@ -5,7 +5,7 @@
 [![Crates.io](https://img.shields.io/crates/v/mullama)](https://crates.io/crates/mullama)
 [![PyPI](https://img.shields.io/pypi/v/mullama)](https://pypi.org/project/mullama/)
 [![npm](https://img.shields.io/npm/v/mullama)](https://www.npmjs.com/package/mullama)
-[![Documentation](https://img.shields.io/badge/docs-neullabs.com-blue)](https://docs.neullabs.com/mullama/)
+[![Documentation](https://img.shields.io/badge/docs-skelfresearch.com-blue)](https://docs.skelfresearch.com/mullama/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Mullama is a local LLM server and library that works just like Ollama -- same CLI commands, same model format, same Modelfile syntax -- but with native language bindings for Rust, Python, Node.js, Go, PHP, and C/C++.
@@ -24,13 +24,13 @@ mullama list
 **One-liner (Linux/macOS):**
 
 ```bash
-curl -fsSL https://mullama.dev/install.sh | sh
+curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-iwr -useb https://mullama.dev/install.ps1 | iex
+iwr -useb https://skelfresearch.com/mullama/install.ps1 | iex
 ```
 
 **Package managers:**
@@ -46,10 +46,10 @@ pip install mullama
 npm install mullama
 
 # Go
-go get github.com/neul-labs/mullama-go
+go get github.com/skelf-research/mullama-go
 
 # PHP
-composer require neul-labs/mullama
+composer require skelf-research/mullama
 ```
 
 ## Quick Start
@@ -234,7 +234,7 @@ features = [
 | [Platform Setup](./docs/PLATFORM_SETUP.md) | OS-specific setup |
 | [Daemon Guide](./docs/DAEMON.md) | Daemon, CLI, API reference |
 | [Migration from Ollama](./docs/MIGRATION_FROM_OLLAMA.md) | Quick migration checklist |
-| [Full Documentation](https://docs.neullabs.com/mullama/) | Complete docs site |
+| [Full Documentation](https://docs.skelfresearch.com/mullama/) | Complete docs site |
 
 ## Examples
 
@@ -255,7 +255,7 @@ cargo run --example late_interaction --features late-interaction
 ## Contributing
 
 ```bash
-git clone --recurse-submodules https://github.com/neul-labs/mullama.git
+git clone --recurse-submodules https://github.com/skelf-research/mullama.git
 cd mullama
 cargo test --all-features
 ```

@@ -10,7 +10,7 @@ description: Drop-in Ollama replacement with native Node.js, Python, Go, PHP, an
 Mullama is a local LLM server and library that works just like Ollama -- same CLI commands, same Modelfile syntax -- but with native bindings for **Python, Node.js, Go, PHP, Rust, and C/C++**.
 
 ```bash
-curl -fsSL https://mullama.dev/install.sh | sh
+curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
 mullama run llama3.2:1b "Hello!"
 ```
 
@@ -18,7 +18,7 @@ mullama run llama3.2:1b "Hello!"
 
 [Get Started](getting-started/index.md){ .md-button .md-button--primary }
 [Compare to Ollama](comparison/vs-ollama.md){ .md-button }
-[View on GitHub](https://github.com/neul-labs/mullama){ .md-button }
+[View on GitHub](https://github.com/skelf-research/mullama){ .md-button }
 
 </div>
 

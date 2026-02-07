@@ -47,10 +47,10 @@
     "native",
     "napi"
   ],
-  "author": "Neul Labs <hello@neul.uk>",
+  "author": "Skelf Research <support@skelfresearch.com>",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/neul-labs/mullama"
+    "url": "https://github.com/skelf-research/mullama"
   }
 }

@@ -199,14 +199,14 @@ const resetSettings = () => {
       </p>
       <div class="flex gap-4 text-sm">
         <a
-          href="https://github.com/neul-labs/mullama"
+          href="https://github.com/skelf-research/mullama"
           target="_blank"
           class="text-primary-600 hover:text-primary-700 dark:text-primary-400"
         >
           GitHub
         </a>
         <a
-          href="https://mullama.dev"
+          href="https://docs.skelfresearch.com/mullama"
           target="_blank"
           class="text-primary-600 hover:text-primary-700 dark:text-primary-400"
         >

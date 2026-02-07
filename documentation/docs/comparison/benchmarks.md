@@ -312,7 +312,7 @@ Time between consecutive tokens reaching the application layer:
 
 ```bash
 # Clone the repository
-git clone https://github.com/neul-labs/mullama.git
+git clone https://github.com/skelf-research/mullama.git
 cd mullama
 git submodule update --init --recursive
 

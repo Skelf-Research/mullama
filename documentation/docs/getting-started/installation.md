@@ -83,7 +83,7 @@ Install Mullama for your language or as a standalone CLI/daemon. Pre-built binar
 === "Go"
 
     ```bash
-    go get github.com/neul-labs/mullama-go
+    go get github.com/skelf-research/mullama-go
     ```
 
     !!! note "CGo Required"
@@ -92,7 +92,7 @@ Install Mullama for your language or as a standalone CLI/daemon. Pre-built binar
 === "PHP"
 
     ```bash
-    composer require neul-labs/mullama
+    composer require skelf-research/mullama
     ```
 
     !!! note "FFI Extension"
@@ -103,7 +103,7 @@ Install Mullama for your language or as a standalone CLI/daemon. Pre-built binar
     Build the shared library from source:
 
     ```bash
-    git clone --recurse-submodules https://github.com/neul-labs/mullama.git
+    git clone --recurse-submodules https://github.com/skelf-research/mullama.git
     cd mullama/bindings/ffi
     cargo build --release
     ```
@@ -221,7 +221,7 @@ For the latest features or custom builds, compile Mullama from source.
 ### Step 1: Clone the Repository
 
 ```bash
-git clone --recurse-submodules https://github.com/neul-labs/mullama.git
+git clone --recurse-submodules https://github.com/skelf-research/mullama.git
 cd mullama
 ```
 
@@ -276,7 +276,7 @@ Use the git dependency for bleeding-edge features:
 
 ```toml title="Cargo.toml"
 [dependencies]
-mullama = { git = "https://github.com/neul-labs/mullama.git", features = ["full"] }
+mullama = { git = "https://github.com/skelf-research/mullama.git", features = ["full"] }
 ```
 
 ---
@@ -335,7 +335,7 @@ Confirm that Mullama is correctly installed for your language.
 
     import (
         "fmt"
-        "github.com/neul-labs/mullama-go"
+        "github.com/skelf-research/mullama-go"
     )
 
     func main() {
@@ -388,7 +388,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-RUN git clone --recurse-submodules https://github.com/neul-labs/mullama.git .
+RUN git clone --recurse-submodules https://github.com/skelf-research/mullama.git .
 RUN cargo build --release --features daemon
 
 FROM debian:bookworm-slim
@@ -425,7 +425,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
-RUN git clone --recurse-submodules https://github.com/neul-labs/mullama.git .
+RUN git clone --recurse-submodules https://github.com/skelf-research/mullama.git .
 
 ENV LLAMA_CUDA=1
 RUN cargo build --release --features daemon
@@ -483,12 +483,12 @@ services:
 
 ## Pre-built Binaries
 
-Download pre-built daemon binaries from the [GitHub Releases](https://github.com/neul-labs/mullama/releases) page.
+Download pre-built daemon binaries from the [GitHub Releases](https://github.com/skelf-research/mullama/releases) page.
 
 === "Linux (x86_64)"
 
     ```bash
-    curl -LO https://github.com/neul-labs/mullama/releases/latest/download/mullama-linux-x86_64.tar.gz
+    curl -LO https://github.com/skelf-research/mullama/releases/latest/download/mullama-linux-x86_64.tar.gz
     tar xzf mullama-linux-x86_64.tar.gz
     sudo mv mullama /usr/local/bin/
     mullama --version
@@ -497,7 +497,7 @@ Download pre-built daemon binaries from the [GitHub Releases](https://github.com
 === "Linux (ARM64)"
 
     ```bash
-    curl -LO https://github.com/neul-labs/mullama/releases/latest/download/mullama-linux-aarch64.tar.gz
+    curl -LO https://github.com/skelf-research/mullama/releases/latest/download/mullama-linux-aarch64.tar.gz
     tar xzf mullama-linux-aarch64.tar.gz
     sudo mv mullama /usr/local/bin/
     mullama --version
@@ -506,7 +506,7 @@ Download pre-built daemon binaries from the [GitHub Releases](https://github.com
 === "macOS (Apple Silicon)"
 
     ```bash
-    curl -LO https://github.com/neul-labs/mullama/releases/latest/download/mullama-macos-aarch64.tar.gz
+    curl -LO https://github.com/skelf-research/mullama/releases/latest/download/mullama-macos-aarch64.tar.gz
     tar xzf mullama-macos-aarch64.tar.gz
     sudo mv mullama /usr/local/bin/
     mullama --version
@@ -515,7 +515,7 @@ Download pre-built daemon binaries from the [GitHub Releases](https://github.com
 === "macOS (Intel)"
 
     ```bash
-    curl -LO https://github.com/neul-labs/mullama/releases/latest/download/mullama-macos-x86_64.tar.gz
+    curl -LO https://github.com/skelf-research/mullama/releases/latest/download/mullama-macos-x86_64.tar.gz
     tar xzf mullama-macos-x86_64.tar.gz
     sudo mv mullama /usr/local/bin/
     mullama --version
@@ -524,7 +524,7 @@ Download pre-built daemon binaries from the [GitHub Releases](https://github.com
 === "Windows"
 
     ```powershell
-    Invoke-WebRequest -Uri "https://github.com/neul-labs/mullama/releases/latest/download/mullama-windows-x86_64.zip" -OutFile mullama.zip
+    Invoke-WebRequest -Uri "https://github.com/skelf-research/mullama/releases/latest/download/mullama-windows-x86_64.zip" -OutFile mullama.zip
     Expand-Archive mullama.zip -DestinationPath .
     Move-Item mullama.exe C:\Windows\System32\
     mullama --version
