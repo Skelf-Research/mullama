@@ -63,8 +63,16 @@ pub enum Request {
         messages: Vec<ChatMessage>,
         #[serde(default = "default_max_tokens")]
         max_tokens: u32,
-        #[serde(default = "default_temperature")]
-        temperature: f32,
+        #[serde(default)]
+        temperature: Option<f32>,
+        #[serde(default)]
+        top_p: Option<f32>,
+        #[serde(default)]
+        top_k: Option<i32>,
+        #[serde(default)]
+        frequency_penalty: Option<f32>,
+        #[serde(default)]
+        presence_penalty: Option<f32>,
         #[serde(default)]
         stream: bool,
         #[serde(default)]
@@ -89,8 +97,16 @@ pub enum Request {
         prompt: String,
         #[serde(default = "default_max_tokens")]
         max_tokens: u32,
-        #[serde(default = "default_temperature")]
-        temperature: f32,
+        #[serde(default)]
+        temperature: Option<f32>,
+        #[serde(default)]
+        top_p: Option<f32>,
+        #[serde(default)]
+        top_k: Option<i32>,
+        #[serde(default)]
+        frequency_penalty: Option<f32>,
+        #[serde(default)]
+        presence_penalty: Option<f32>,
         #[serde(default)]
         stream: bool,
         #[serde(default)]
@@ -116,10 +132,6 @@ pub enum Request {
 fn default_max_tokens() -> u32 {
     512
 }
-fn default_temperature() -> f32 {
-    0.7
-}
-
 /// Chat message for chat completions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
