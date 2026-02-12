@@ -151,7 +151,7 @@ impl GoTemplateConverter {
             (r"\{\{\s*\.System\s*\}\}", "{system}"),
             (r"\{\{\s*\.Prompt\s*\}\}", "{user}"),
             (r"\{\{\s*\.Response\s*\}\}", "{assistant}"),
-            (r"\{\{\s*\.First\s*\}\}", ""),  // Loop index, usually not needed
+            (r"\{\{\s*\.First\s*\}\}", ""), // Loop index, usually not needed
             // Handle .Content in message loops
             (r"\{\{\s*\.Content\s*\}\}", "{content}"),
             (r"\{\{\s*\.Role\s*\}\}", "{role}"),
@@ -195,7 +195,9 @@ impl GoTemplateConverter {
 
         // Convert if not .First
         let if_not_first_re = Regex::new(r"\{\{-?\s*if\s+not\s+\.First\s*-?\}\}").unwrap();
-        result = if_not_first_re.replace_all(&result, "{if_not_first}").to_string();
+        result = if_not_first_re
+            .replace_all(&result, "{if_not_first}")
+            .to_string();
 
         // Convert else
         let else_re = Regex::new(r"\{\{-?\s*else\s*-?\}\}").unwrap();
@@ -216,11 +218,16 @@ impl GoTemplateConverter {
 
         // {{ range .Messages }}...{{ end }}
         let range_re = Regex::new(r"\{\{-?\s*range\s+\.Messages\s*-?\}\}").unwrap();
-        result = range_re.replace_all(&result, "{foreach_message}").to_string();
+        result = range_re
+            .replace_all(&result, "{foreach_message}")
+            .to_string();
 
         // The end marker for ranges
         // Note: This is simplified; in practice we'd need to properly match nested structures
-        result = result.replace("{end_if_system}{end_if_system}", "{end_foreach}{end_if_system}");
+        result = result.replace(
+            "{end_if_system}{end_if_system}",
+            "{end_foreach}{end_if_system}",
+        );
 
         result
     }
@@ -249,7 +256,7 @@ impl GoTemplateConverter {
             "<|end|>",
             "<|eot_id|>",
             "<|im_end|>",
-            "<|start_header_id|>",  // llama3 - new message header start indicates end of turn
+            "<|start_header_id|>", // llama3 - new message header start indicates end of turn
             "</s>",
             "[/INST]",
             "<</SYS>>",

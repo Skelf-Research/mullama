@@ -65,7 +65,10 @@ pub use protocol::{
 };
 
 // Model management
-pub use models::{LoadedModel, ModelLoadConfig, ModelManager, RequestGuard};
+pub use models::{
+    LoadedModel, ModelConfig, ModelLoadConfig, ModelManager, RequestGuard,
+    DEFAULT_CONTEXT_POOL_SIZE,
+};
 
 // Server
 pub use server::{Daemon, DaemonBuilder, DaemonConfig};
@@ -111,15 +114,17 @@ pub use anthropic::{
 
 // Daemon spawn utilities
 pub use spawn::{
-    daemon_status, ensure_daemon_running, is_daemon_running, spawn_daemon, stop_daemon,
-    DaemonInfo, SpawnConfig, SpawnResult,
+    daemon_status, ensure_daemon_running, is_daemon_running, spawn_daemon, stop_daemon, DaemonInfo,
+    SpawnConfig, SpawnResult,
 };
 
 // Embedded Web UI
 pub use ui::{serve_ui, ui_available};
 
 // Default models
-pub use defaults::{get_default, list_default_infos, list_defaults, DefaultModel, DefaultModelInfo};
+pub use defaults::{
+    get_default, list_default_infos, list_defaults, DefaultModel, DefaultModelInfo,
+};
 
 /// Default IPC socket path
 #[cfg(unix)]

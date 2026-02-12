@@ -3,12 +3,14 @@
 //! Provides REST endpoints compatible with the OpenAI API specification.
 
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{
-    extract::{Json, Path, State},
-    http::StatusCode,
+    extract::{DefaultBodyLimit, Json, Path, State},
+    http::{header::AUTHORIZATION, HeaderMap, Request, StatusCode},
+    middleware::{from_fn_with_state, Next},
     response::{sse::Event, IntoResponse, Response, Sse},
     routing::{delete, get, post},
     Router,
@@ -17,10 +19,12 @@ use futures::stream::{self};
 use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt as _;
-use tower_http::cors::{Any, CorsLayer};
+use tower::limit::ConcurrencyLimitLayer;
 
 use super::anthropic::messages_handler;
-use super::protocol::{ChatMessage, EmbeddingInput, Response as ProtoResponse, ResponseFormat, Usage};
+use super::protocol::{
+    ChatMessage, EmbeddingInput, ErrorCode, Response as ProtoResponse, ResponseFormat, Usage,
+};
 use super::server::Daemon;
 
 /// Shared state for the HTTP server
@@ -28,12 +32,7 @@ pub type AppState = Arc<Daemon>;
 
 /// Create the OpenAI-compatible router
 pub fn create_openai_router(daemon: Arc<Daemon>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    Router::new()
+    let mut protected = Router::new()
         // OpenAI API endpoints
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/completions", post(completions))
@@ -54,16 +53,119 @@ pub fn create_openai_router(daemon: Arc<Daemon>) -> Router {
         // Default models API
         .route("/api/defaults", get(api_list_defaults))
         .route("/api/defaults/:name/use", post(api_use_default))
-        // Health and status
-        .route("/health", get(health))
+        // Status and metrics
         .route("/status", get(status))
         .route("/metrics", get(metrics))
+        .with_state(daemon.clone())
+        .layer(DefaultBodyLimit::max(daemon.config.max_request_body_bytes))
+        .layer(ConcurrencyLimitLayer::new(
+            daemon.config.max_concurrent_http_requests,
+        ));
+
+    if daemon.config.max_requests_per_second > 0 {
+        let rate_limit_state = HttpRateLimitState {
+            limit: daemon.config.max_requests_per_second,
+            second: Arc::new(AtomicU64::new(unix_timestamp_secs())),
+            count: Arc::new(AtomicU64::new(0)),
+        };
+        protected = protected.layer(from_fn_with_state(rate_limit_state, enforce_rate_limit));
+    }
+
+    if daemon.config.enforce_http_api_key {
+        if let Some(api_key) = daemon.config.http_api_key.as_deref() {
+            let auth = HttpAuthState {
+                api_key: Arc::<str>::from(api_key),
+            };
+            protected = protected.layer(from_fn_with_state(auth, require_api_key));
+        }
+    }
+
+    Router::new()
+        .route("/health", get(health))
         // Embedded Web UI
         .route("/ui", get(ui_redirect))
         .route("/ui/", get(serve_ui_handler))
         .route("/ui/*path", get(serve_ui_handler))
         .with_state(daemon)
-        .layer(cors)
+        .merge(protected)
+}
+
+#[derive(Clone)]
+struct HttpAuthState {
+    api_key: Arc<str>,
+}
+
+#[derive(Clone)]
+struct HttpRateLimitState {
+    limit: u64,
+    second: Arc<AtomicU64>,
+    count: Arc<AtomicU64>,
+}
+
+fn header_api_key(headers: &HeaderMap) -> Option<&str> {
+    if let Some(value) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = value.strip_prefix("Bearer ") {
+            return Some(token.trim());
+        }
+    }
+
+    headers.get("x-api-key").and_then(|v| v.to_str().ok())
+}
+
+async fn require_api_key(
+    State(auth): State<HttpAuthState>,
+    headers: HeaderMap,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    if let Some(key) = header_api_key(&headers) {
+        if key == auth.api_key.as_ref() {
+            return next.run(request).await;
+        }
+    }
+
+    let body = Json(ErrorResponse {
+        error: ErrorDetail {
+            message: "Missing or invalid API key".to_string(),
+            error_type: "authentication_error".to_string(),
+            code: Some("invalid_api_key".to_string()),
+        },
+    });
+    (StatusCode::UNAUTHORIZED, body).into_response()
+}
+
+async fn enforce_rate_limit(
+    State(rate): State<HttpRateLimitState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let now = unix_timestamp_secs();
+    let seen_second = rate.second.load(Ordering::Relaxed);
+    if seen_second != now
+        && rate
+            .second
+            .compare_exchange(seen_second, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        rate.count.store(0, Ordering::Relaxed);
+    }
+
+    let count = rate.count.fetch_add(1, Ordering::Relaxed) + 1;
+    if count > rate.limit {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: ErrorDetail {
+                    message: "Rate limit exceeded".to_string(),
+                    error_type: "rate_limit_error".to_string(),
+                    code: Some("rate_limited".to_string()),
+                },
+            }),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
 }
 
 // ==================== Request/Response Types ====================
@@ -233,6 +335,13 @@ fn default_temperature() -> f32 {
     0.7
 }
 
+fn unix_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 // ==================== Handlers ====================
 
 /// POST /v1/chat/completions
@@ -288,7 +397,7 @@ async fn chat_completions(
                     .into_response());
                 }
                 super::protocol::Response::Error { code, message, .. } => {
-                    return Err(ApiError::new(format!("{:?}: {}", code, message)));
+                    return Err(ApiError::from_protocol_error(code, message));
                 }
                 _ => return Err(ApiError::new("Unexpected response")),
             }
@@ -330,7 +439,7 @@ async fn chat_completions(
         })
         .into_response()),
         super::protocol::Response::Error { code, message, .. } => {
-            Err(ApiError::new(format!("{:?}: {}", code, message)))
+            Err(ApiError::from_protocol_error(code, message))
         }
         _ => Err(ApiError::new("Unexpected response")),
     }
@@ -520,6 +629,7 @@ async fn completions(
         max_tokens: req.max_tokens,
         temperature: req.temperature,
         stream: req.stream,
+        stop: req.stop.unwrap_or_default(),
     };
 
     match daemon.handle_request(request).await {
@@ -540,7 +650,7 @@ async fn completions(
             usage: resp.usage,
         })),
         super::protocol::Response::Error { code, message, .. } => {
-            Err(ApiError::new(format!("{:?}: {}", code, message)))
+            Err(ApiError::from_protocol_error(code, message))
         }
         _ => Err(ApiError::new("Unexpected response")),
     }
@@ -554,10 +664,10 @@ async fn list_models(State(daemon): State<AppState>) -> Json<ModelsResponse> {
         object: "list".to_string(),
         data: models
             .into_iter()
-            .map(|(alias, info, _, _)| ModelObject {
+            .map(|(alias, _info, _, _)| ModelObject {
                 id: alias,
                 object: "model".to_string(),
-                created: 0, // TODO: track creation time
+                created: unix_timestamp_secs(),
                 owned_by: "local".to_string(),
             })
             .collect(),
@@ -573,7 +683,7 @@ async fn get_model(
         Ok(model) => Ok(Json(ModelObject {
             id: model.alias.clone(),
             object: "model".to_string(),
-            created: 0,
+            created: unix_timestamp_secs(),
             owned_by: "local".to_string(),
         })),
         Err(_) => Err(ApiError::not_found(&model_id)),
@@ -646,8 +756,12 @@ async fn status(State(daemon): State<AppState>) -> Json<serde_json::Value> {
 async fn metrics(State(daemon): State<AppState>) -> impl IntoResponse {
     let models = daemon.models.list();
     let uptime = daemon.start_time.elapsed().as_secs();
-    let total_requests = daemon.total_requests.load(std::sync::atomic::Ordering::Relaxed);
-    let active_requests = daemon.active_requests.load(std::sync::atomic::Ordering::Relaxed);
+    let total_requests = daemon
+        .total_requests
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let active_requests = daemon
+        .active_requests
+        .load(std::sync::atomic::Ordering::Relaxed);
     let tokens_generated = daemon.models.total_tokens();
 
     let mut output = String::new();
@@ -678,7 +792,10 @@ async fn metrics(State(daemon): State<AppState>) -> impl IntoResponse {
 
     output.push_str("\n# HELP mullama_tokens_generated_total Total tokens generated\n");
     output.push_str("# TYPE mullama_tokens_generated_total counter\n");
-    output.push_str(&format!("mullama_tokens_generated_total {}\n", tokens_generated));
+    output.push_str(&format!(
+        "mullama_tokens_generated_total {}\n",
+        tokens_generated
+    ));
 
     output.push_str("\n# HELP mullama_gpu_available Whether GPU offload is available\n");
     output.push_str("# TYPE mullama_gpu_available gauge\n");
@@ -876,6 +993,26 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+fn model_config_from_modelfile(
+    modelfile: &crate::modelfile::Modelfile,
+) -> super::models::ModelConfig {
+    let mut stop_sequences = modelfile.stop_sequences.clone();
+    if stop_sequences.is_empty() {
+        if let Some(stop) = modelfile.stop() {
+            stop_sequences = stop;
+        }
+    }
+
+    super::models::ModelConfig {
+        stop_sequences,
+        system_prompt: modelfile.system.clone(),
+        temperature: modelfile.temperature().map(|v| v as f32),
+        top_p: modelfile.top_p().map(|v| v as f32),
+        top_k: modelfile.top_k().and_then(|v| i32::try_from(v).ok()),
+        context_size: modelfile.num_ctx().and_then(|v| u32::try_from(v).ok()),
+    }
+}
+
 /// Pull a model from HuggingFace
 async fn api_pull_model(
     State(_daemon): State<AppState>,
@@ -926,7 +1063,10 @@ async fn api_pull_model(
                     StatusCode::NOT_FOUND,
                     Json(ModelOperationResponse {
                         success: false,
-                        message: format!("Unknown model '{}'. Use hf:owner/repo format or a known alias.", name),
+                        message: format!(
+                            "Unknown model '{}'. Use hf:owner/repo format or a known alias.",
+                            name
+                        ),
                         model: None,
                     }),
                 ));
@@ -1163,7 +1303,8 @@ async fn api_load_model(
                 let cached = downloader.list_cached();
                 let found = cached.iter().find(|m| {
                     m.repo_id == hf_spec.repo_id
-                        && (hf_spec.filename.is_none() || Some(&m.filename) == hf_spec.filename.as_ref())
+                        && (hf_spec.filename.is_none()
+                            || Some(&m.filename) == hf_spec.filename.as_ref())
                 });
 
                 if let Some(model) = found {
@@ -1175,7 +1316,10 @@ async fn api_load_model(
                         StatusCode::NOT_FOUND,
                         Json(ModelOperationResponse {
                             success: false,
-                            message: format!("Model '{}' not downloaded. Pull it first.", request.name),
+                            message: format!(
+                                "Model '{}' not downloaded. Pull it first.",
+                                request.name
+                            ),
                             model: None,
                         }),
                     ));
@@ -1191,9 +1335,7 @@ async fn api_load_model(
                 ));
             }
         }
-        ResolvedModel::LocalPath(path) => {
-            (path.display().to_string(), request.name.clone(), None)
-        }
+        ResolvedModel::LocalPath(path) => (path.display().to_string(), request.name.clone(), None),
         ResolvedModel::Ollama { name, tag } => {
             // Check if Ollama model is cached
             let client = super::ollama::OllamaClient::new().map_err(|e| {
@@ -1218,13 +1360,20 @@ async fn api_load_model(
                     top_k: ollama_model.parameters.top_k,
                     context_size: ollama_model.parameters.num_ctx,
                 };
-                (ollama_model.gguf_path.display().to_string(), model_name, Some(config))
+                (
+                    ollama_model.gguf_path.display().to_string(),
+                    model_name,
+                    Some(config),
+                )
             } else {
                 return Err((
                     StatusCode::NOT_FOUND,
                     Json(ModelOperationResponse {
                         success: false,
-                        message: format!("Ollama model '{}' not downloaded. Pull it first: mullama pull {}", model_name, model_name),
+                        message: format!(
+                            "Ollama model '{}' not downloaded. Pull it first: mullama pull {}",
+                            model_name, model_name
+                        ),
                         model: None,
                     }),
                 ));
@@ -1272,7 +1421,10 @@ async fn api_load_model(
                         StatusCode::NOT_FOUND,
                         Json(ModelOperationResponse {
                             success: false,
-                            message: format!("Model '{}' not found. Pull it first or provide a valid path.", name),
+                            message: format!(
+                                "Model '{}' not found. Pull it first or provide a valid path.",
+                                name
+                            ),
                             model: None,
                         }),
                     ));
@@ -1282,8 +1434,12 @@ async fn api_load_model(
     };
 
     // Load the model
-    let gpu_layers = request.gpu_layers.unwrap_or(daemon.config.default_gpu_layers);
-    let context_size = request.context_size.unwrap_or(daemon.config.default_context_size);
+    let gpu_layers = request
+        .gpu_layers
+        .unwrap_or(daemon.config.default_gpu_layers);
+    let context_size = request
+        .context_size
+        .unwrap_or(daemon.config.default_context_size);
 
     let config = super::models::ModelLoadConfig {
         alias: alias.clone(),
@@ -1291,6 +1447,7 @@ async fn api_load_model(
         gpu_layers,
         context_size,
         threads: num_cpus::get() as i32,
+        context_pool_size: daemon.config.default_context_pool_size,
         mmproj_path: None,
         model_config,
     };
@@ -1362,6 +1519,22 @@ impl ApiError {
         }
     }
 
+    fn from_protocol_error(code: ErrorCode, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let status = match code {
+            ErrorCode::ModelNotFound => StatusCode::NOT_FOUND,
+            ErrorCode::InvalidRequest => StatusCode::BAD_REQUEST,
+            ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            ErrorCode::Cancelled => StatusCode::CONFLICT,
+            ErrorCode::ModelLoadFailed
+            | ErrorCode::NoDefaultModel
+            | ErrorCode::GenerationFailed
+            | ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self { message, status }
+    }
+
     fn not_found(model: &str) -> Self {
         Self {
             message: format!("Model '{}' not found", model),
@@ -1399,9 +1572,10 @@ async fn api_system_status(State(daemon): State<AppState>) -> Json<SystemStatus>
     let models = daemon.models.list();
     let uptime = daemon.start_time.elapsed().as_secs();
 
-    let http_endpoint = daemon.config.http_port.map(|port| {
-        format!("http://{}:{}", daemon.config.http_addr, port)
-    });
+    let http_endpoint = daemon
+        .config
+        .http_port
+        .map(|port| format!("http://{}:{}", daemon.config.http_addr, port));
 
     Json(SystemStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -1507,10 +1681,9 @@ async fn api_use_default(
     // Extract parameters from the modelfile
     let context_size = default
         .modelfile
-        .parameters
-        .get("num_ctx")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(4096) as u32;
+        .num_ctx()
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(4096);
 
     let gpu_layers = default.modelfile.gpu_layers.unwrap_or(0);
 
@@ -1518,7 +1691,8 @@ async fn api_use_default(
     let mmproj_path = default.modelfile.vision_projector.as_ref().map(|p| {
         // If it's a relative path, resolve it relative to the model directory
         if p.is_relative() {
-            model_path.parent()
+            model_path
+                .parent()
                 .map(|parent| parent.join(p).display().to_string())
                 .unwrap_or_else(|| p.display().to_string())
         } else {
@@ -1533,8 +1707,9 @@ async fn api_use_default(
         context_size,
         gpu_layers,
         threads: num_cpus::get() as i32,
+        context_pool_size: daemon.config.default_context_pool_size,
         mmproj_path,
-        model_config: None, // TODO: Extract config from Modelfile
+        model_config: Some(model_config_from_modelfile(&default.modelfile)),
     };
 
     daemon.models.load(load_config).await.map_err(|e| {
@@ -1549,7 +1724,16 @@ async fn api_use_default(
     })?;
 
     // Set as default model
-    daemon.models.set_default(&name);
+    daemon.models.set_default(&name).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(UseDefaultResponse {
+                success: false,
+                message: format!("Failed to set default model: {}", e),
+                model: None,
+            }),
+        )
+    })?;
 
     // Get the model info
     let model_info = daemon.models.get(Some(name.as_str())).await.ok().map(|_m| {

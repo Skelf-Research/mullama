@@ -62,7 +62,7 @@ pub async fn serve_ui(uri: Uri) -> impl IntoResponse {
     #[cfg(not(feature = "embedded-ui"))]
     {
         let _ = uri; // Suppress unused warning
-        // Return a helpful message when UI is not embedded
+                     // Return a helpful message when UI is not embedded
         Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")

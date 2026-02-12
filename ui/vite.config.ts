@@ -15,7 +15,29 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: undefined,
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          if (id.includes('/vue/') || id.includes('/vue-router/')) {
+            return 'vue-vendor'
+          }
+
+          if (
+            id.includes('/marked/') ||
+            id.includes('/highlight.js/') ||
+            id.includes('/dompurify/')
+          ) {
+            return 'markdown-vendor'
+          }
+
+          if (id.includes('/@vueuse/')) {
+            return 'vueuse-vendor'
+          }
+
+          return 'vendor'
+        },
       },
     },
   },

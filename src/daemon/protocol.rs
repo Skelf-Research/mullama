@@ -93,6 +93,8 @@ pub enum Request {
         temperature: f32,
         #[serde(default)]
         stream: bool,
+        #[serde(default)]
+        stop: Vec<String>,
     },
 
     /// Generate embeddings
@@ -303,7 +305,9 @@ pub struct DaemonStatus {
 /// Daemon statistics
 ///
 /// Has rkyv derives for zero-copy IPC when both endpoints support it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
 #[archive(check_bytes)]
 pub struct DaemonStats {
     pub requests_total: u64,
@@ -444,7 +448,9 @@ pub struct FunctionCallDelta {
 /// Token usage
 ///
 /// Has rkyv derives for zero-copy IPC when both endpoints support it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
 #[archive(check_bytes)]
 pub struct Usage {
     pub prompt_tokens: u32,
@@ -472,7 +478,16 @@ pub struct EmbeddingData {
 ///
 /// Has rkyv derives for zero-copy IPC when both endpoints support it.
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Archive, RkyvSerialize, RkyvDeserialize,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
 )]
 #[archive(check_bytes)]
 #[serde(rename_all = "snake_case")]

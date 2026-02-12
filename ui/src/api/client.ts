@@ -2,6 +2,47 @@
 
 const BASE_URL = ''  // Same origin
 
+function getStoredApiKey(): string | null {
+  try {
+    const direct = localStorage.getItem('mullama-api-key')
+    if (direct && direct.trim()) {
+      return direct.trim()
+    }
+
+    const rawSettings = localStorage.getItem('mullama-settings')
+    if (!rawSettings) {
+      return null
+    }
+
+    const settings = JSON.parse(rawSettings) as { apiKey?: string }
+    if (settings.apiKey && settings.apiKey.trim()) {
+      return settings.apiKey.trim()
+    }
+  } catch {
+    // Ignore storage parsing errors
+  }
+
+  return null
+}
+
+function buildHeaders(extra?: HeadersInit): HeadersInit {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  const apiKey = getStoredApiKey()
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`
+    headers['X-API-Key'] = apiKey
+  }
+
+  const merged = new Headers(extra)
+  for (const [key, value] of Object.entries(headers)) {
+    merged.set(key, value)
+  }
+  return merged
+}
+
 export interface Model {
   id: string
   object: string
@@ -94,10 +135,7 @@ async function fetchApi<T>(
 ): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers: buildHeaders(options?.headers),
   })
 
   if (!response.ok) {
@@ -129,7 +167,7 @@ export const openai = {
   ): Promise<void> {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(),
       body: JSON.stringify({ ...request, stream: true }),
     })
 
@@ -224,7 +262,7 @@ export const management = {
   ): Promise<void> {
     const response = await fetch('/api/models/pull', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(),
       body: JSON.stringify({ name: name }),
     })
 
@@ -299,7 +337,9 @@ export const management = {
 // Prometheus metrics
 export const metrics = {
   async get(): Promise<string> {
-    const response = await fetch('/metrics')
+    const response = await fetch('/metrics', {
+      headers: buildHeaders(),
+    })
     return response.text()
   },
 }

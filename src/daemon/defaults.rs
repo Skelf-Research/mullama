@@ -46,50 +46,75 @@ pub struct DefaultModel {
 }
 
 /// Static metadata for default models (description, size, tags)
-fn get_model_metadata() -> HashMap<&'static str, (&'static str, &'static str, &'static [&'static str])> {
+fn get_model_metadata(
+) -> HashMap<&'static str, (&'static str, &'static str, &'static [&'static str])> {
     let mut meta = HashMap::new();
 
     // (description, size_hint, tags)
-    meta.insert("llama3.2-1b", (
-        "Meta Llama 3.2 1B - Fast and lightweight",
-        "1B",
-        &["chat", "instruct", "fast", "lightweight"][..],
-    ));
-    meta.insert("llama3.2-3b", (
-        "Meta Llama 3.2 3B - Balanced size and capability",
-        "3B",
-        &["chat", "instruct", "tools", "balanced"][..],
-    ));
-    meta.insert("qwen2.5-7b", (
-        "Qwen 2.5 7B - Multilingual with tool support",
-        "7B",
-        &["chat", "multilingual", "tools", "coding"][..],
-    ));
-    meta.insert("deepseek-r1-7b", (
-        "DeepSeek R1 7B - Advanced reasoning model",
-        "7B",
-        &["reasoning", "thinking", "chain-of-thought"][..],
-    ));
-    meta.insert("mistral-7b", (
-        "Mistral 7B v0.3 - Strong general purpose",
-        "7B",
-        &["chat", "general", "tools", "coding"][..],
-    ));
-    meta.insert("phi3-mini", (
-        "Phi-3 Mini - Microsoft's compact powerhouse",
-        "3.8B",
-        &["chat", "compact", "efficient"][..],
-    ));
-    meta.insert("gemma2-9b", (
-        "Gemma 2 9B - Google's capable model",
-        "9B",
-        &["chat", "reasoning", "tools"][..],
-    ));
-    meta.insert("llava-7b", (
-        "LLaVA 1.5 7B - Vision and language model",
-        "7B",
-        &["vision", "multimodal", "image-understanding"][..],
-    ));
+    meta.insert(
+        "llama3.2-1b",
+        (
+            "Meta Llama 3.2 1B - Fast and lightweight",
+            "1B",
+            &["chat", "instruct", "fast", "lightweight"][..],
+        ),
+    );
+    meta.insert(
+        "llama3.2-3b",
+        (
+            "Meta Llama 3.2 3B - Balanced size and capability",
+            "3B",
+            &["chat", "instruct", "tools", "balanced"][..],
+        ),
+    );
+    meta.insert(
+        "qwen2.5-7b",
+        (
+            "Qwen 2.5 7B - Multilingual with tool support",
+            "7B",
+            &["chat", "multilingual", "tools", "coding"][..],
+        ),
+    );
+    meta.insert(
+        "deepseek-r1-7b",
+        (
+            "DeepSeek R1 7B - Advanced reasoning model",
+            "7B",
+            &["reasoning", "thinking", "chain-of-thought"][..],
+        ),
+    );
+    meta.insert(
+        "mistral-7b",
+        (
+            "Mistral 7B v0.3 - Strong general purpose",
+            "7B",
+            &["chat", "general", "tools", "coding"][..],
+        ),
+    );
+    meta.insert(
+        "phi3-mini",
+        (
+            "Phi-3 Mini - Microsoft's compact powerhouse",
+            "3.8B",
+            &["chat", "compact", "efficient"][..],
+        ),
+    );
+    meta.insert(
+        "gemma2-9b",
+        (
+            "Gemma 2 9B - Google's capable model",
+            "9B",
+            &["chat", "reasoning", "tools"][..],
+        ),
+    );
+    meta.insert(
+        "llava-7b",
+        (
+            "LLaVA 1.5 7B - Vision and language model",
+            "7B",
+            &["vision", "multimodal", "image-understanding"][..],
+        ),
+    );
 
     meta
 }
@@ -130,10 +155,11 @@ pub fn list_defaults() -> Vec<DefaultModel> {
         };
 
         // Get metadata for this model
-        let (description, size_hint, tags) = metadata
-            .get(name.as_str())
-            .copied()
-            .unwrap_or(("Unknown model", "?B", &[][..]));
+        let (description, size_hint, tags) =
+            metadata
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(("Unknown model", "?B", &[][..]));
 
         let info = DefaultModelInfo {
             name: name.clone(),
@@ -188,7 +214,10 @@ mod tests {
     #[test]
     fn test_list_defaults() {
         let defaults = list_defaults();
-        assert!(!defaults.is_empty(), "Should have at least one default model");
+        assert!(
+            !defaults.is_empty(),
+            "Should have at least one default model"
+        );
 
         for model in &defaults {
             assert!(!model.info.name.is_empty());

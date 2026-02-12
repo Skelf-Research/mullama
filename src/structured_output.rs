@@ -111,16 +111,28 @@ impl JsonSchemaConverter {
     }
 
     fn validate_schema_recursive(schema: &Value) -> Result<(), StructuredOutputError> {
-        let obj = schema
-            .as_object()
-            .ok_or_else(|| StructuredOutputError::InvalidSchema("Schema must be an object".into()))?;
+        let obj = schema.as_object().ok_or_else(|| {
+            StructuredOutputError::InvalidSchema("Schema must be an object".into())
+        })?;
 
         // Check for unsupported features
         for key in obj.keys() {
             match key.as_str() {
-                "type" | "properties" | "required" | "additionalProperties" | "items" | "enum"
-                | "minimum" | "maximum" | "minLength" | "maxLength" | "description" | "title"
-                | "default" | "examples" | "const" => {}
+                "type"
+                | "properties"
+                | "required"
+                | "additionalProperties"
+                | "items"
+                | "enum"
+                | "minimum"
+                | "maximum"
+                | "minLength"
+                | "maxLength"
+                | "description"
+                | "title"
+                | "default"
+                | "examples"
+                | "const" => {}
                 "oneOf" | "anyOf" | "allOf" | "not" => {
                     return Err(StructuredOutputError::UnsupportedFeature(format!(
                         "'{}' is not supported",
@@ -177,7 +189,10 @@ impl JsonSchemaConverter {
         );
 
         // Number primitive
-        self.rules.push("number ::= \"-\"? ([0-9] | [1-9] [0-9]*) (\".\" [0-9]+)? ([eE] [\"+\\-\"]? [0-9]+)?".to_string());
+        self.rules.push(
+            "number ::= \"-\"? ([0-9] | [1-9] [0-9]*) (\".\" [0-9]+)? ([eE] [\"+\\-\"]? [0-9]+)?"
+                .to_string(),
+        );
 
         // Integer primitive
         self.rules
@@ -196,7 +211,11 @@ impl JsonSchemaConverter {
         format!("{}_{}", prefix, self.rule_counter)
     }
 
-    fn schema_to_rule(&mut self, name: &str, schema: &Value) -> Result<String, StructuredOutputError> {
+    fn schema_to_rule(
+        &mut self,
+        name: &str,
+        schema: &Value,
+    ) -> Result<String, StructuredOutputError> {
         let obj = schema.as_object().ok_or_else(|| {
             StructuredOutputError::InvalidSchema("Schema must be an object".into())
         })?;
@@ -238,7 +257,11 @@ impl JsonSchemaConverter {
         }
     }
 
-    fn const_to_rule(&mut self, name: &str, value: &Value) -> Result<String, StructuredOutputError> {
+    fn const_to_rule(
+        &mut self,
+        name: &str,
+        value: &Value,
+    ) -> Result<String, StructuredOutputError> {
         let literal = match value {
             Value::String(s) => format!("\"\\\"{}\\\"\"", escape_gbnf_string(s)),
             Value::Number(n) => format!("\"{}\"", n),
@@ -253,10 +276,14 @@ impl JsonSchemaConverter {
         Ok(format!("{} ::= {}", name, literal))
     }
 
-    fn enum_to_rule(&mut self, name: &str, values: &Value) -> Result<String, StructuredOutputError> {
-        let arr = values.as_array().ok_or_else(|| {
-            StructuredOutputError::InvalidSchema("enum must be an array".into())
-        })?;
+    fn enum_to_rule(
+        &mut self,
+        name: &str,
+        values: &Value,
+    ) -> Result<String, StructuredOutputError> {
+        let arr = values
+            .as_array()
+            .ok_or_else(|| StructuredOutputError::InvalidSchema("enum must be an array".into()))?;
 
         let alternatives: Vec<String> = arr
             .iter()
@@ -403,15 +430,11 @@ impl JsonSchemaConverter {
                 // Generate rule with max length
                 let content_rule = self.generate_rule_name(&format!("{}_content", name));
                 if min_length == 0 {
-                    self.rules.push(format!(
-                        "{} ::= ({}){{0,{}}}",
-                        content_rule, char_rule, max
-                    ));
+                    self.rules
+                        .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
                 } else {
-                    self.rules.push(format!(
-                        "{} ::= ({}){{0,{}}}",
-                        content_rule, char_rule, max
-                    ));
+                    self.rules
+                        .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
                 }
                 return Ok(format!("{} ::= \"\\\"\" {} \"\\\"\"", name, content_rule));
             }

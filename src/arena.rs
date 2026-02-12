@@ -269,7 +269,9 @@ impl<'a> ArenaCandidates<'a> {
     pub fn sort_by_logit(&mut self) {
         if !self.sorted {
             self.candidates[..self.len].sort_by(|a, b| {
-                b.logit.partial_cmp(&a.logit).unwrap_or(std::cmp::Ordering::Equal)
+                b.logit
+                    .partial_cmp(&a.logit)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             self.sorted = true;
         }

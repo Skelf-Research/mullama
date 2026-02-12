@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use super::models::{ModelLoadConfig, ModelManager, RequestGuard};
+use super::models::{ModelLoadConfig, ModelManager, RequestGuard, DEFAULT_CONTEXT_POOL_SIZE};
 use super::protocol::*;
 use crate::embedding::{EmbeddingConfig, EmbeddingGenerator};
 use crate::memory_monitor::{MemoryConfig, MemoryMonitor, MemoryPressure, RecoveryManager};
@@ -27,8 +28,22 @@ pub struct DaemonConfig {
     pub default_context_size: u32,
     /// Default GPU layers
     pub default_gpu_layers: i32,
+    /// Number of contexts in each model's context pool
+    pub default_context_pool_size: usize,
     /// Number of threads per model
     pub threads_per_model: i32,
+    /// HTTP API key (Bearer token / x-api-key)
+    pub http_api_key: Option<String>,
+    /// Enforce API key authentication for HTTP endpoints
+    pub enforce_http_api_key: bool,
+    /// Hard cap on max_tokens for generation requests
+    pub max_tokens_per_request: u32,
+    /// Maximum accepted HTTP request body size in bytes
+    pub max_request_body_bytes: usize,
+    /// Maximum concurrent in-flight HTTP requests
+    pub max_concurrent_http_requests: usize,
+    /// Maximum requests per second for HTTP endpoints
+    pub max_requests_per_second: u64,
     /// Memory monitoring configuration
     pub memory_config: MemoryConfig,
     /// Enable memory monitoring
@@ -40,14 +55,92 @@ impl Default for DaemonConfig {
         Self {
             ipc_addr: super::DEFAULT_SOCKET.to_string(),
             http_port: Some(super::DEFAULT_HTTP_PORT),
-            http_addr: "0.0.0.0".to_string(),
+            http_addr: "127.0.0.1".to_string(),
             default_context_size: 4096,
             default_gpu_layers: 0,
+            default_context_pool_size: DEFAULT_CONTEXT_POOL_SIZE,
             threads_per_model: (num_cpus::get() / 2).max(1) as i32,
+            http_api_key: None,
+            enforce_http_api_key: false,
+            max_tokens_per_request: 4096,
+            max_request_body_bytes: 2 * 1024 * 1024,
+            max_concurrent_http_requests: 64,
+            max_requests_per_second: 200,
             memory_config: MemoryConfig::default(),
             enable_memory_monitoring: true,
         }
     }
+}
+
+#[inline]
+fn find_stop_in_recent_window(
+    generated: &str,
+    previous_len: usize,
+    stop_sequences: &[String],
+    max_stop_len: usize,
+) -> Option<usize> {
+    if stop_sequences.is_empty() || max_stop_len == 0 {
+        return None;
+    }
+
+    let mut start = previous_len.saturating_sub(max_stop_len.saturating_sub(1));
+    while start > 0 && !generated.is_char_boundary(start) {
+        start -= 1;
+    }
+
+    let window = &generated[start..];
+    for stop in stop_sequences {
+        if let Some(relative_pos) = window.find(stop) {
+            return Some(start + relative_pos);
+        }
+    }
+
+    None
+}
+
+fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<String> {
+    let mut merged = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for stop in base.into_iter().chain(additional.into_iter()) {
+        if stop.is_empty() {
+            continue;
+        }
+        if seen.insert(stop.clone()) {
+            merged.push(stop);
+        }
+    }
+
+    merged
+}
+
+fn model_config_from_ollama_model(
+    model: &super::ollama::OllamaModel,
+) -> super::models::ModelConfig {
+    super::models::ModelConfig {
+        stop_sequences: model.get_stop_sequences(),
+        system_prompt: model.system_prompt.clone(),
+        temperature: model.parameters.temperature,
+        top_p: model.parameters.top_p,
+        top_k: model.parameters.top_k,
+        context_size: model.parameters.num_ctx,
+    }
+}
+
+fn infer_ollama_model_config(path: &str) -> Option<super::models::ModelConfig> {
+    let target = std::fs::canonicalize(path).ok()?;
+    let client = super::ollama::OllamaClient::new().ok()?;
+
+    for model in client.list_cached() {
+        let Ok(cached_path) = std::fs::canonicalize(&model.gguf_path) else {
+            continue;
+        };
+        if cached_path == target {
+            return Some(model_config_from_ollama_model(&model));
+        }
+    }
+
+    None
 }
 
 /// The daemon server
@@ -56,8 +149,10 @@ pub struct Daemon {
     pub models: Arc<ModelManager>,
     pub start_time: Instant,
     pub shutdown: Arc<AtomicBool>,
-    pub active_requests: AtomicU32,
+    pub active_requests: Arc<AtomicU32>,
     pub total_requests: AtomicU64,
+    /// Cancellation flags for streaming requests (request_id -> cancel flag)
+    pub cancellations: Arc<DashMap<String, Arc<AtomicBool>>>,
     /// Memory monitor for tracking system and GPU memory
     pub memory_monitor: Option<Arc<MemoryMonitor>>,
     /// Recovery manager for handling OOM situations
@@ -88,10 +183,48 @@ impl Daemon {
             models: Arc::new(ModelManager::new()),
             start_time: Instant::now(),
             shutdown: Arc::new(AtomicBool::new(false)),
-            active_requests: AtomicU32::new(0),
+            active_requests: Arc::new(AtomicU32::new(0)),
             total_requests: AtomicU64::new(0),
+            cancellations: Arc::new(DashMap::new()),
             memory_monitor,
             recovery_manager,
+        }
+    }
+
+    fn validate_max_tokens(&self, max_tokens: u32) -> Result<(), Response> {
+        if max_tokens == 0 {
+            return Err(Response::error(
+                ErrorCode::InvalidRequest,
+                "max_tokens must be greater than 0",
+            ));
+        }
+
+        if max_tokens > self.config.max_tokens_per_request {
+            return Err(Response::error(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "max_tokens {} exceeds server limit {}",
+                    max_tokens, self.config.max_tokens_per_request
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn register_cancellation(&self, request_id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.cancellations
+            .insert(request_id.to_string(), Arc::clone(&flag));
+        flag
+    }
+
+    pub fn cancel_request(&self, request_id: &str) -> bool {
+        if let Some(flag) = self.cancellations.get(request_id) {
+            flag.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
         }
     }
 
@@ -151,8 +284,9 @@ impl Daemon {
                 max_tokens,
                 temperature,
                 stream,
+                stop,
             } => {
-                self.handle_completion(model, prompt, max_tokens, temperature, stream)
+                self.handle_completion(model, prompt, max_tokens, temperature, stream, stop)
                     .await
             }
 
@@ -161,8 +295,14 @@ impl Daemon {
             Request::Tokenize { model, text } => self.handle_tokenize(model, &text).await,
 
             Request::Cancel { request_id } => {
-                // TODO: Implement cancellation
-                Response::Cancelled { request_id }
+                if self.cancel_request(&request_id) {
+                    Response::Cancelled { request_id }
+                } else {
+                    Response::error(
+                        ErrorCode::InvalidRequest,
+                        format!("No active request found with id '{}'", request_id),
+                    )
+                }
             }
 
             Request::Shutdown => {
@@ -233,7 +373,7 @@ impl Daemon {
         gpu_layers: i32,
         context_size: u32,
     ) -> Response {
-        let config = ModelLoadConfig::new(&alias, &path)
+        let mut config = ModelLoadConfig::new(&alias, &path)
             .gpu_layers(if gpu_layers == 0 {
                 self.config.default_gpu_layers
             } else {
@@ -244,7 +384,12 @@ impl Daemon {
             } else {
                 context_size
             })
+            .context_pool_size(self.config.default_context_pool_size)
             .threads(self.config.threads_per_model);
+
+        if let Some(ollama_config) = infer_ollama_model_config(&path) {
+            config = config.with_config(ollama_config);
+        }
 
         match self.models.load(config).await {
             Ok(info) => Response::ModelLoaded { alias, info },
@@ -279,6 +424,8 @@ impl Daemon {
         temperature: f32,
         stop: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String, String), Response> {
+        self.validate_max_tokens(max_tokens)?;
+
         // Get model
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
@@ -293,12 +440,12 @@ impl Daemon {
         let model_alias = loaded.alias.clone();
 
         // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
-        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+        let default_stops = if !loaded.config.stop_sequences.is_empty() {
             loaded.config.stop_sequences.clone()
         } else {
             loaded.model.get_chat_stop_sequences()
         };
-        all_stops.extend(stop);
+        let all_stops = merge_stop_sequences(default_stops, stop);
 
         // Start streaming generation
         match self
@@ -306,7 +453,10 @@ impl Daemon {
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
-            Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
+            Err(e) => {
+                self.active_requests.fetch_sub(1, Ordering::Relaxed);
+                Err(Response::error(ErrorCode::GenerationFailed, e.to_string()))
+            }
         }
     }
 
@@ -320,6 +470,10 @@ impl Daemon {
         stop: Vec<String>,
         response_format: Option<ResponseFormat>,
     ) -> Response {
+        if let Err(resp) = self.validate_max_tokens(max_tokens) {
+            return resp;
+        }
+
         // Get model
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
@@ -333,12 +487,12 @@ impl Daemon {
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
 
         // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
-        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+        let default_stops = if !loaded.config.stop_sequences.is_empty() {
             loaded.config.stop_sequences.clone()
         } else {
             loaded.model.get_chat_stop_sequences()
         };
-        all_stops.extend(stop);
+        let all_stops = merge_stop_sequences(default_stops, stop);
 
         // Generate
         let result = self
@@ -396,7 +550,12 @@ impl Daemon {
         max_tokens: u32,
         temperature: f32,
         _stream: bool,
+        stop: Vec<String>,
     ) -> Response {
+        if let Err(resp) = self.validate_max_tokens(max_tokens) {
+            return resp;
+        }
+
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
             Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
@@ -405,8 +564,10 @@ impl Daemon {
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::Relaxed);
 
+        let default_stops = loaded.config.stop_sequences.clone();
+        let all_stops = merge_stop_sequences(default_stops, stop);
         let result = self
-            .generate_text(&loaded, &prompt, max_tokens, temperature, &[], None)
+            .generate_text(&loaded, &prompt, max_tokens, temperature, &all_stops, None)
             .await;
 
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
@@ -449,6 +610,10 @@ impl Daemon {
         temperature: f32,
         stop: Vec<String>,
     ) -> Response {
+        if let Err(resp) = self.validate_max_tokens(max_tokens) {
+            return resp;
+        }
+
         use crate::{Bitmap, MtmdContext};
         use base64::Engine;
 
@@ -521,12 +686,12 @@ impl Daemon {
         let prompt = self.build_vision_prompt(&loaded.model, &messages);
 
         // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
-        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+        let default_stops = if !loaded.config.stop_sequences.is_empty() {
             loaded.config.stop_sequences.clone()
         } else {
             loaded.model.get_chat_stop_sequences()
         };
-        all_stops.extend(stop);
+        let all_stops = merge_stop_sequences(default_stops, stop);
 
         // Process with multimodal context
         let result = self
@@ -643,7 +808,12 @@ impl Daemon {
         let mut mtmd_guard = loaded.mtmd_context.as_ref().unwrap().write().await;
 
         let model = loaded.model.clone();
-        let stop_sequences = stop_sequences.to_vec();
+        let stop_sequences: Vec<String> = stop_sequences
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect();
+        let max_stop_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
 
         // Run CPU-bound generation in blocking context
         let (generated, prompt_tokens, completion_tokens) = tokio::task::block_in_place(|| {
@@ -685,16 +855,17 @@ impl Daemon {
 
                 // Get token text
                 if let Ok(text) = model.token_to_str(next_token, 0, false) {
+                    let previous_len = generated.len();
                     generated.push_str(&text);
 
-                    // Check for stop sequences
-                    if !stop_sequences.is_empty() {
-                        for stop in &stop_sequences {
-                            if let Some(pos) = generated.find(stop) {
-                                generated.truncate(pos);
-                                return Ok((generated, prompt_tokens, completion_tokens));
-                            }
-                        }
+                    if let Some(pos) = find_stop_in_recent_window(
+                        &generated,
+                        previous_len,
+                        &stop_sequences,
+                        max_stop_len,
+                    ) {
+                        generated.truncate(pos);
+                        return Ok((generated, prompt_tokens, completion_tokens));
                     }
                 }
 
@@ -722,6 +893,8 @@ impl Daemon {
         temperature: f32,
         stop: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String, String), Response> {
+        self.validate_max_tokens(max_tokens)?;
+
         use crate::Bitmap;
         use base64::Engine;
 
@@ -789,12 +962,12 @@ impl Daemon {
         let model_alias = loaded.alias.clone();
 
         // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
-        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+        let default_stops = if !loaded.config.stop_sequences.is_empty() {
             loaded.config.stop_sequences.clone()
         } else {
             loaded.model.get_chat_stop_sequences()
         };
-        all_stops.extend(stop);
+        let all_stops = merge_stop_sequences(default_stops, stop);
 
         // Start streaming generation with vision
         match self
@@ -809,7 +982,10 @@ impl Daemon {
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
-            Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
+            Err(e) => {
+                self.active_requests.fetch_sub(1, Ordering::Relaxed);
+                Err(Response::error(ErrorCode::GenerationFailed, e.to_string()))
+            }
         }
     }
 
@@ -827,10 +1003,19 @@ impl Daemon {
         // Generate request ID - use Arc<str> for zero-copy sharing across all chunks
         let request_id = generate_completion_id();
         let request_id_arc: Arc<str> = Arc::from(request_id.as_str());
+        let cancel_flag = self.register_cancellation(&request_id);
         let (tx, rx) = mpsc::channel::<StreamChunk>(32);
 
         let model = loaded.model.clone();
+        let stop_sequences: Vec<String> = stop_sequences
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        let max_stop_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
         let models_ref = self.models.clone();
+        let cancellations = Arc::clone(&self.cancellations);
+        let active_requests = Arc::clone(&self.active_requests);
+        let request_id_cleanup = request_id.clone();
 
         // Process image chunks first, then spawn streaming task
         // We need to get both locks, process images, then stream text generation
@@ -861,8 +1046,16 @@ impl Daemon {
 
                 let mut generated = String::new();
                 let mut index = 0u32;
+                let mut sent_len = 0usize;
+                let hold_back = max_stop_len.saturating_sub(1);
+                let mut tokens_generated = 0u32;
+                let mut last_token_id = 0i32;
 
                 for _ in 0..max_tokens {
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+
                     let next_token = sampler.sample(&mut *context, -1);
 
                     if model.vocab_is_eog(next_token) {
@@ -870,63 +1063,79 @@ impl Daemon {
                     }
 
                     if let Ok(text) = model.token_to_str(next_token, 0, false) {
+                        tokens_generated += 1;
+                        last_token_id = next_token;
+                        let previous_len = generated.len();
                         generated.push_str(&text);
 
-                        // Check stop sequences before sending chunk
-                        if !stop_sequences.is_empty() {
-                            for stop in &stop_sequences {
-                                if let Some(pos) = generated.find(stop) {
-                                    let final_text = &generated[generated.len() - text.len()..];
-                                    let stop_pos_in_text = if pos >= generated.len() - text.len() {
-                                        pos - (generated.len() - text.len())
-                                    } else {
-                                        0
-                                    };
-
-                                    if stop_pos_in_text > 0 {
-                                        let partial = &final_text[..stop_pos_in_text];
-                                        let chunk = StreamChunk {
-                                            request_id: request_id_arc.clone(),
-                                            index,
-                                            delta: partial.to_string(),
-                                            token_id: next_token,
-                                            thinking: None,
-                                            tool_calls: None,
-                                        };
-                                        let _ = tx.blocking_send(chunk);
-                                    }
-                                    return Ok::<_, MullamaError>(index + 1);
-                                }
+                        if let Some(pos) = find_stop_in_recent_window(
+                            &generated,
+                            previous_len,
+                            &stop_sequences,
+                            max_stop_len,
+                        ) {
+                            if pos > sent_len {
+                                let partial = &generated[sent_len..pos];
+                                let chunk = StreamChunk {
+                                    request_id: request_id_arc.clone(),
+                                    index,
+                                    delta: partial.to_string(),
+                                    token_id: next_token,
+                                    thinking: None,
+                                    tool_calls: None,
+                                };
+                                let _ = tx.blocking_send(chunk);
                             }
+                            return Ok::<_, MullamaError>(tokens_generated);
                         }
 
-                        // Send chunk
-                        let chunk = StreamChunk {
-                            request_id: request_id_arc.clone(),
-                            index,
-                            delta: text,
-                            token_id: next_token,
-                            thinking: None,
-                            tool_calls: None,
-                        };
-
-                        if tx.blocking_send(chunk).is_err() {
-                            break;
+                        // Keep a small tail to avoid leaking a stop prefix split across tokens.
+                        let mut flush_end = generated.len().saturating_sub(hold_back);
+                        while flush_end > sent_len && !generated.is_char_boundary(flush_end) {
+                            flush_end -= 1;
                         }
-
-                        index += 1;
+                        if flush_end > sent_len {
+                            let chunk = StreamChunk {
+                                request_id: request_id_arc.clone(),
+                                index,
+                                delta: generated[sent_len..flush_end].to_string(),
+                                token_id: next_token,
+                                thinking: None,
+                                tool_calls: None,
+                            };
+                            if tx.blocking_send(chunk).is_err() {
+                                break;
+                            }
+                            sent_len = flush_end;
+                            index += 1;
+                        }
                     }
 
                     sampler.accept(next_token);
                     context.decode_single(next_token)?;
                 }
 
-                Ok::<_, MullamaError>(index)
+                if sent_len < generated.len() {
+                    let chunk = StreamChunk {
+                        request_id: request_id_arc.clone(),
+                        index,
+                        delta: generated[sent_len..].to_string(),
+                        token_id: last_token_id,
+                        thinking: None,
+                        tool_calls: None,
+                    };
+                    let _ = tx.blocking_send(chunk);
+                }
+
+                Ok::<_, MullamaError>(tokens_generated)
             });
 
             if let Ok(tokens) = result {
                 models_ref.add_tokens(tokens as u64);
             }
+
+            cancellations.remove(&request_id_cleanup);
+            active_requests.fetch_sub(1, Ordering::Relaxed);
         });
 
         // Return prompt_tokens as 0 for now since we process asynchronously
@@ -1113,7 +1322,12 @@ impl Daemon {
         // Run CPU-bound generation in a blocking context to not block the async runtime
         // block_in_place allows blocking while keeping the current task context
         let model = loaded.model.clone();
-        let stop_sequences = stop_sequences.to_vec();
+        let stop_sequences: Vec<String> = stop_sequences
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect();
+        let max_stop_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
 
         let (generated, completion_tokens) = tokio::task::block_in_place(|| {
             // Clear KV cache to start fresh for each request
@@ -1149,17 +1363,17 @@ impl Daemon {
                 }
 
                 if let Ok(text) = model.token_to_str(next_token, 0, false) {
+                    let previous_len = generated.len();
                     generated.push_str(&text);
 
-                    // Check for stop sequences (check if contained, not just ends_with)
-                    if !stop_sequences.is_empty() {
-                        for stop in &stop_sequences {
-                            if let Some(pos) = generated.find(stop) {
-                                // Truncate at the stop sequence position
-                                generated.truncate(pos);
-                                return Ok((generated, completion_tokens));
-                            }
-                        }
+                    if let Some(pos) = find_stop_in_recent_window(
+                        &generated,
+                        previous_len,
+                        &stop_sequences,
+                        max_stop_len,
+                    ) {
+                        generated.truncate(pos);
+                        return Ok((generated, completion_tokens));
                     }
                 }
 
@@ -1195,13 +1409,22 @@ impl Daemon {
         // This is a Rust-exclusive optimization: in Go, each chunk would clone the string
         let request_id = generate_completion_id();
         let request_id_arc: Arc<str> = Arc::from(request_id.as_str());
+        let cancel_flag = self.register_cancellation(&request_id);
 
         // Create channel for streaming chunks
         let (tx, rx) = mpsc::channel::<StreamChunk>(32);
 
         // Clone what we need for the spawned task
         let model = loaded.model.clone();
+        let stop_sequences: Vec<String> = stop_sequences
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        let max_stop_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
         let models_ref = self.models.clone();
+        let cancellations = Arc::clone(&self.cancellations);
+        let active_requests = Arc::clone(&self.active_requests);
+        let request_id_cleanup = request_id.clone();
 
         // Spawn the generation task
         tokio::spawn(async move {
@@ -1222,8 +1445,16 @@ impl Daemon {
 
                 let mut generated = String::new();
                 let mut index = 0u32;
+                let mut sent_len = 0usize;
+                let hold_back = max_stop_len.saturating_sub(1);
+                let mut tokens_generated = 0u32;
+                let mut last_token_id = 0i32;
 
                 for _ in 0..max_tokens {
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+
                     let next_token = sampler.sample(&mut *context, -1);
 
                     if model.vocab_is_eog(next_token) {
@@ -1231,66 +1462,82 @@ impl Daemon {
                     }
 
                     if let Ok(text) = model.token_to_str(next_token, 0, false) {
+                        tokens_generated += 1;
+                        last_token_id = next_token;
+                        let previous_len = generated.len();
                         generated.push_str(&text);
 
-                        // Check stop sequences BEFORE sending chunk
-                        if !stop_sequences.is_empty() {
-                            for stop in &stop_sequences {
-                                if let Some(pos) = generated.find(stop) {
-                                    // Found stop sequence - send final partial chunk if needed
-                                    let final_text = &generated[generated.len() - text.len()..];
-                                    let stop_pos_in_text = if pos >= generated.len() - text.len() {
-                                        pos - (generated.len() - text.len())
-                                    } else {
-                                        0 // Stop sequence was in previous text
-                                    };
-
-                                    if stop_pos_in_text > 0 {
-                                        // Send the part before the stop sequence
-                                        let partial = &final_text[..stop_pos_in_text];
-                                        let chunk = StreamChunk {
-                                            request_id: request_id_arc.clone(),
-                                            index,
-                                            delta: partial.to_string(),
-                                            token_id: next_token,
-                                            thinking: None,
-                                            tool_calls: None,
-                                        };
-                                        let _ = tx.blocking_send(chunk);
-                                    }
-                                    return Ok::<_, MullamaError>(index + 1);
-                                }
+                        if let Some(pos) = find_stop_in_recent_window(
+                            &generated,
+                            previous_len,
+                            &stop_sequences,
+                            max_stop_len,
+                        ) {
+                            if pos > sent_len {
+                                let partial = &generated[sent_len..pos];
+                                let chunk = StreamChunk {
+                                    request_id: request_id_arc.clone(),
+                                    index,
+                                    delta: partial.to_string(),
+                                    token_id: next_token,
+                                    thinking: None,
+                                    tool_calls: None,
+                                };
+                                let _ = tx.blocking_send(chunk);
                             }
+                            return Ok::<_, MullamaError>(tokens_generated);
                         }
 
-                        // Send chunk
-                        let chunk = StreamChunk {
-                            request_id: request_id_arc.clone(),
-                            index,
-                            delta: text,
-                            token_id: next_token,
-                            thinking: None,
-                            tool_calls: None,
-                        };
-
-                        // If receiver dropped, stop generation
-                        if tx.blocking_send(chunk).is_err() {
-                            break;
+                        // Keep a small tail to avoid leaking a stop prefix split across tokens.
+                        let mut flush_end = generated.len().saturating_sub(hold_back);
+                        while flush_end > sent_len && !generated.is_char_boundary(flush_end) {
+                            flush_end -= 1;
                         }
+                        if flush_end > sent_len {
+                            let chunk = StreamChunk {
+                                request_id: request_id_arc.clone(),
+                                index,
+                                delta: generated[sent_len..flush_end].to_string(),
+                                token_id: next_token,
+                                thinking: None,
+                                tool_calls: None,
+                            };
 
-                        index += 1;
+                            // If receiver dropped, stop generation
+                            if tx.blocking_send(chunk).is_err() {
+                                break;
+                            }
+
+                            sent_len = flush_end;
+                            index += 1;
+                        }
                     }
 
                     sampler.accept(next_token);
                     context.decode_single(next_token)?;
                 }
 
-                Ok::<_, MullamaError>(index)
+                if sent_len < generated.len() {
+                    let chunk = StreamChunk {
+                        request_id: request_id_arc.clone(),
+                        index,
+                        delta: generated[sent_len..].to_string(),
+                        token_id: last_token_id,
+                        thinking: None,
+                        tool_calls: None,
+                    };
+                    let _ = tx.blocking_send(chunk);
+                }
+
+                Ok::<_, MullamaError>(tokens_generated)
             });
 
             if let Ok(tokens_generated) = result {
                 models_ref.add_tokens(tokens_generated as u64);
             }
+
+            cancellations.remove(&request_id_cleanup);
+            active_requests.fetch_sub(1, Ordering::Relaxed);
         });
 
         Ok((rx, prompt_tokens, request_id))
@@ -1388,6 +1635,36 @@ impl DaemonBuilder {
         self
     }
 
+    pub fn http_api_key(mut self, api_key: Option<String>) -> Self {
+        self.config.http_api_key = api_key;
+        self
+    }
+
+    pub fn enforce_http_api_key(mut self, enforce: bool) -> Self {
+        self.config.enforce_http_api_key = enforce;
+        self
+    }
+
+    pub fn max_tokens_per_request(mut self, max_tokens: u32) -> Self {
+        self.config.max_tokens_per_request = max_tokens;
+        self
+    }
+
+    pub fn max_request_body_bytes(mut self, bytes: usize) -> Self {
+        self.config.max_request_body_bytes = bytes;
+        self
+    }
+
+    pub fn max_concurrent_http_requests(mut self, max: usize) -> Self {
+        self.config.max_concurrent_http_requests = max;
+        self
+    }
+
+    pub fn max_requests_per_second(mut self, max: u64) -> Self {
+        self.config.max_requests_per_second = max;
+        self
+    }
+
     pub fn default_context_size(mut self, size: u32) -> Self {
         self.config.default_context_size = size;
         self
@@ -1395,6 +1672,11 @@ impl DaemonBuilder {
 
     pub fn default_gpu_layers(mut self, layers: i32) -> Self {
         self.config.default_gpu_layers = layers;
+        self
+    }
+
+    pub fn default_context_pool_size(mut self, size: usize) -> Self {
+        self.config.default_context_pool_size = size.max(1);
         self
     }
 
@@ -1434,6 +1716,7 @@ impl DaemonBuilder {
             ModelLoadConfig::new(alias, path)
                 .gpu_layers(self.config.default_gpu_layers)
                 .context_size(self.config.default_context_size)
+                .context_pool_size(self.config.default_context_pool_size)
                 .threads(self.config.threads_per_model),
         );
         self

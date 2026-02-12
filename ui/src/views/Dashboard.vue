@@ -60,19 +60,6 @@ onUnmounted(() => {
   }
 })
 
-const parseMetrics = (text: string): Record<string, string> => {
-  const result: Record<string, string> = {}
-  const lines = text.split('\n')
-  for (const line of lines) {
-    if (line && !line.startsWith('#')) {
-      const [key, value] = line.split(' ')
-      if (key && value) {
-        result[key] = value
-      }
-    }
-  }
-  return result
-}
 </script>
 
 <template>
