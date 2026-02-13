@@ -130,21 +130,10 @@ impl Default for GenerationArena {
     }
 }
 
-/// Thread-local arena for generation operations
-///
-/// This provides a per-thread arena that avoids any synchronization overhead.
-/// Each thread gets its own 64KB arena for temporary allocations during generation.
-///
-/// ## Usage
-///
-/// ```rust,ignore
-/// use mullama::arena::with_generation_arena;
-///
-/// with_generation_arena(|arena| {
-///     let candidates = arena.alloc_f32(vocab_size);
-///     // ... use candidates ...
-/// }); // Arena automatically reset after closure
-/// ```
+// Thread-local arena for generation operations.
+//
+// This provides a per-thread arena that avoids any synchronization overhead.
+// Each thread gets its own 64KB arena for temporary allocations during generation.
 thread_local! {
     static GENERATION_ARENA: RefCell<GenerationArena> = RefCell::new(GenerationArena::default());
 }

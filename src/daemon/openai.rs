@@ -1018,6 +1018,7 @@ pub struct ModelOperationResponse {
 }
 
 /// Detailed model information
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct ModelDetails {
     pub name: String,
@@ -1045,7 +1046,11 @@ async fn api_list_models(State(daemon): State<AppState>) -> Json<serde_json::Val
         for cached in downloader.list_cached() {
             let short_name = format!(
                 "{}:{}",
-                cached.repo_id.split('/').last().unwrap_or(&cached.repo_id),
+                cached
+                    .repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&cached.repo_id),
                 cached.filename.trim_end_matches(".gguf")
             );
 
@@ -1288,7 +1293,11 @@ async fn api_delete_model(
     for model in &cached {
         let short_name = format!(
             "{}:{}",
-            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model
+                .repo_id
+                .split('/')
+                .next_back()
+                .unwrap_or(&model.repo_id),
             model.filename.trim_end_matches(".gguf")
         );
 
@@ -1373,7 +1382,11 @@ async fn api_get_model(
         for model in downloader.list_cached() {
             let short_name = format!(
                 "{}:{}",
-                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model
+                    .repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&model.repo_id),
                 model.filename.trim_end_matches(".gguf")
             );
 
@@ -1532,7 +1545,7 @@ async fn api_load_model(
             let found = cached.iter().find(|m| {
                 let short_name = format!(
                     "{}:{}",
-                    m.repo_id.split('/').last().unwrap_or(&m.repo_id),
+                    m.repo_id.split('/').next_back().unwrap_or(&m.repo_id),
                     m.filename.trim_end_matches(".gguf")
                 );
                 m.filename == name
@@ -1544,7 +1557,11 @@ async fn api_load_model(
             if let Some(model) = found {
                 let short_name = format!(
                     "{}:{}",
-                    model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                    model
+                        .repo_id
+                        .split('/')
+                        .next_back()
+                        .unwrap_or(&model.repo_id),
                     model.filename.trim_end_matches(".gguf")
                 );
                 (model.local_path.display().to_string(), short_name, None)

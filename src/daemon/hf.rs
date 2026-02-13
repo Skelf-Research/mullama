@@ -220,7 +220,7 @@ impl HfModelSpec {
             // Use repo name as alias
             self.repo_id
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("model")
                 .to_lowercase()
                 .replace("-gguf", "")
@@ -412,7 +412,7 @@ impl HfDownloader {
         gguf_only: bool,
         limit: usize,
     ) -> Result<Vec<HfSearchResult>, MullamaError> {
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
 
         // Build search URL with filters
         let mut url = format!(

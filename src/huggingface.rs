@@ -1317,7 +1317,7 @@ mod integration_tests {
         println!("Step 1: Listing GGUF files for {}...", model_id);
         let gguf_files = match client.list_gguf_files(model_id) {
             Ok(files) => files,
-            Err(e) => {
+            Err(_e) => {
                 // Try alternative model if SmolLM2 not found
                 println!("SmolLM2 not found, trying TinyLlama...");
                 let alt_model = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF";

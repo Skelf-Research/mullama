@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_lora_manager() {
-        let mut manager = LoRAManager::new();
+        let manager = LoRAManager::new();
         assert_eq!(manager.adapter_count(), 0);
         assert_eq!(manager.active_adapters().len(), 0);
     }

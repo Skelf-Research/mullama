@@ -15,7 +15,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
@@ -419,7 +419,7 @@ impl TuiApp {
         let cmd = std::mem::take(&mut self.input);
         let parts: Vec<&str> = cmd.split_whitespace().collect();
 
-        match parts.first().map(|s| *s) {
+        match parts.first().copied() {
             Some("q") | Some("quit") => {
                 self.should_quit = true;
             }

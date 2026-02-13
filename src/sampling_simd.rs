@@ -350,9 +350,9 @@ unsafe fn simd_softmax_avx2(data: &mut [f32], max_val: f32) {
 
     // Handle remainder with scalar
     let mut scalar_sum = 0.0f32;
-    for i in (chunks * 8)..len {
-        let val = (data[i] - max_val).exp();
-        data[i] = val;
+    for item in data.iter_mut().take(len).skip(chunks * 8) {
+        let val = (*item - max_val).exp();
+        *item = val;
         scalar_sum += val;
     }
 
@@ -373,8 +373,8 @@ unsafe fn simd_softmax_avx2(data: &mut [f32], max_val: f32) {
             let normalized = _mm256_mul_ps(vals, inv_sum);
             _mm256_storeu_ps(ptr, normalized);
         }
-        for i in (chunks * 8)..len {
-            data[i] /= total_sum;
+        for item in data.iter_mut().take(len).skip(chunks * 8) {
+            *item /= total_sum;
         }
     }
 }
@@ -392,7 +392,7 @@ unsafe fn fast_exp_avx2(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m2
 
     // exp(x) ≈ 2^(x * log2(e))
     // Using polynomial approximation for 2^x in range [-1, 1]
-    let log2e = _mm256_set1_ps(1.4426950408889634);
+    let log2e = _mm256_set1_ps(std::f32::consts::LOG2_E);
     let y = _mm256_mul_ps(x, log2e);
 
     // Split into integer and fractional parts
@@ -402,9 +402,9 @@ unsafe fn fast_exp_avx2(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m2
     // Polynomial approximation of 2^yf for yf in [-0.5, 0.5]
     // 2^x ≈ 1 + x*ln(2) + x^2*ln(2)^2/2 + ...
     let c0 = _mm256_set1_ps(1.0);
-    let c1 = _mm256_set1_ps(0.6931471805599453); // ln(2)
-    let c2 = _mm256_set1_ps(0.2402265069591007); // ln(2)^2/2
-    let c3 = _mm256_set1_ps(0.0555041086648216); // ln(2)^3/6
+    let c1 = _mm256_set1_ps(std::f32::consts::LN_2); // ln(2)
+    let c2 = _mm256_set1_ps(0.240_226_5); // ln(2)^2/2
+    let c3 = _mm256_set1_ps(0.055_504_11); // ln(2)^3/6
 
     let yf2 = _mm256_mul_ps(yf, yf);
     let yf3 = _mm256_mul_ps(yf2, yf);
@@ -514,14 +514,17 @@ fn partial_top_k(data: &[f32], k: usize) -> Vec<(usize, f32)> {
 
     impl PartialOrd for MinHeapItem {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            // Reverse comparison for min-heap behavior
-            other.0.partial_cmp(&self.0)
+            Some(self.cmp(other))
         }
     }
 
     impl Ord for MinHeapItem {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+            // Reverse comparison for min-heap behavior.
+            other
+                .0
+                .total_cmp(&self.0)
+                .then_with(|| self.1.cmp(&other.1))
         }
     }
 
