@@ -289,7 +289,7 @@ cargo run --example streaming_audio_demo --features "streaming-audio,multimodal"
 We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ```bash
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 cargo test --all-features
 ```
