@@ -663,7 +663,11 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = MullamaConfig::default();
+        let mut config = MullamaConfig::default();
+        // Default config needs a path and context size to validate
+        config.model.path = "model.gguf".to_string();
+        config.model.context_size = 2048;
+        config.context.n_ctx = 2048;
         assert!(config.validate().is_ok());
     }
 

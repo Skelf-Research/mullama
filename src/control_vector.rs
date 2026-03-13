@@ -5,7 +5,9 @@
 //! content, and behavior patterns.
 
 use crate::error::MullamaError;
+use crate::sys;
 use crate::Model;
+use crate::Context;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -306,13 +308,58 @@ impl ControlVector {
         Ok(())
     }
 
+    /// Apply this control vector to a context
+    ///
+    /// # Arguments
+    /// * `ctx` - The context to apply the control vector to
+    /// * `il_start` - Start layer index (0 for all)
+    /// * `il_end` - End layer index (-1 for all)
+    ///
+    /// # Returns
+    /// Result indicating success or failure
+    pub fn apply(&self, ctx: &mut Context, il_start: i32, il_end: i32) -> Result<(), MullamaError> {
+        // Flatten all layer values into a single vector with strength applied
+        let mut data: Vec<f32> = Vec::new();
+
+        for layer in &self.layers {
+            for &value in &layer.values {
+                data.push(value * self.strength * layer.layer_scale);
+            }
+        }
+
+        let result = unsafe {
+            sys::llama_control_vector_apply(
+                ctx.as_ptr(),
+                data.as_ptr(),
+                data.len(),
+                self.metadata.embedding_dim as i32,
+                il_start,
+                il_end,
+            )
+        };
+
+        if result != 0 {
+            return Err(MullamaError::ControlVectorError(format!(
+                "Failed to apply control vector: error code {}",
+                result
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Apply this control vector to all layers of a context
+    pub fn apply_all(&self, ctx: &mut Context) -> Result<(), MullamaError> {
+        self.apply(ctx, 0, -1)
+    }
+
     /// Load from JSON format
     fn load_json<P: AsRef<Path>>(path: P) -> Result<Self, MullamaError> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| MullamaError::IoError(format!("Failed to read file: {}", e)))?;
+            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to read file: {}", e)))?;
 
         let json_data: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| MullamaError::IoError(format!("Failed to parse JSON: {}", e)))?;
+            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to parse JSON: {}", e)))?;
 
         // Parse metadata
         let metadata_json = json_data.get("metadata")
@@ -357,8 +404,8 @@ impl ControlVector {
             .and_then(|v| v.as_array())
             .ok_or_else(|| MullamaError::InvalidInput("Missing or invalid layers data".to_string()))?;
 
-        let layers: Result<Vec<_>, _> = layers_json.iter().enumerate().map(|(i, layer_json)| {
-            let values: Result<Vec<f32>, _> = layer_json.get("values")
+        let layers: Result<Vec<LayerVector>, MullamaError> = layers_json.iter().enumerate().map(|(i, layer_json)| {
+            let values: Result<Vec<f32>, MullamaError> = layer_json.get("values")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| MullamaError::InvalidInput(format!("Missing values for layer {}", i)))?
                 .iter()
@@ -406,10 +453,10 @@ impl ControlVector {
         });
 
         let content = serde_json::to_string_pretty(&json_data)
-            .map_err(|e| MullamaError::IoError(format!("Failed to serialize JSON: {}", e)))?;
+            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to serialize JSON: {}", e)))?;
 
         std::fs::write(path, content)
-            .map_err(|e| MullamaError::IoError(format!("Failed to write file: {}", e)))?;
+            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to write file: {}", e)))?;
 
         Ok(())
     }

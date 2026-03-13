@@ -207,6 +207,26 @@ pub struct AsyncContext {
 
 #[cfg(feature = "async")]
 impl AsyncContext {
+    /// Create a new AsyncContext from a Context and model
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The wrapped Context
+    /// * `model` - The model Arc
+    pub fn new(inner: Context, model: Arc<Model>) -> Self {
+        Self { inner, model }
+    }
+
+    /// Get a mutable reference to the inner context
+    pub fn inner_mut(&mut self) -> &mut Context {
+        &mut self.inner
+    }
+
+    /// Get a reference to the inner context
+    pub fn inner(&self) -> &Context {
+        &self.inner
+    }
+
     /// Generate text asynchronously with fine-grained control
     ///
     /// # Arguments

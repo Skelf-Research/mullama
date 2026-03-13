@@ -5,14 +5,17 @@
 
 use crate::error::MullamaError;
 use crate::sys;
+use crate::Model;
+use crate::Context;
 use std::ffi::CString;
 use std::path::Path;
 use std::ptr;
+use std::sync::Arc;
 
 /// LoRA adapter for fine-tuning model behavior
 #[derive(Debug)]
 pub struct LoRAAdapter {
-    adapter_ptr: *mut std::ffi::c_void, // Placeholder for adapter
+    adapter_ptr: *mut sys::llama_adapter_lora,
     path: String,
     scale: f32,
 }
@@ -21,22 +24,35 @@ impl LoRAAdapter {
     /// Load a LoRA adapter from file
     ///
     /// # Arguments
-    /// * `path` - Path to the LoRA adapter file
+    /// * `model` - The model to load the adapter for
+    /// * `path` - Path to the LoRA adapter file (.gguf format)
     /// * `scale` - Scale factor for the adapter (typically 0.1 to 1.0)
     ///
     /// # Example
-    /// ```rust
-    /// use mullama::lora::LoRAAdapter;
+    /// ```rust,no_run
+    /// use mullama::{Model, lora::LoRAAdapter};
     ///
-    /// let adapter = LoRAAdapter::load("path/to/adapter.bin", 0.8)?;
+    /// let model = Model::load("model.gguf")?;
+    /// let adapter = LoRAAdapter::load(&model, "adapter.gguf", 0.8)?;
+    /// # Ok::<(), mullama::MullamaError>(())
     /// ```
-    pub fn load<P: AsRef<Path>>(path: P, scale: f32) -> Result<Self, MullamaError> {
-        let path_str = path.as_ref().to_string_lossy().to_string();
+    pub fn load<P: AsRef<Path>>(model: &Model, path: P, scale: f32) -> Result<Self, MullamaError> {
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_string_lossy().to_string();
+
+        if !path_ref.exists() {
+            return Err(MullamaError::LoRAError(format!(
+                "LoRA adapter file not found: {}",
+                path_str
+            )));
+        }
+
         let c_path = CString::new(path_str.clone())
             .map_err(|_| MullamaError::InvalidInput("Invalid path".to_string()))?;
 
-        // Placeholder for LoRA loading
-        let adapter_ptr = std::ptr::null_mut();
+        let adapter_ptr = unsafe {
+            sys::llama_adapter_lora_init(model.as_ptr(), c_path.as_ptr())
+        };
 
         if adapter_ptr.is_null() {
             return Err(MullamaError::LoRAError(format!(
@@ -52,25 +68,43 @@ impl LoRAAdapter {
         })
     }
 
-    /// Create a LoRA adapter from memory
+    /// Apply this adapter to a context
     ///
     /// # Arguments
-    /// * `data` - Raw LoRA adapter data
-    /// * `scale` - Scale factor for the adapter
-    pub fn from_memory(data: &[u8], scale: f32) -> Result<Self, MullamaError> {
-        // For now, we'll save to a temporary file and load from there
-        // In a production implementation, you'd want direct memory loading
-        use std::io::Write;
-        use tempfile::NamedTempFile;
+    /// * `ctx` - The context to apply the adapter to
+    ///
+    /// # Returns
+    /// Result indicating success or failure
+    pub fn apply(&self, ctx: &mut Context) -> Result<(), MullamaError> {
+        let result = unsafe {
+            sys::llama_set_adapter_lora(ctx.as_ptr(), self.adapter_ptr, self.scale)
+        };
 
-        let mut temp_file = NamedTempFile::new()
-            .map_err(|e| MullamaError::IoError(format!("Failed to create temp file: {}", e)))?;
+        if result != 0 {
+            return Err(MullamaError::LoRAError(
+                "Failed to apply LoRA adapter to context".to_string()
+            ));
+        }
 
-        temp_file.write_all(data)
-            .map_err(|e| MullamaError::IoError(format!("Failed to write LoRA data: {}", e)))?;
+        Ok(())
+    }
 
-        let path = temp_file.path().to_string_lossy().to_string();
-        Self::load(&path, scale)
+    /// Remove this adapter from a context
+    ///
+    /// # Arguments
+    /// * `ctx` - The context to remove the adapter from
+    pub fn remove(&self, ctx: &mut Context) -> Result<(), MullamaError> {
+        let result = unsafe {
+            sys::llama_rm_adapter_lora(ctx.as_ptr(), self.adapter_ptr)
+        };
+
+        if result != 0 {
+            return Err(MullamaError::LoRAError(
+                "Failed to remove LoRA adapter from context".to_string()
+            ));
+        }
+
+        Ok(())
     }
 
     /// Get the adapter's file path
@@ -89,7 +123,7 @@ impl LoRAAdapter {
     }
 
     /// Get the raw pointer (for internal use)
-    pub(crate) fn as_ptr(&self) -> *mut std::ffi::c_void {
+    pub(crate) fn as_ptr(&self) -> *mut sys::llama_adapter_lora {
         self.adapter_ptr
     }
 }
@@ -98,7 +132,7 @@ impl Drop for LoRAAdapter {
     fn drop(&mut self) {
         if !self.adapter_ptr.is_null() {
             unsafe {
-                // Placeholder for LoRA cleanup
+                sys::llama_adapter_lora_free(self.adapter_ptr);
             }
         }
     }
@@ -106,6 +140,13 @@ impl Drop for LoRAAdapter {
 
 unsafe impl Send for LoRAAdapter {}
 unsafe impl Sync for LoRAAdapter {}
+
+/// Clear all LoRA adapters from a context
+pub fn clear_adapters(ctx: &mut Context) {
+    unsafe {
+        sys::llama_clear_adapter_lora(ctx.as_ptr());
+    }
+}
 
 /// LoRA adapter manager for handling multiple adapters
 #[derive(Debug)]
@@ -135,6 +176,7 @@ impl LoRAManager {
     /// Load and add a LoRA adapter from file
     ///
     /// # Arguments
+    /// * `model` - The model to load the adapter for
     /// * `path` - Path to the LoRA adapter file
     /// * `scale` - Scale factor for the adapter
     ///
@@ -142,11 +184,37 @@ impl LoRAManager {
     /// The index of the loaded adapter
     pub fn load_adapter<P: AsRef<Path>>(
         &mut self,
+        model: &Model,
         path: P,
         scale: f32,
     ) -> Result<usize, MullamaError> {
-        let adapter = LoRAAdapter::load(path, scale)?;
+        let adapter = LoRAAdapter::load(model, path, scale)?;
         Ok(self.add_adapter(adapter))
+    }
+
+    /// Apply all active adapters to a context
+    pub fn apply_to_context(&self, ctx: &mut Context) -> Result<(), MullamaError> {
+        for (idx, scale) in &self.active_adapters {
+            if let Some(adapter) = self.adapters.get(*idx) {
+                let mut adapter_with_scale = LoRAAdapter {
+                    adapter_ptr: adapter.adapter_ptr,
+                    path: adapter.path.clone(),
+                    scale: *scale,
+                };
+                // Note: We need to be careful here - we're creating a temporary
+                // that shares the pointer but we don't want it to be freed
+                let result = unsafe {
+                    sys::llama_set_adapter_lora(ctx.as_ptr(), adapter.adapter_ptr, *scale)
+                };
+                if result != 0 {
+                    return Err(MullamaError::LoRAError(format!(
+                        "Failed to apply LoRA adapter at index {}",
+                        idx
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Activate an adapter with a specific scale

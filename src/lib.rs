@@ -114,14 +114,219 @@ pub mod format_conversion;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
 
-// Advanced features (placeholder implementations)
-// pub mod lora;
-// pub mod grammar;
-// pub mod control_vector;
-// pub mod speculative;
-// pub mod quantization;
-// pub mod gpu_advanced;
-// pub mod multimodal;
+// Advanced features
+pub mod lora;
+pub mod grammar;
+
+// ==================== System-level Functions ====================
+
+/// Initialize the llama.cpp backend
+///
+/// This is called automatically when loading a model, but can be called
+/// manually for early initialization.
+pub fn backend_init() {
+    unsafe {
+        sys::llama_backend_init();
+    }
+}
+
+/// Free the llama.cpp backend resources
+///
+/// Call this when completely done with llama.cpp to free system resources.
+pub fn backend_free() {
+    unsafe {
+        sys::llama_backend_free();
+    }
+}
+
+/// Get the current timestamp in microseconds
+pub fn time_us() -> i64 {
+    unsafe { sys::llama_time_us() }
+}
+
+/// Get the maximum number of devices supported
+pub fn max_devices() -> usize {
+    unsafe { sys::llama_max_devices() }
+}
+
+/// Check if GPU offloading is supported
+pub fn supports_gpu_offload() -> bool {
+    unsafe { sys::llama_supports_gpu_offload() }
+}
+
+/// Check if mmap is supported for model loading
+pub fn supports_mmap() -> bool {
+    unsafe { sys::llama_supports_mmap() }
+}
+
+/// Check if mlock is supported for memory locking
+pub fn supports_mlock() -> bool {
+    unsafe { sys::llama_supports_mlock() }
+}
+
+/// Check if RPC is supported
+pub fn supports_rpc() -> bool {
+    unsafe { sys::llama_supports_rpc() }
+}
+
+/// Get system information string
+///
+/// Returns a detailed string with information about the system's
+/// capabilities (AVX, CUDA, Metal, etc.)
+pub fn print_system_info() -> String {
+    unsafe {
+        let ptr = sys::llama_print_system_info();
+        if ptr.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr(ptr)
+                .to_string_lossy()
+                .to_string()
+        }
+    }
+}
+
+/// Initialize NUMA (Non-Uniform Memory Access) support
+pub fn numa_init(strategy: sys::ggml_numa_strategy) {
+    unsafe {
+        sys::llama_numa_init(strategy);
+    }
+}
+
+/// Get system capabilities as a structured report
+pub fn system_info() -> SystemInfo {
+    SystemInfo {
+        max_devices: max_devices(),
+        supports_gpu_offload: supports_gpu_offload(),
+        supports_mmap: supports_mmap(),
+        supports_mlock: supports_mlock(),
+        supports_rpc: supports_rpc(),
+        details: print_system_info(),
+    }
+}
+
+/// System information structure
+#[derive(Debug, Clone)]
+pub struct SystemInfo {
+    pub max_devices: usize,
+    pub supports_gpu_offload: bool,
+    pub supports_mmap: bool,
+    pub supports_mlock: bool,
+    pub supports_rpc: bool,
+    pub details: String,
+}
+
+// ==================== Logging ====================
+
+/// Log callback function type
+pub type LogCallback = extern "C" fn(level: i32, text: *const std::os::raw::c_char, user_data: *mut std::os::raw::c_void);
+
+/// Set custom log callback
+///
+/// # Safety
+/// The callback must remain valid for the lifetime of the program.
+pub fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
+    unsafe {
+        sys::llama_log_set(Some(callback), user_data);
+    }
+}
+
+// ==================== Batch Helpers ====================
+
+/// Create a batch for a single sequence of tokens
+///
+/// This is a convenience function for simple use cases.
+pub fn batch_get_one(tokens: &[i32]) -> sys::llama_batch {
+    unsafe {
+        sys::llama_batch_get_one(
+            tokens.as_ptr() as *mut i32,
+            tokens.len() as i32,
+        )
+    }
+}
+
+// ==================== Chat Templates ====================
+
+/// Get the number of built-in chat templates
+pub fn chat_builtin_template_count() -> i32 {
+    unsafe {
+        sys::llama_chat_builtin_templates(std::ptr::null_mut(), 0)
+    }
+}
+
+// ==================== Vocab Helper Functions ====================
+
+/// Get vocabulary information from a model
+pub struct VocabInfo {
+    pub bos_token: i32,
+    pub eos_token: i32,
+    pub cls_token: i32,
+    pub sep_token: i32,
+    pub nl_token: i32,
+    pub pad_token: i32,
+    pub eot_token: i32,
+    pub add_bos: bool,
+    pub add_eos: bool,
+}
+
+impl Model {
+    /// Get comprehensive vocabulary information
+    pub fn vocab_info(&self) -> VocabInfo {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        VocabInfo {
+            bos_token: unsafe { sys::llama_vocab_bos(vocab_ptr) },
+            eos_token: unsafe { sys::llama_vocab_eos(vocab_ptr) },
+            cls_token: unsafe { sys::llama_vocab_cls(vocab_ptr) },
+            sep_token: unsafe { sys::llama_vocab_sep(vocab_ptr) },
+            nl_token: unsafe { sys::llama_vocab_nl(vocab_ptr) },
+            pad_token: unsafe { sys::llama_vocab_pad(vocab_ptr) },
+            eot_token: unsafe { sys::llama_vocab_eot(vocab_ptr) },
+            add_bos: unsafe { sys::llama_vocab_get_add_bos(vocab_ptr) },
+            add_eos: unsafe { sys::llama_vocab_get_add_eos(vocab_ptr) },
+        }
+    }
+
+    /// Get text for a token from the vocabulary
+    pub fn vocab_get_text(&self, token: i32) -> Option<String> {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        let ptr = unsafe { sys::llama_vocab_get_text(vocab_ptr, token) };
+        if ptr.is_null() {
+            None
+        } else {
+            Some(unsafe {
+                std::ffi::CStr::from_ptr(ptr)
+                    .to_string_lossy()
+                    .to_string()
+            })
+        }
+    }
+
+    /// Get score for a token from the vocabulary
+    pub fn vocab_get_score(&self, token: i32) -> f32 {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        unsafe { sys::llama_vocab_get_score(vocab_ptr, token) }
+    }
+
+    /// Get attributes for a token from the vocabulary
+    pub fn vocab_get_attr(&self, token: i32) -> sys::llama_token_attr {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        unsafe { sys::llama_vocab_get_attr(vocab_ptr, token) }
+    }
+
+    /// Check if a token is a control token (via vocab)
+    pub fn vocab_is_control(&self, token: i32) -> bool {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        unsafe { sys::llama_vocab_is_control(vocab_ptr, token) }
+    }
+
+    /// Check if a token is end-of-generation (via vocab)
+    pub fn vocab_is_eog(&self, token: i32) -> bool {
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.as_ptr()) };
+        unsafe { sys::llama_vocab_is_eog(vocab_ptr, token) }
+    }
+}
+pub mod quantization;
+pub mod control_vector;
 
 // Re-export the public API
 pub use model::{Model, ModelParams, ModelKvOverride, ModelKvOverrideValue, Token};
@@ -252,28 +457,22 @@ mod tests {
     }
     
     #[test]
-    fn test_model_structure() {
-        // Test that we can create a model struct
-        // This is just testing the Rust structure, not actual model loading
-        let model = model::Model {
-            model_ptr: std::ptr::null_mut(),
-        };
-        assert!(model.model_ptr.is_null());
+    fn test_model_params_default() {
+        // Test that ModelParams has sensible defaults
+        let params = model::ModelParams::default();
+        assert_eq!(params.n_gpu_layers, 0);
+        assert!(params.use_mmap);
+        assert!(!params.use_mlock);
     }
-    
+
     #[test]
-    fn test_context_structure() {
-        // Test that we can create a context struct
-        // This is just testing the Rust structure, not actual context creation
-        let model = Arc::new(model::Model {
-            model_ptr: std::ptr::null_mut(),
-        });
-        
-        let context = context::Context {
-            model,
-            ctx_ptr: std::ptr::null_mut(),
-        };
-        assert!(context.ctx_ptr.is_null());
+    fn test_context_params_default() {
+        // Test that ContextParams has sensible defaults
+        let params = context::ContextParams::default();
+        // n_ctx = 0 means use model default
+        assert_eq!(params.n_ctx, 0);
+        assert!(params.n_batch > 0);
+        assert!(params.n_threads > 0);
     }
     
     #[test]

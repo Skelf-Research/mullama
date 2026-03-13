@@ -241,11 +241,14 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=llama");
 
-    // Platform-specific library linking
+    // Platform-specific library linking - link all ggml components
     if cfg!(target_os = "windows") {
         println!("cargo:rustc-link-lib=static=ggml_static");
     } else {
+        // Modern llama.cpp splits ggml into multiple libraries
         println!("cargo:rustc-link-lib=static=ggml");
+        println!("cargo:rustc-link-lib=static=ggml-base");
+        println!("cargo:rustc-link-lib=static=ggml-cpu");
     }
 
     // Link standard libraries

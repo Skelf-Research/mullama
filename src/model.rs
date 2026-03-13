@@ -2,31 +2,39 @@ use crate::{sys, context::{Context, ContextParams}, error::MullamaError, token::
 use std::{path::Path, sync::Arc, ffi::CString, ptr};
 use std::os::raw::{c_char, c_void};
 
-/// Represents a loaded LLM model
+/// Inner struct to hold the model pointer with proper cleanup
 #[derive(Debug)]
-pub struct Model {
-    pub(crate) model_ptr: *mut sys::llama_model,
+struct ModelInner {
+    model_ptr: *mut sys::llama_model,
 }
 
-// Models are safe to clone since the underlying C++ object is reference counted
-impl Clone for Model {
-    fn clone(&self) -> Self {
-        // In a real implementation, we'd need to increment the reference count
-        // For now, we'll just copy the pointer
-        Self {
-            model_ptr: self.model_ptr,
-        }
-    }
-}
-
-// Models need to be freed when dropped
-impl Drop for Model {
+impl Drop for ModelInner {
     fn drop(&mut self) {
         if !self.model_ptr.is_null() {
             unsafe {
                 sys::llama_model_free(self.model_ptr);
             }
         }
+    }
+}
+
+// Safety: The model pointer is thread-safe as llama.cpp models are designed for concurrent access
+unsafe impl Send for ModelInner {}
+unsafe impl Sync for ModelInner {}
+
+/// Represents a loaded LLM model
+///
+/// Models are reference-counted and can be safely cloned and shared across threads.
+/// The underlying C++ model is freed when the last reference is dropped.
+#[derive(Debug, Clone)]
+pub struct Model {
+    inner: Arc<ModelInner>,
+}
+
+impl Model {
+    /// Get the raw model pointer (for internal use)
+    pub(crate) fn model_ptr(&self) -> *mut sys::llama_model {
+        self.inner.model_ptr
     }
 }
 
@@ -161,7 +169,7 @@ impl Model {
         }
 
         Ok(Model {
-            model_ptr,
+            inner: Arc::new(ModelInner { model_ptr }),
         })
     }
     
@@ -179,7 +187,7 @@ impl Model {
         // First, get the required buffer size by passing null tokens
         let max_tokens = unsafe {
             sys::llama_tokenize(
-                self.model_ptr,
+                self.inner.model_ptr,
                 c_text.as_ptr(),
                 text.len() as i32,
                 ptr::null_mut(),
@@ -203,7 +211,7 @@ impl Model {
         let mut tokens = vec![0i32; max_tokens as usize];
         let actual_tokens = unsafe {
             sys::llama_tokenize(
-                self.model_ptr,
+                self.inner.model_ptr,
                 c_text.as_ptr(),
                 text.len() as i32,
                 tokens.as_mut_ptr(),
@@ -235,7 +243,7 @@ impl Model {
         // First, get the required buffer size
         let max_chars = unsafe {
             sys::llama_detokenize(
-                self.model_ptr,
+                self.inner.model_ptr,
                 llama_tokens.as_ptr(),
                 tokens.len() as i32,
                 ptr::null_mut(),
@@ -259,7 +267,7 @@ impl Model {
         let mut buffer = vec![0u8; max_chars as usize + 1]; // +1 for null terminator
         let actual_chars = unsafe {
             sys::llama_detokenize(
-                self.model_ptr,
+                self.inner.model_ptr,
                 llama_tokens.as_ptr(),
                 tokens.len() as i32,
                 buffer.as_mut_ptr() as *mut c_char,
@@ -287,7 +295,7 @@ impl Model {
 
         let n_chars = unsafe {
             sys::llama_token_to_piece(
-                self.model_ptr,
+                self.inner.model_ptr,
                 token as sys::llama_token,
                 buf.as_mut_ptr() as *mut c_char,
                 buf.len() as i32,
@@ -307,7 +315,7 @@ impl Model {
             buf.resize(n_chars as usize + 1, 0);
             let n_chars_retry = unsafe {
                 sys::llama_token_to_piece(
-                    self.model_ptr,
+                    self.inner.model_ptr,
                     token as sys::llama_token,
                     buf.as_mut_ptr() as *mut c_char,
                     buf.len() as i32,
@@ -331,59 +339,59 @@ impl Model {
     
     /// Get model training context size
     pub fn n_ctx_train(&self) -> i32 {
-        unsafe { sys::llama_model_n_ctx_train(self.model_ptr) as i32 }
+        unsafe { sys::llama_model_n_ctx_train(self.inner.model_ptr) as i32 }
     }
 
     /// Get model embedding dimension
     pub fn n_embd(&self) -> i32 {
-        unsafe { sys::llama_model_n_embd(self.model_ptr) }
+        unsafe { sys::llama_model_n_embd(self.inner.model_ptr) }
     }
 
     /// Get number of model layers
     pub fn n_layer(&self) -> i32 {
-        unsafe { sys::llama_model_n_layer(self.model_ptr) }
+        unsafe { sys::llama_model_n_layer(self.inner.model_ptr) }
     }
 
     /// Get number of attention heads
     pub fn n_head(&self) -> i32 {
-        unsafe { sys::llama_model_n_head(self.model_ptr) }
+        unsafe { sys::llama_model_n_head(self.inner.model_ptr) }
     }
 
     /// Get number of key-value heads
     pub fn n_head_kv(&self) -> i32 {
-        unsafe { sys::llama_model_n_head_kv(self.model_ptr) }
+        unsafe { sys::llama_model_n_head_kv(self.inner.model_ptr) }
     }
 
     /// Get sliding window attention size
     pub fn n_swa(&self) -> i32 {
-        unsafe { sys::llama_model_n_swa(self.model_ptr) }
+        unsafe { sys::llama_model_n_swa(self.inner.model_ptr) }
     }
 
     /// Get RoPE frequency scaling factor
     pub fn rope_freq_scale_train(&self) -> f32 {
-        unsafe { sys::llama_model_rope_freq_scale_train(self.model_ptr) }
+        unsafe { sys::llama_model_rope_freq_scale_train(self.inner.model_ptr) }
     }
 
     /// Get vocabulary type
     pub fn vocab_type(&self) -> sys::llama_vocab_type {
-        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.model_ptr) };
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
         unsafe { sys::llama_vocab_type(vocab_ptr) }
     }
 
     /// Get vocabulary size
     pub fn vocab_size(&self) -> i32 {
-        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.model_ptr) };
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
         unsafe { sys::llama_vocab_n_tokens(vocab_ptr) }
     }
 
     /// Get rope type used by the model
     pub fn rope_type(&self) -> sys::llama_rope_type {
-        unsafe { sys::llama_model_rope_type(self.model_ptr) }
+        unsafe { sys::llama_model_rope_type(self.inner.model_ptr) }
     }
     
     /// Get the internal model pointer (for use by other modules)
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_model {
-        self.model_ptr
+        self.inner.model_ptr
     }
 }
 
@@ -399,7 +407,7 @@ pub struct Token {
 impl Model {
     /// Get complete token information including attributes
     pub fn get_token_info(&self, token: TokenId) -> Result<Token, MullamaError> {
-        let text_ptr = unsafe { sys::llama_token_get_text(self.model_ptr, token as sys::llama_token) };
+        let text_ptr = unsafe { sys::llama_token_get_text(self.inner.model_ptr, token as sys::llama_token) };
         if text_ptr.is_null() {
             return Err(MullamaError::TokenizationError("Token not found".to_string()));
         }
@@ -410,55 +418,365 @@ impl Model {
                 .to_string()
         };
 
-        let score = unsafe { sys::llama_token_get_score(self.model_ptr, token as sys::llama_token) };
-        let attr = unsafe { sys::llama_token_get_attr(self.model_ptr, token as sys::llama_token) };
+        let score = unsafe { sys::llama_token_get_score(self.inner.model_ptr, token as sys::llama_token) };
+        let attr = unsafe { sys::llama_token_get_attr(self.inner.model_ptr, token as sys::llama_token) };
 
         Ok(Token { id: token, text, score, attr })
     }
 
     /// Check if token is end of generation
     pub fn token_is_eog(&self, token: TokenId) -> bool {
-        unsafe { sys::llama_token_is_eog(self.model_ptr, token as sys::llama_token) as bool }
+        unsafe { sys::llama_token_is_eog(self.inner.model_ptr, token as sys::llama_token) as bool }
     }
 
     /// Check if token is a control token
     pub fn token_is_control(&self, token: TokenId) -> bool {
-        unsafe { sys::llama_token_is_control(self.model_ptr, token as sys::llama_token) as bool }
+        unsafe { sys::llama_token_is_control(self.inner.model_ptr, token as sys::llama_token) as bool }
     }
 
     /// Get special tokens
     pub fn token_bos(&self) -> TokenId {
-        unsafe { sys::llama_token_bos(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_bos(self.inner.model_ptr) as TokenId }
     }
 
     pub fn token_eos(&self) -> TokenId {
-        unsafe { sys::llama_token_eos(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_eos(self.inner.model_ptr) as TokenId }
     }
 
     pub fn token_cls(&self) -> TokenId {
-        unsafe { sys::llama_token_cls(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_cls(self.inner.model_ptr) as TokenId }
     }
 
     pub fn token_sep(&self) -> TokenId {
-        unsafe { sys::llama_token_sep(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_sep(self.inner.model_ptr) as TokenId }
     }
 
     pub fn token_nl(&self) -> TokenId {
-        unsafe { sys::llama_token_nl(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_nl(self.inner.model_ptr) as TokenId }
     }
 
     pub fn token_pad(&self) -> TokenId {
-        unsafe { sys::llama_token_pad(self.model_ptr) as TokenId }
+        unsafe { sys::llama_token_pad(self.inner.model_ptr) as TokenId }
     }
 
     /// Check if model adds BOS token
     pub fn add_bos_token(&self) -> bool {
-        unsafe { sys::llama_add_bos_token(self.model_ptr) as bool }
+        unsafe { sys::llama_add_bos_token(self.inner.model_ptr) as bool }
     }
 
     /// Check if model adds EOS token
     pub fn add_eos_token(&self) -> bool {
-        unsafe { sys::llama_add_eos_token(self.model_ptr) as bool }
+        unsafe { sys::llama_add_eos_token(self.inner.model_ptr) as bool }
+    }
+}
+
+// Model metadata and advanced features
+impl Model {
+    // ==================== Model Info ====================
+
+    /// Get a description of the model
+    pub fn desc(&self) -> String {
+        let mut buf = vec![0u8; 256];
+        let len = unsafe {
+            sys::llama_model_desc(
+                self.inner.model_ptr,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if len > 0 {
+            buf.truncate(len as usize);
+            String::from_utf8_lossy(&buf).to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Get the model size in bytes
+    pub fn size(&self) -> u64 {
+        unsafe { sys::llama_model_size(self.inner.model_ptr) }
+    }
+
+    /// Get the number of parameters in the model
+    pub fn n_params(&self) -> u64 {
+        unsafe { sys::llama_model_n_params(self.inner.model_ptr) }
+    }
+
+    /// Get vocabulary size (from model)
+    pub fn n_vocab(&self) -> i32 {
+        unsafe { sys::llama_model_n_vocab(self.inner.model_ptr) }
+    }
+
+    /// Get number of classification outputs
+    pub fn n_cls_out(&self) -> u32 {
+        unsafe { sys::llama_model_n_cls_out(self.inner.model_ptr) }
+    }
+
+    // ==================== Model Capabilities ====================
+
+    /// Check if model has an encoder (for encoder-decoder models)
+    pub fn has_encoder(&self) -> bool {
+        unsafe { sys::llama_model_has_encoder(self.inner.model_ptr) }
+    }
+
+    /// Check if model has a decoder
+    pub fn has_decoder(&self) -> bool {
+        unsafe { sys::llama_model_has_decoder(self.inner.model_ptr) }
+    }
+
+    /// Check if model is recurrent (e.g., Mamba, RWKV)
+    pub fn is_recurrent(&self) -> bool {
+        unsafe { sys::llama_model_is_recurrent(self.inner.model_ptr) }
+    }
+
+    /// Check if model is a diffusion model
+    pub fn is_diffusion(&self) -> bool {
+        unsafe { sys::llama_model_is_diffusion(self.inner.model_ptr) }
+    }
+
+    /// Get decoder start token (for encoder-decoder models)
+    pub fn decoder_start_token(&self) -> TokenId {
+        unsafe { sys::llama_model_decoder_start_token(self.inner.model_ptr) as TokenId }
+    }
+
+    // ==================== Chat Templates ====================
+
+    /// Get the model's built-in chat template
+    pub fn chat_template(&self) -> Option<String> {
+        let mut buf = vec![0u8; 4096];
+        let len = unsafe {
+            sys::llama_model_chat_template(
+                self.inner.model_ptr,
+                std::ptr::null(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if len > 0 {
+            buf.truncate(len as usize);
+            Some(String::from_utf8_lossy(&buf).to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Apply a chat template to format messages
+    ///
+    /// # Arguments
+    /// * `template` - Template string (None to use model's default)
+    /// * `messages` - Chat messages in format [(role, content), ...]
+    /// * `add_generation_prompt` - Whether to add the generation prompt
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// let messages = vec![
+    ///     ("system", "You are a helpful assistant."),
+    ///     ("user", "Hello!"),
+    /// ];
+    /// let formatted = model.apply_chat_template(None, &messages, true)?;
+    /// ```
+    pub fn apply_chat_template(
+        &self,
+        template: Option<&str>,
+        messages: &[(&str, &str)],
+        add_generation_prompt: bool,
+    ) -> Result<String, MullamaError> {
+        // Build chat messages
+        let chat_messages: Vec<sys::llama_chat_message> = messages
+            .iter()
+            .map(|(role, content)| {
+                let role_cstr = CString::new(*role).unwrap();
+                let content_cstr = CString::new(*content).unwrap();
+                sys::llama_chat_message {
+                    role: role_cstr.into_raw(),
+                    content: content_cstr.into_raw(),
+                }
+            })
+            .collect();
+
+        let template_cstr = template.map(|t| CString::new(t).unwrap());
+        let template_ptr = template_cstr.as_ref().map_or(std::ptr::null(), |t| t.as_ptr());
+
+        // First call to get required buffer size
+        let required = unsafe {
+            sys::llama_chat_apply_template(
+                self.inner.model_ptr,
+                template_ptr,
+                chat_messages.as_ptr(),
+                chat_messages.len(),
+                add_generation_prompt,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+
+        if required < 0 {
+            // Free the CStrings we allocated
+            for msg in chat_messages {
+                unsafe {
+                    let _ = CString::from_raw(msg.role as *mut c_char);
+                    let _ = CString::from_raw(msg.content as *mut c_char);
+                }
+            }
+            return Err(MullamaError::InvalidInput("Failed to apply chat template".to_string()));
+        }
+
+        // Allocate buffer and apply template
+        let mut buffer = vec![0u8; required as usize + 1];
+        let written = unsafe {
+            sys::llama_chat_apply_template(
+                self.inner.model_ptr,
+                template_ptr,
+                chat_messages.as_ptr(),
+                chat_messages.len(),
+                add_generation_prompt,
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len() as i32,
+            )
+        };
+
+        // Free the CStrings we allocated
+        for msg in chat_messages {
+            unsafe {
+                let _ = CString::from_raw(msg.role as *mut c_char);
+                let _ = CString::from_raw(msg.content as *mut c_char);
+            }
+        }
+
+        if written < 0 {
+            return Err(MullamaError::InvalidInput("Failed to apply chat template".to_string()));
+        }
+
+        buffer.truncate(written as usize);
+        Ok(String::from_utf8_lossy(&buffer).to_string())
+    }
+
+    // ==================== Model Metadata ====================
+
+    /// Get the number of metadata key-value pairs
+    pub fn meta_count(&self) -> i32 {
+        unsafe { sys::llama_model_meta_count(self.inner.model_ptr) }
+    }
+
+    /// Get a metadata key by index
+    pub fn meta_key(&self, index: i32) -> Option<String> {
+        let mut buf = vec![0u8; 256];
+        let len = unsafe {
+            sys::llama_model_meta_key_by_index(
+                self.inner.model_ptr,
+                index,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if len > 0 {
+            buf.truncate(len as usize);
+            Some(String::from_utf8_lossy(&buf).to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Get a metadata value by key
+    pub fn meta_val(&self, key: &str) -> Option<String> {
+        let key_cstr = CString::new(key).ok()?;
+        let mut buf = vec![0u8; 1024];
+        let len = unsafe {
+            sys::llama_model_meta_val_str(
+                self.inner.model_ptr,
+                key_cstr.as_ptr(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if len > 0 {
+            buf.truncate(len as usize);
+            Some(String::from_utf8_lossy(&buf).to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Get a metadata value by index
+    pub fn meta_val_by_index(&self, index: i32) -> Option<String> {
+        let mut buf = vec![0u8; 1024];
+        let len = unsafe {
+            sys::llama_model_meta_val_str_by_index(
+                self.inner.model_ptr,
+                index,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if len > 0 {
+            buf.truncate(len as usize);
+            Some(String::from_utf8_lossy(&buf).to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Get all metadata as a key-value map
+    pub fn metadata(&self) -> std::collections::HashMap<String, String> {
+        let mut map = std::collections::HashMap::new();
+        let count = self.meta_count();
+        for i in 0..count {
+            if let (Some(key), Some(val)) = (self.meta_key(i), self.meta_val_by_index(i)) {
+                map.insert(key, val);
+            }
+        }
+        map
+    }
+
+    // ==================== Fill-in-the-Middle Tokens ====================
+
+    /// Get FIM prefix token (for code infilling)
+    pub fn token_fim_pre(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_pre(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get FIM suffix token
+    pub fn token_fim_suf(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_suf(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get FIM middle token
+    pub fn token_fim_mid(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_mid(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get FIM pad token
+    pub fn token_fim_pad(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_pad(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get FIM rep token
+    pub fn token_fim_rep(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_rep(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get FIM sep token
+    pub fn token_fim_sep(&self) -> TokenId {
+        unsafe { sys::llama_token_fim_sep(self.inner.model_ptr) as TokenId }
+    }
+
+    /// Get end of turn token
+    pub fn token_eot(&self) -> TokenId {
+        unsafe { sys::llama_token_eot(self.inner.model_ptr) as TokenId }
+    }
+
+    // ==================== Model Persistence ====================
+
+    /// Save model to a GGUF file
+    pub fn save(&self, path: &str) -> Result<(), MullamaError> {
+        let c_path = CString::new(path)
+            .map_err(|_| MullamaError::InvalidInput("Invalid path".to_string()))?;
+
+        unsafe {
+            sys::llama_model_save_to_file(self.inner.model_ptr, c_path.as_ptr());
+        }
+
+        Ok(())
     }
 }
 

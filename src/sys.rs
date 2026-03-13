@@ -86,6 +86,11 @@ pub struct ggml_abort_callback {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+pub struct llama_adapter_lora {
+    _private: [u8; 0],
+}
+
 //
 // Type aliases - exact matches to llama.cpp
 //
@@ -852,9 +857,273 @@ extern "C" {
     pub fn llama_perf_dump_yaml(stream: *mut c_void, ctx: *const llama_context);
 
     //
+    // LoRA adapter operations
+    //
+    pub fn llama_adapter_lora_init(
+        model: *mut llama_model,
+        path_lora: *const c_char,
+    ) -> *mut llama_adapter_lora;
+    pub fn llama_adapter_lora_free(adapter: *mut llama_adapter_lora);
+    pub fn llama_set_adapter_lora(
+        ctx: *mut llama_context,
+        adapter: *mut llama_adapter_lora,
+        scale: f32,
+    ) -> i32;
+    pub fn llama_rm_adapter_lora(
+        ctx: *mut llama_context,
+        adapter: *mut llama_adapter_lora,
+    ) -> i32;
+    pub fn llama_clear_adapter_lora(ctx: *mut llama_context);
+
+    //
+    // Control vector operations
+    //
+    pub fn llama_control_vector_apply(
+        ctx: *mut llama_context,
+        data: *const f32,
+        len: usize,
+        n_embd: i32,
+        il_start: i32,
+        il_end: i32,
+    ) -> i32;
+
+    //
+    // Memory/KV cache management
+    //
+    pub fn llama_memory_clear(mem: llama_memory_t, data: c_bool);
+    pub fn llama_memory_seq_rm(
+        mem: llama_memory_t,
+        seq_id: llama_seq_id,
+        p0: llama_pos,
+        p1: llama_pos,
+    ) -> c_bool;
+    pub fn llama_memory_seq_cp(
+        mem: llama_memory_t,
+        seq_id_src: llama_seq_id,
+        seq_id_dst: llama_seq_id,
+        p0: llama_pos,
+        p1: llama_pos,
+    );
+    pub fn llama_memory_seq_keep(mem: llama_memory_t, seq_id: llama_seq_id);
+    pub fn llama_memory_seq_add(
+        mem: llama_memory_t,
+        seq_id: llama_seq_id,
+        p0: llama_pos,
+        p1: llama_pos,
+        delta: llama_pos,
+    );
+    pub fn llama_memory_seq_div(
+        mem: llama_memory_t,
+        seq_id: llama_seq_id,
+        p0: llama_pos,
+        p1: llama_pos,
+        d: c_int,
+    );
+    pub fn llama_memory_seq_pos_min(mem: llama_memory_t, seq_id: llama_seq_id) -> llama_pos;
+    pub fn llama_memory_seq_pos_max(mem: llama_memory_t, seq_id: llama_seq_id) -> llama_pos;
+    pub fn llama_memory_can_shift(mem: llama_memory_t) -> c_bool;
+
+    //
+    // State / sessions
+    //
+    pub fn llama_get_state_size(ctx: *mut llama_context) -> usize;
+    pub fn llama_copy_state_data(ctx: *mut llama_context, dst: *mut u8) -> usize;
+    pub fn llama_set_state_data(ctx: *mut llama_context, src: *const u8) -> usize;
+    pub fn llama_load_session_file(
+        ctx: *mut llama_context,
+        path_session: *const c_char,
+        tokens_out: *mut llama_token,
+        n_token_capacity: usize,
+        n_token_count_out: *mut usize,
+    ) -> c_bool;
+    pub fn llama_save_session_file(
+        ctx: *mut llama_context,
+        path_session: *const c_char,
+        tokens: *const llama_token,
+        n_token_count: usize,
+    ) -> c_bool;
+    //
+    // Model metadata
+    //
+    pub fn llama_model_desc(model: *const llama_model, buf: *mut c_char, buf_size: usize) -> c_int;
+    pub fn llama_model_size(model: *const llama_model) -> u64;
+    pub fn llama_model_n_params(model: *const llama_model) -> u64;
+    pub fn llama_model_meta_count(model: *const llama_model) -> i32;
+    pub fn llama_model_meta_key_by_index(
+        model: *const llama_model,
+        i: i32,
+        buf: *mut c_char,
+        buf_size: usize,
+    ) -> i32;
+    pub fn llama_model_meta_val_str(
+        model: *const llama_model,
+        key: *const c_char,
+        buf: *mut c_char,
+        buf_size: usize,
+    ) -> i32;
+    pub fn llama_model_meta_val_str_by_index(
+        model: *const llama_model,
+        i: i32,
+        buf: *mut c_char,
+        buf_size: usize,
+    ) -> i32;
+    pub fn llama_model_has_encoder(model: *const llama_model) -> c_bool;
+    pub fn llama_model_has_decoder(model: *const llama_model) -> c_bool;
+    pub fn llama_model_is_recurrent(model: *const llama_model) -> c_bool;
+    pub fn llama_model_decoder_start_token(model: *const llama_model) -> llama_token;
+    pub fn llama_model_chat_template(
+        model: *const llama_model,
+        name: *const c_char,
+        buf: *mut c_char,
+        buf_size: usize,
+    ) -> i32;
+    pub fn llama_n_ctx_train(model: *const llama_model) -> u32;
+    pub fn llama_n_embd(model: *const llama_model) -> i32;
+    pub fn llama_n_layer(model: *const llama_model) -> i32;
+    pub fn llama_n_head(model: *const llama_model) -> i32;
+    pub fn llama_n_vocab(model: *const llama_model) -> i32;
+
+    //
+    // Vocabulary functions
+    //
+    pub fn llama_vocab_get_text(vocab: *const llama_vocab, token: llama_token) -> *const c_char;
+    pub fn llama_vocab_get_score(vocab: *const llama_vocab, token: llama_token) -> f32;
+    pub fn llama_vocab_get_attr(vocab: *const llama_vocab, token: llama_token) -> llama_token_attr;
+    pub fn llama_vocab_is_eog(vocab: *const llama_vocab, token: llama_token) -> c_bool;
+    pub fn llama_vocab_is_control(vocab: *const llama_vocab, token: llama_token) -> c_bool;
+    pub fn llama_vocab_bos(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_eos(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_eot(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_sep(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_nl(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_pad(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_cls(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_mask(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_get_add_bos(vocab: *const llama_vocab) -> c_bool;
+    pub fn llama_vocab_get_add_eos(vocab: *const llama_vocab) -> c_bool;
+    pub fn llama_vocab_get_add_sep(vocab: *const llama_vocab) -> c_bool;
+    pub fn llama_vocab_fim_pre(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_fim_suf(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_fim_mid(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_fim_pad(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_fim_rep(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_vocab_fim_sep(vocab: *const llama_vocab) -> llama_token;
+    pub fn llama_token_fim_pre(model: *const llama_model) -> llama_token;
+    pub fn llama_token_fim_suf(model: *const llama_model) -> llama_token;
+    pub fn llama_token_fim_mid(model: *const llama_model) -> llama_token;
+    pub fn llama_token_fim_pad(model: *const llama_model) -> llama_token;
+    pub fn llama_token_fim_rep(model: *const llama_model) -> llama_token;
+    pub fn llama_token_fim_sep(model: *const llama_model) -> llama_token;
+
+    //
+    // Additional sampler functions
+    //
+    pub fn llama_sampler_get_seed(smpl: *const llama_sampler) -> u32;
+    pub fn llama_sampler_init_softmax() -> *mut llama_sampler;
+    pub fn llama_sampler_init_top_n_sigma(n: f32) -> *mut llama_sampler;
+    pub fn llama_sampler_init_dry(
+        vocab: *const llama_vocab,
+        n_ctx_train: i32,
+        dry_multiplier: f32,
+        dry_base: f32,
+        dry_allowed_length: i32,
+        dry_penalty_last_n: i32,
+        seq_breakers: *const *const c_char,
+        num_breakers: usize,
+    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_xtc(
+        p: f32,
+        t: f32,
+        min_keep: usize,
+        seed: u32,
+    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_infill(vocab: *const llama_vocab) -> *mut llama_sampler;
+
+    //
+    // Context settings
+    //
+    pub fn llama_set_causal_attn(ctx: *mut llama_context, causal_attn: c_bool);
+    pub fn llama_set_embeddings(ctx: *mut llama_context, embeddings: c_bool);
+    pub fn llama_set_warmup(ctx: *mut llama_context, warmup: c_bool);
+    pub fn llama_set_abort_callback(
+        ctx: *mut llama_context,
+        abort_callback: Option<unsafe extern "C" fn(data: *mut c_void) -> c_bool>,
+        abort_callback_data: *mut c_void,
+    );
+    pub fn llama_synchronize(ctx: *mut llama_context);
+
+    //
     // Utilities and system information
     //
     pub fn llama_log_set(log_callback: Option<unsafe extern "C" fn(level: i32, text: *const c_char, user_data: *mut c_void)>, user_data: *mut c_void);
     pub fn llama_log_callback_default(level: i32, text: *const c_char, user_data: *mut c_void);
     pub fn llama_dump_timing_info_yaml(stream: *mut c_void, ctx: *const llama_context);
+    pub fn llama_split_path(split_path: *mut c_char, maxlen: usize, path_prefix: *const c_char, split_no: c_int, split_count: c_int) -> c_int;
+    pub fn llama_split_prefix(split_prefix: *mut c_char, maxlen: usize, split_path: *const c_char, split_no: c_int, split_count: c_int) -> c_int;
+
+    //
+    // Additional model/context functions
+    //
+    pub fn llama_load_model_from_file(path_model: *const c_char, params: llama_model_params) -> *mut llama_model;
+    pub fn llama_free_model(model: *mut llama_model);
+    pub fn llama_new_context_with_model(model: *mut llama_model, params: llama_context_params) -> *mut llama_context;
+    pub fn llama_get_pooling_type(ctx: *const llama_context) -> llama_pooling_type;
+    pub fn llama_model_is_diffusion(model: *const llama_model) -> c_bool;
+
+    //
+    // Extended state functions
+    //
+    pub fn llama_state_seq_get_size_ext(
+        ctx: *mut llama_context,
+        seq_id: llama_seq_id,
+        flags: i32,
+    ) -> usize;
+    pub fn llama_state_seq_get_data_ext(
+        ctx: *mut llama_context,
+        dst: *mut u8,
+        size: usize,
+        seq_id: llama_seq_id,
+        flags: i32,
+    ) -> usize;
+    pub fn llama_state_seq_set_data_ext(
+        ctx: *mut llama_context,
+        src: *const u8,
+        size: usize,
+        seq_id: llama_seq_id,
+        flags: i32,
+    ) -> usize;
+
+    //
+    // Decode with sampler
+    //
+    pub fn llama_decode_with_sampler(
+        ctx: *mut llama_context,
+        smpl: *mut llama_sampler,
+        batch: llama_batch,
+        top_n_logprobs: i32,
+    ) -> i32;
+
+    //
+    // Control vector application
+    //
+    pub fn llama_apply_adapter_cvec(
+        ctx: *mut llama_context,
+        data: *const f32,
+        n_embd: i32,
+        il_start: i32,
+        il_end: i32,
+    ) -> i32;
+
+    //
+    // Grammar lazy initialization
+    //
+    pub fn llama_sampler_init_grammar_lazy(
+        model: *const llama_model,
+        grammar_str: *const c_char,
+        grammar_root: *const c_char,
+        trigger_words: *const *const c_char,
+        num_trigger_words: usize,
+        trigger_tokens: *const llama_token,
+        num_trigger_tokens: usize,
+    ) -> *mut llama_sampler;
 }

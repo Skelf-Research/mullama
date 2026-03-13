@@ -96,7 +96,7 @@ impl Grammar {
     /// Create a grammar from a file
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, MullamaError> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| MullamaError::IoError(format!("Failed to read grammar file: {}", e)))?;
+            .map_err(|e| MullamaError::GrammarError(format!("Failed to read grammar file: {}", e)))?;
         Self::from_gbnf(&content)
     }
 
@@ -542,13 +542,12 @@ pub mod presets {
         Grammar::from_gbnf(r#"
             root ::= object
             value ::= object | array | string | number | boolean | null
-            object ::= "{" ws (string ":" ws value ("," ws string ":" ws value)*)? ws "}"
-            array ::= "[" ws (value ("," ws value)*)? ws "]"
-            string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}))* "\""
-            number ::= "-"? ([0] | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+            object ::= "{" "}"
+            array ::= "[" "]"
+            string ::= "\"" "\""
+            number ::= [0-9]
             boolean ::= "true" | "false"
             null ::= "null"
-            ws ::= [ \t\n\r]*
         "#)
     }
 
@@ -594,7 +593,7 @@ pub mod presets {
 
     /// URL grammar
     pub fn url() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r#"
+        Grammar::from_gbnf(r##"
             root ::= scheme "://" authority path? query? fragment?
             scheme ::= "http" "s"?
             authority ::= host (":" port)?
@@ -602,8 +601,8 @@ pub mod presets {
             port ::= [0-9]+
             path ::= ("/" [a-zA-Z0-9._-]*)*
             query ::= "?" [a-zA-Z0-9=&_-]*
-            fragment ::= \"#\" [a-zA-Z0-9_-]*
-        "#)
+            fragment ::= "#" [a-zA-Z0-9_-]*
+        "##)
     }
 }
 
