@@ -663,6 +663,8 @@ impl ContextBuilder {
     /// Returns `MullamaError` if context creation fails
     #[cfg(feature = "async")]
     pub async fn build_async(self) -> Result<crate::async_support::AsyncContext, MullamaError> {
+        use tokio::task;
+
         let params = ContextParams {
             n_ctx: self.n_ctx,
             n_batch: self.n_batch,
@@ -676,8 +678,15 @@ impl ContextBuilder {
             ..Default::default()
         };
 
-        // This would need to be implemented in the async_support module
-        todo!("Async context building not yet implemented")
+        let model = self.model.clone();
+        let context = task::spawn_blocking(move || {
+            Context::new(model.clone(), params)
+        }).await.map_err(|e| MullamaError::ContextError(format!("Async task failed: {}", e)))?;
+
+        match context {
+            Ok(ctx) => Ok(crate::async_support::AsyncContext::new(ctx, self.model)),
+            Err(e) => Err(e),
+        }
     }
 }
 
