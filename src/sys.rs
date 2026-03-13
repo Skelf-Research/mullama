@@ -510,8 +510,7 @@ extern "C" {
     pub fn llama_print_system_info() -> *const c_char;
 
     // Model introspection
-    pub fn llama_model_n_vocab(model: *const llama_model) -> i32;
-    pub fn llama_model_n_ctx_train(model: *const llama_model) -> u32;
+    pub fn llama_model_n_ctx_train(model: *const llama_model) -> i32;
     pub fn llama_model_n_embd(model: *const llama_model) -> i32;
 
     //
@@ -643,7 +642,7 @@ extern "C" {
     ) -> i32;
 
     pub fn llama_token_to_piece(
-        model: *const llama_model,
+        vocab: *const llama_vocab,
         token: llama_token,
         buf: *mut c_char,
         length: i32,
@@ -660,31 +659,6 @@ extern "C" {
         remove_special: c_bool,
         unparse_special: c_bool,
     ) -> i32;
-
-    //
-    // Special tokens
-    //
-    pub fn llama_token_bos(model: *const llama_model) -> llama_token;
-    pub fn llama_token_eos(model: *const llama_model) -> llama_token;
-    pub fn llama_token_cls(model: *const llama_model) -> llama_token;
-    pub fn llama_token_sep(model: *const llama_model) -> llama_token;
-    pub fn llama_token_nl(model: *const llama_model) -> llama_token;
-    pub fn llama_token_pad(model: *const llama_model) -> llama_token;
-    pub fn llama_add_bos_token(model: *const llama_model) -> c_bool;
-    pub fn llama_add_eos_token(model: *const llama_model) -> c_bool;
-    pub fn llama_token_prefix(model: *const llama_model) -> llama_token;
-    pub fn llama_token_middle(model: *const llama_model) -> llama_token;
-    pub fn llama_token_suffix(model: *const llama_model) -> llama_token;
-    pub fn llama_token_eot(model: *const llama_model) -> llama_token;
-
-    //
-    // Token attributes
-    //
-    pub fn llama_token_get_text(model: *const llama_model, token: llama_token) -> *const c_char;
-    pub fn llama_token_get_score(model: *const llama_model, token: llama_token) -> c_float;
-    pub fn llama_token_get_attr(model: *const llama_model, token: llama_token) -> llama_token_attr;
-    pub fn llama_token_is_eog(model: *const llama_model, token: llama_token) -> c_bool;
-    pub fn llama_token_is_control(model: *const llama_model, token: llama_token) -> c_bool;
 
     //
     // Batch processing
@@ -802,18 +776,13 @@ extern "C" {
         grammar_root: *const c_char,
     ) -> *mut llama_sampler;
     pub fn llama_sampler_init_penalties(
-        vocab: *const llama_vocab,
-        special_eos_id: llama_token,
-        linefeed_id: llama_token,
         penalty_last_n: i32,
         penalty_repeat: c_float,
         penalty_freq: c_float,
         penalty_present: c_float,
-        penalize_nl: c_bool,
-        ignore_eos: c_bool,
     ) -> *mut llama_sampler;
     pub fn llama_sampler_init_logit_bias(
-        vocab: *const llama_vocab,
+        n_vocab: i32,
         n_logit_bias: i32,
         logit_bias: *const llama_logit_bias,
     ) -> *mut llama_sampler;
@@ -846,7 +815,6 @@ extern "C" {
     // Chat templates
     //
     pub fn llama_chat_apply_template(
-        model: *const llama_model,
         tmpl: *const c_char,
         chat: *const llama_chat_message,
         n_msg: usize,
@@ -946,9 +914,7 @@ extern "C" {
     pub fn llama_model_chat_template(
         model: *const llama_model,
         name: *const c_char,
-        buf: *mut c_char,
-        buf_size: usize,
-    ) -> i32;
+    ) -> *const c_char;
     pub fn llama_n_ctx_train(model: *const llama_model) -> u32;
     pub fn llama_n_embd(model: *const llama_model) -> i32;
     pub fn llama_n_layer(model: *const llama_model) -> i32;

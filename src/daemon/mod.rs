@@ -83,7 +83,7 @@ pub use client::{DaemonClient, ChatResult, CompletionResult};
 pub use tui::TuiApp;
 
 // HuggingFace downloader
-pub use hf::{HfDownloader, HfModelSpec, CachedModel, resolve_model_path};
+pub use hf::{HfDownloader, HfModelSpec, HfSearchResult, GgufFileInfo, CachedModel, resolve_model_path};
 
 /// Default IPC socket path
 #[cfg(unix)]

@@ -63,9 +63,13 @@
 //! let prompt = "The future of artificial intelligence is";
 //! let tokens = model.tokenize(prompt, true, false)?;
 //!
+//! // Decode the prompt tokens
+//! context.decode(&tokens)?;
+//!
 //! // Generate tokens
 //! for _ in 0..100 {
-//!     let next_token = sampler.sample(&mut context, 0);
+//!     // Use -1 to sample from the last token's logits
+//!     let next_token = sampler.sample(&mut context, -1);
 //!
 //!     // Convert token to text
 //!     let text = model.token_to_str(next_token, 0, false)?;
@@ -75,6 +79,10 @@
 //!     if next_token == 0 {
 //!         break;
 //!     }
+//!
+//!     // Accept the token and decode it
+//!     sampler.accept(next_token);
+//!     context.decode(&[next_token])?;
 //! }
 //! # Ok(())
 //! # }
@@ -373,7 +381,7 @@ pub use tokio_integration::{
 };
 #[cfg(feature = "web")]
 pub use web::{
-    create_router, ApiMetrics, AppError, AppState, GenerateRequest, GenerateResponse,
+    ApiMetrics, AppError, AppState, GenerateRequest, GenerateResponse, RouterBuilder,
     TokenizeRequest, TokenizeResponse,
 };
 #[cfg(feature = "websockets")]
@@ -413,7 +421,7 @@ pub mod prelude {
     pub use crate::{StreamConfig, TokenData, TokenStream};
 
     #[cfg(feature = "web")]
-    pub use crate::{create_router, AppState, GenerateRequest, GenerateResponse};
+    pub use crate::{AppState, GenerateRequest, GenerateResponse, RouterBuilder};
 
     #[cfg(feature = "tokio-runtime")]
     pub use crate::{ModelPool, MullamaRuntime, TaskManager};

@@ -164,6 +164,12 @@ mullama load phi:./phi.gguf  # Load a model
 mullama unload phi        # Unload a model
 mullama default llama     # Set default model
 
+# Search for models on HuggingFace
+mullama search "llama 7b"          # Search GGUF models
+mullama search "mistral" --files   # Show available files
+mullama search "phi" --all         # Include non-GGUF models
+mullama info TheBloke/Llama-2-7B-GGUF  # Show repo details
+
 # Cache management
 mullama pull hf:TheBloke/Llama-2-7B-GGUF  # Pre-download model
 mullama cache list        # List cached models
@@ -184,7 +190,20 @@ hf:<owner>/<repo>              # Auto-detect best GGUF
 <alias>:hf:<owner>/<repo>      # With custom alias
 ```
 
-Set `HF_TOKEN` environment variable for gated/private models.
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `HF_TOKEN` | HuggingFace token for gated/private models |
+| `MULLAMA_CACHE_DIR` | Override default cache directory |
+
+### Cache Locations (Cross-Platform)
+
+| Platform | Default Location |
+|----------|-----------------|
+| Linux | `$XDG_CACHE_HOME/mullama/models` or `~/.cache/mullama/models` |
+| macOS | `~/Library/Caches/mullama/models` |
+| Windows | `%LOCALAPPDATA%\mullama\models` |
 
 Architecture:
 ```

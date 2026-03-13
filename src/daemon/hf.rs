@@ -52,6 +52,101 @@ pub struct HfRepoInfo {
     pub siblings: Option<Vec<HfFileInfo>>,
 }
 
+/// Search result from HF API
+#[derive(Debug, Clone, Deserialize)]
+pub struct HfSearchResult {
+    /// Repository ID (owner/name)
+    pub id: String,
+    /// Model ID (usually same as id)
+    #[serde(rename = "modelId")]
+    pub model_id: Option<String>,
+    /// Author/owner name
+    pub author: Option<String>,
+    /// Last modified timestamp
+    #[serde(rename = "lastModified")]
+    pub last_modified: Option<String>,
+    /// Number of downloads
+    pub downloads: Option<u64>,
+    /// Number of likes
+    pub likes: Option<u64>,
+    /// Tags associated with the model
+    pub tags: Option<Vec<String>>,
+    /// Pipeline tag (e.g., "text-generation")
+    #[serde(rename = "pipeline_tag")]
+    pub pipeline_tag: Option<String>,
+    /// Library name (e.g., "transformers", "gguf")
+    pub library_name: Option<String>,
+}
+
+impl HfSearchResult {
+    /// Check if this is a GGUF model
+    pub fn is_gguf(&self) -> bool {
+        if let Some(ref tags) = self.tags {
+            tags.iter().any(|t| t.to_lowercase() == "gguf")
+        } else {
+            self.id.to_lowercase().contains("gguf")
+        }
+    }
+
+    /// Get formatted download count
+    pub fn downloads_formatted(&self) -> String {
+        match self.downloads {
+            Some(d) if d >= 1_000_000 => format!("{:.1}M", d as f64 / 1_000_000.0),
+            Some(d) if d >= 1_000 => format!("{:.1}K", d as f64 / 1_000.0),
+            Some(d) => format!("{}", d),
+            None => "?".to_string(),
+        }
+    }
+
+    /// Get the author name
+    pub fn author_name(&self) -> &str {
+        self.author.as_deref().unwrap_or_else(|| {
+            self.id.split('/').next().unwrap_or("unknown")
+        })
+    }
+}
+
+/// Information about a GGUF file in a repository
+#[derive(Debug, Clone)]
+pub struct GgufFileInfo {
+    pub filename: String,
+    pub size_bytes: Option<u64>,
+    pub quantization: Option<String>,
+}
+
+impl GgufFileInfo {
+    /// Get formatted file size
+    pub fn size_formatted(&self) -> String {
+        match self.size_bytes {
+            Some(s) if s >= 1_073_741_824 => format!("{:.2} GB", s as f64 / 1_073_741_824.0),
+            Some(s) if s >= 1_048_576 => format!("{:.1} MB", s as f64 / 1_048_576.0),
+            Some(s) => format!("{} KB", s / 1024),
+            None => "? GB".to_string(),
+        }
+    }
+}
+
+/// Extract quantization type from filename
+fn extract_quantization(filename: &str) -> Option<String> {
+    let quantizations = [
+        "Q2_K", "Q3_K_S", "Q3_K_M", "Q3_K_L",
+        "Q4_0", "Q4_1", "Q4_K_S", "Q4_K_M",
+        "Q5_0", "Q5_1", "Q5_K_S", "Q5_K_M",
+        "Q6_K", "Q8_0", "F16", "F32",
+        "IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S", "IQ2_M",
+        "IQ3_XXS", "IQ3_XS", "IQ3_S", "IQ3_M",
+        "IQ4_NL", "IQ4_XS",
+    ];
+
+    let upper = filename.to_uppercase();
+    for q in quantizations {
+        if upper.contains(q) {
+            return Some(q.to_string());
+        }
+    }
+    None
+}
+
 /// Cached model metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedModel {
@@ -181,13 +276,62 @@ impl HfDownloader {
         })
     }
 
-    /// Get default cache directory
+    /// Get default cache directory (cross-platform)
+    ///
+    /// Resolution order:
+    /// 1. `MULLAMA_CACHE_DIR` environment variable (if set)
+    /// 2. Platform-specific cache directory:
+    ///    - Linux: `$XDG_CACHE_HOME/mullama/models` or `~/.cache/mullama/models`
+    ///    - macOS: `~/Library/Caches/mullama/models`
+    ///    - Windows: `%LOCALAPPDATA%\mullama\models`
+    /// 3. Fallback to data directory if cache unavailable
+    /// 4. Fallback to home directory `.mullama/models`
     pub fn default_cache_dir() -> Result<PathBuf, MullamaError> {
-        let base = dirs::cache_dir()
-            .or_else(dirs::data_local_dir)
-            .ok_or_else(|| MullamaError::OperationFailed("No cache directory available".into()))?;
+        // Check for explicit override
+        if let Ok(custom_dir) = std::env::var("MULLAMA_CACHE_DIR") {
+            return Ok(PathBuf::from(custom_dir));
+        }
 
-        Ok(base.join(CACHE_DIR).join(MODELS_SUBDIR))
+        // Try platform-specific cache directory
+        if let Some(cache) = dirs::cache_dir() {
+            return Ok(cache.join(CACHE_DIR).join(MODELS_SUBDIR));
+        }
+
+        // Fallback to local data directory (Windows primarily)
+        if let Some(data_local) = dirs::data_local_dir() {
+            return Ok(data_local.join(CACHE_DIR).join(MODELS_SUBDIR));
+        }
+
+        // Fallback to home directory
+        if let Some(home) = dirs::home_dir() {
+            return Ok(home.join(format!(".{}", CACHE_DIR)).join(MODELS_SUBDIR));
+        }
+
+        // Last resort: current directory
+        Ok(PathBuf::from(".").join(CACHE_DIR).join(MODELS_SUBDIR))
+    }
+
+    /// Get cache directory paths for display (shows what will be used on each platform)
+    pub fn cache_dir_info() -> String {
+        let dir = Self::default_cache_dir().unwrap_or_else(|_| PathBuf::from("(unknown)"));
+
+        #[cfg(target_os = "linux")]
+        let platform = "Linux: $XDG_CACHE_HOME/mullama/models or ~/.cache/mullama/models";
+
+        #[cfg(target_os = "macos")]
+        let platform = "macOS: ~/Library/Caches/mullama/models";
+
+        #[cfg(target_os = "windows")]
+        let platform = "Windows: %LOCALAPPDATA%\\mullama\\models";
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        let platform = "Other: ~/.mullama/models";
+
+        format!(
+            "Current: {}\nDefault for {}",
+            dir.display(),
+            platform
+        )
     }
 
     /// Get the cache directory
@@ -261,6 +405,101 @@ impl HfDownloader {
         resp.json().await.map_err(|e| {
             MullamaError::OperationFailed(format!("Failed to parse repo info: {}", e))
         })
+    }
+
+    /// Search for models on HuggingFace
+    ///
+    /// # Arguments
+    /// * `query` - Search query string
+    /// * `gguf_only` - If true, filter to only GGUF models
+    /// * `limit` - Maximum number of results (default 20, max 100)
+    pub async fn search(
+        &self,
+        query: &str,
+        gguf_only: bool,
+        limit: usize,
+    ) -> Result<Vec<HfSearchResult>, MullamaError> {
+        let limit = limit.min(100).max(1);
+
+        // Build search URL with filters
+        let mut url = format!(
+            "{}/models?search={}&sort=downloads&direction=-1&limit={}",
+            HF_API_URL,
+            urlencoding::encode(query),
+            if gguf_only { limit * 2 } else { limit } // Fetch more if filtering
+        );
+
+        // Add GGUF filter if requested
+        if gguf_only {
+            url.push_str("&filter=gguf");
+        }
+
+        let mut req = self.client.get(&url);
+        if let Some(ref token) = self.hf_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = req.send().await.map_err(|e| {
+            MullamaError::OperationFailed(format!("Search failed: {}", e))
+        })?;
+
+        if !resp.status().is_success() {
+            return Err(MullamaError::OperationFailed(format!(
+                "HF API error: {}",
+                resp.status()
+            )));
+        }
+
+        let mut results: Vec<HfSearchResult> = resp.json().await.map_err(|e| {
+            MullamaError::OperationFailed(format!("Failed to parse search results: {}", e))
+        })?;
+
+        // Additional client-side filtering for GGUF if needed
+        if gguf_only {
+            results.retain(|r| r.is_gguf());
+            results.truncate(limit);
+        }
+
+        Ok(results)
+    }
+
+    /// Search specifically for GGUF models
+    pub async fn search_gguf(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<HfSearchResult>, MullamaError> {
+        self.search(query, true, limit).await
+    }
+
+    /// Get detailed info about GGUF files in a repository
+    pub async fn list_gguf_files(&self, repo_id: &str) -> Result<Vec<GgufFileInfo>, MullamaError> {
+        let info = self.get_repo_info(repo_id).await?;
+
+        let siblings = info.siblings.ok_or_else(|| {
+            MullamaError::OperationFailed("No files found in repository".into())
+        })?;
+
+        let gguf_files: Vec<GgufFileInfo> = siblings
+            .into_iter()
+            .filter(|f| f.filename.ends_with(".gguf"))
+            .map(|f| {
+                let quant = extract_quantization(&f.filename);
+                GgufFileInfo {
+                    filename: f.filename,
+                    size_bytes: f.size,
+                    quantization: quant,
+                }
+            })
+            .collect();
+
+        if gguf_files.is_empty() {
+            return Err(MullamaError::OperationFailed(
+                "No GGUF files found in repository".into(),
+            ));
+        }
+
+        Ok(gguf_files)
     }
 
     /// Find the best GGUF file in a repository

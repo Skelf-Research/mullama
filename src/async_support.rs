@@ -41,6 +41,7 @@ use crate::{Context, ContextParams, Model, MullamaError, SamplerChain, SamplerPa
 
 /// Async wrapper for Model with non-blocking operations
 #[cfg(feature = "async")]
+#[derive(Clone)]
 pub struct AsyncModel {
     inner: Arc<Model>,
 }
@@ -182,13 +183,15 @@ impl AsyncModel {
             let mut result = String::new();
             let eos = model.token_eos();
             for _ in 0..max_tokens {
-                let next_token = sampler.sample(&mut context, 0);
+                // Use -1 to sample from the last token's logits
+                let next_token = sampler.sample(&mut context, -1);
                 if next_token == eos {
                     break;
                 }
 
                 let text = model.token_to_str(next_token, 0, false)?;
                 result.push_str(&text);
+                sampler.accept(next_token);
                 context.decode(std::slice::from_ref(&next_token))?;
             }
 
@@ -273,13 +276,15 @@ impl AsyncContext {
             let eos = model.token_eos();
 
             for _ in 0..max_tokens {
-                let next_token = sampler.sample(&mut self.inner, 0);
+                // Use -1 to sample from the last token's logits
+                let next_token = sampler.sample(&mut self.inner, -1);
                 if next_token == eos {
                     break;
                 }
 
                 let text = model.token_to_str(next_token, 0, false)?;
                 result.push_str(&text);
+                sampler.accept(next_token);
                 self.inner.decode(std::slice::from_ref(&next_token))?;
             }
 
@@ -299,10 +304,10 @@ impl AsyncContext {
 #[cfg(feature = "async")]
 #[derive(Debug, Clone, Default)]
 pub struct ModelInfo {
-    pub vocab_size: u32,
-    pub n_ctx_train: u32,
-    pub n_embd: u32,
-    pub n_layer: u32,
+    pub vocab_size: i32,
+    pub n_ctx_train: i32,
+    pub n_embd: i32,
+    pub n_layer: i32,
 }
 
 /// Progress callback type for long-running async operations
@@ -311,12 +316,22 @@ pub type ProgressCallback = Box<dyn Fn(f32) -> BoxFuture<'static, ()> + Send + S
 
 /// Configuration for async operations
 #[cfg(feature = "async")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AsyncConfig {
     /// Optional progress callback
     pub progress_callback: Option<Arc<ProgressCallback>>,
     /// Cancellation token
     pub cancellation_token: Option<tokio_util::sync::CancellationToken>,
+}
+
+#[cfg(feature = "async")]
+impl std::fmt::Debug for AsyncConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncConfig")
+            .field("progress_callback", &self.progress_callback.as_ref().map(|_| "<callback>"))
+            .field("cancellation_token", &self.cancellation_token)
+            .finish()
+    }
 }
 
 #[cfg(feature = "async")]
