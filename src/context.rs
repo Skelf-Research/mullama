@@ -77,15 +77,28 @@ impl Context {
         Ok(())
     }
     
-    /// Generate text from a prompt
+    /// Simple text generation (placeholder - full implementation would use sampling)
     pub fn generate(&mut self, prompt_tokens: &[TokenId], max_tokens: usize) -> Result<String, MullamaError> {
+        if prompt_tokens.is_empty() {
+            return Err(MullamaError::GenerationError("Empty prompt tokens".to_string()));
+        }
+
+        // Create a batch for the prompt tokens
+        let batch = Batch::from_tokens(prompt_tokens);
+
         // Process the prompt
-        self.decode(prompt_tokens)?;
-        
-        // For now, return a simple placeholder result
-        // A full implementation would implement actual token generation
-        Ok(format!("Generated text from {} prompt tokens and {} max tokens", 
-                  prompt_tokens.len(), max_tokens))
+        self.decode(&batch)?;
+
+        // Note: A full implementation would:
+        // 1. Get logits using self.logits()
+        // 2. Apply sampling using a sampler
+        // 3. Generate tokens one by one
+        // 4. Convert tokens back to text
+        // For now, return a meaningful placeholder
+        Ok(format!(
+            "[Placeholder] Generated {} tokens from prompt of {} tokens",
+            max_tokens, prompt_tokens.len()
+        ))
     }
     
     /// Get logits from the last evaluation

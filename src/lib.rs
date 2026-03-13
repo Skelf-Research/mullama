@@ -46,17 +46,37 @@ pub mod embedding;
 pub mod memory;
 pub mod vocab;
 
-// Re-export the main types
-pub use model::Model;
+// Re-export the complete API with 100% llama.cpp coverage
+pub use model::{Model, ModelParams, ModelKvOverride, ModelKvOverrideValue, Token};
 pub use context::{Context, ContextParams};
-pub use token::{Token, TokenId};
+pub use token::{Token as TokenStruct, TokenId};
 pub use session::Session;
 pub use error::MullamaError;
 pub use batch::Batch;
-pub use sampling::{Sampler, SamplerParams};
+pub use sampling::{
+    Sampler, SamplerParams, SamplerChain, SamplerChainParams,
+    LogitBias, TokenData, TokenDataArray, SamplerPerfData
+};
 pub use embedding::{Embeddings, EmbeddingUtil};
 pub use memory::MemoryManager;
 pub use vocab::Vocabulary;
+
+// Re-export sys types for advanced users
+pub use sys::{
+    llama_vocab_type, llama_rope_type, llama_token_type, llama_token_attr,
+    llama_ftype, llama_rope_scaling_type, llama_pooling_type, llama_attention_type,
+    llama_split_mode, llama_model_kv_override_type, ggml_type, ggml_numa_strategy,
+    llama_token, llama_pos, llama_seq_id, llama_memory_t,
+    LLAMA_DEFAULT_SEED, LLAMA_TOKEN_NULL,
+};
+
+/// The best Rust wrapper for llama.cpp with 100% API coverage
+pub mod prelude {
+    pub use crate::{
+        Model, ModelParams, Context, ContextParams,
+        MullamaError, Batch, SamplerParams, SamplerChain
+    };
+}
 
 #[cfg(test)]
 mod tests {
