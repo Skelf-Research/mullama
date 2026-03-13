@@ -1,45 +1,47 @@
 //! Simple example showing how to use Mullama
 //!
 //! This example demonstrates the basic usage pattern:
-//! 1. Load a model
+//! 1. Load a model (placeholder)
 //! 2. Create a context
-//! 3. Tokenize text
-//! 4. Generate text
+//! 3. Show API usage patterns
 
-use mullama::{Model, ContextParams};
+use mullama::{Model, ContextParams, MullamaError};
 use std::sync::Arc;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Mullama example - loading model and generating text");
-    
+fn main() -> Result<(), MullamaError> {
+    println!("Mullama example - demonstrating API usage");
+
     // In a real implementation, you would load an actual GGUF model file:
     // let model = Model::load("path/to/model.gguf")?;
-    
-    // For this example, we'll just create a placeholder model
-    // This demonstrates the API structure without requiring an actual model file
-    println!("Creating model placeholder...");
-    let model = create_placeholder_model();
-    
-    println!("Creating context...");
-    let mut ctx = model.create_context(ContextParams::default())?;
-    
-    println!("Tokenizing prompt...");
-    let tokens = model.tokenize("Hello, world!", true, false)?;
-    
-    println!("Generating text...");
-    let result = ctx.generate(&tokens, 100)?;
-    
-    println!("Generated: {}", result);
-    
-    Ok(())
-}
 
-/// Create a placeholder model for demonstration purposes
-/// In a real implementation, you would load an actual GGUF model file
-fn create_placeholder_model() -> Model {
-    // This creates a model with a null pointer
-    // In a real implementation, this would load an actual model
-    Model {
-        model_ptr: std::ptr::null_mut(),
-    }
+    // For this example, we'll show how the API would be used
+    // without requiring an actual model file
+    println!("Creating model example...");
+
+    // Example of how to load a model (this would work with a real model file)
+    println!("To load a real model, you would call:");
+    println!("  let model = Model::load(\"path/to/model.gguf\")?;");
+
+    // Example of creating context parameters
+    println!("Creating context parameters...");
+    let ctx_params = ContextParams::default();
+    println!("  Default context size: {}", ctx_params.n_ctx);
+    println!("  Default batch size: {}", ctx_params.n_batch);
+    println!("  Default threads: {}", ctx_params.n_threads);
+
+    // Example of what model API calls would look like
+    println!("Model API examples:");
+    println!("  model.vocab_size() - Get vocabulary size");
+    println!("  model.n_ctx_train() - Get training context size");
+    println!("  model.tokenize(text, add_bos, special) - Tokenize text");
+    println!("  model.token_to_str(token, lstrip, special) - Convert token to string");
+
+    // Example of what context API calls would look like
+    println!("Context API examples:");
+    println!("  Context::new(model, params) - Create new context");
+    println!("  context.generate(tokens, max_len) - Generate text");
+
+    println!("API demonstration complete!");
+
+    Ok(())
 }

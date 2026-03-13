@@ -24,7 +24,11 @@ impl Embeddings {
     
     /// Get the number of embeddings
     pub fn len(&self) -> usize {
-        self.data.len() / self.dimension
+        if self.dimension == 0 {
+            0
+        } else {
+            self.data.len() / self.dimension
+        }
     }
     
     /// Check if there are no embeddings
@@ -62,6 +66,16 @@ impl EmbeddingUtil {
             0.0
         } else {
             dot_product / (magnitude_a * magnitude_b)
+        }
+    }
+
+    /// Normalize an embedding vector to unit length
+    pub fn normalize(embedding: &[f32]) -> Vec<f32> {
+        let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if magnitude == 0.0 {
+            embedding.to_vec()
+        } else {
+            embedding.iter().map(|x| x / magnitude).collect()
         }
     }
 }

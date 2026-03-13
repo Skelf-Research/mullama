@@ -19,6 +19,11 @@ pub struct Sampler {
 }
 
 impl Sampler {
+    /// Create a default greedy sampler
+    pub fn new() -> Self {
+        Self::greedy()
+    }
+
     /// Create a greedy sampler (always picks highest probability token)
     pub fn greedy() -> Self {
         let sampler_ptr = unsafe { sys::llama_sampler_init_greedy() };

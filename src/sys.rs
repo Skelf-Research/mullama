@@ -7,7 +7,25 @@
 //! **NOTE**: These are low-level FFI bindings. Use the safe Rust API in other modules.
 
 use std::os::raw::{c_char, c_int, c_uint, c_float, c_void, c_longlong};
-use std::ffi::c_bool;
+
+// c_bool type alias for compatibility
+pub type c_bool = bool;
+
+//
+// Constants - matching llama.cpp exactly
+//
+
+/// Null token ID
+pub const LLAMA_TOKEN_NULL: llama_token = -1;
+
+/// Default random seed
+pub const LLAMA_DEFAULT_SEED: u32 = 0xFFFFFFFF;
+
+/// Session file version
+pub const LLAMA_SESSION_VERSION: u32 = 9;
+
+/// State sequence version
+pub const LLAMA_STATE_SEQ_VERSION: u32 = 2;
 
 //
 // Core opaque types - these match llama.cpp exactly
@@ -178,7 +196,7 @@ pub enum llama_rope_scaling_type {
     LLAMA_ROPE_SCALING_TYPE_LINEAR = 1,
     LLAMA_ROPE_SCALING_TYPE_YARN = 2,
     LLAMA_ROPE_SCALING_TYPE_LONGROPE = 3,
-    LLAMA_ROPE_SCALING_TYPE_MAX_VALUE = 3,
+    LLAMA_ROPE_SCALING_TYPE_MAX_VALUE = 4,
 }
 
 #[repr(C)]
@@ -323,6 +341,14 @@ pub union llama_model_kv_override_value {
     pub val_str: [c_char; 128],
 }
 
+impl std::fmt::Debug for llama_model_kv_override_value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("llama_model_kv_override_value")
+            .field("val_i64", unsafe { &self.val_i64 })
+            .finish()
+    }
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct llama_model_tensor_buft_override {
@@ -330,79 +356,109 @@ pub struct llama_model_tensor_buft_override {
     pub buft: *mut ggml_backend_buffer_type,
 }
 
-// Function declarations
-extern "C" {
-    // Backend initialization
-    pub fn llama_backend_init();
-    pub fn llama_backend_free();
-    
-    // Model functions
-    pub fn llama_model_default_params() -> llama_model_params;
-    pub fn llama_model_load_from_file(
-        path_model: *const c_char,
-        params: llama_model_params,
-    ) -> *mut llama_model;
-    pub fn llama_model_free(model: *mut llama_model);
-    pub fn llama_model_n_ctx_train(model: *const llama_model) -> c_uint;
-    pub fn llama_model_get_vocab(model: *const llama_model) -> *const llama_vocab;
-    
-    // Context functions
-    pub fn llama_context_default_params() -> llama_context_params;
-    pub fn llama_init_from_model(
-        model: *const llama_model,
-        params: llama_context_params,
-    ) -> *mut llama_context;
-    pub fn llama_free(ctx: *mut llama_context);
-    pub fn llama_decode(ctx: *mut llama_context, batch: llama_batch) -> c_int;
-    
-    // Tokenization functions
-    pub fn llama_tokenize(
-        vocab: *const llama_vocab,
-        text: *const c_char,
-        text_len: c_int,
-        tokens: *mut LlamaToken,
-        n_tokens_max: c_int,
-        add_special: bool,
-        parse_special: bool,
-    ) -> c_int;
-    
-    pub fn llama_token_to_piece(
-        vocab: *const llama_vocab,
-        token: LlamaToken,
-        buf: *mut c_char,
-        length: c_int,
-        lstrip: c_int,
-        special: bool,
-    ) -> c_int;
-    
-    // Batch functions
-    pub fn llama_batch_get_one(
-        tokens: *mut LlamaToken,
-        n_tokens: c_int,
-    ) -> llama_batch;
-    
-    pub fn llama_batch_init(
-        n_tokens: c_int,
-        embd: c_int,
-        n_seq_max: c_int,
-    ) -> llama_batch;
-    
-    pub fn llama_batch_free(batch: llama_batch);
-    
-    // State functions
-    pub fn llama_state_get_size(ctx: *const llama_context) -> usize;
-    pub fn llama_state_get_data(
-        ctx: *const llama_context,
-        dst: *mut u8,
-        size: usize,
-    ) -> usize;
-    
-    pub fn llama_state_set_data(
-        ctx: *mut llama_context,
-        src: *const u8,
-        size: usize,
-    ) -> usize;
+// Parameter structures
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_model_params {
+    pub devices: *mut *mut ggml_backend_dev,
+    pub tensor_buft_overrides: *const llama_model_tensor_buft_override,
+    pub n_gpu_layers: i32,
+    pub split_mode: llama_split_mode,
+    pub main_gpu: i32,
+    pub tensor_split: *const f32,
+    pub vocab_only: c_bool,
+    pub use_mmap: c_bool,
+    pub use_mlock: c_bool,
+    pub check_tensors: c_bool,
+    pub use_extra_bufts: c_bool,
+    pub progress_callback: llama_progress_callback,
+    pub progress_callback_user_data: *mut c_void,
+    pub kv_overrides: *const llama_model_kv_override,
 }
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_context_params {
+    pub seed: u32,
+    pub n_ctx: u32,
+    pub n_batch: u32,
+    pub n_ubatch: u32,
+    pub n_seq_max: u32,
+    pub n_threads: u32,
+    pub n_threads_batch: u32,
+    pub rope_scaling_type: llama_rope_scaling_type,
+    pub pooling_type: llama_pooling_type,
+    pub attention_type: llama_attention_type,
+    pub rope_freq_base: f32,
+    pub rope_freq_scale: f32,
+    pub yarn_ext_factor: f32,
+    pub yarn_attn_factor: f32,
+    pub yarn_beta_fast: f32,
+    pub yarn_beta_slow: f32,
+    pub yarn_orig_ctx: u32,
+    pub defrag_thold: f32,
+    pub embeddings: c_bool,
+    pub flash_attn: c_bool,
+    pub offload_kqv: c_bool,
+    pub swa_full: c_bool,
+    pub kv_unified: c_bool,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_sampler_chain_params {
+    pub no_perf: c_bool,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_model_quantize_params {
+    pub nthread: i32,
+    pub ftype: llama_ftype,
+    pub output_tensor_type: ggml_type,
+    pub token_embedding_type: ggml_type,
+    pub allow_requantize: c_bool,
+    pub quantize_output_tensor: c_bool,
+    pub only_copy: c_bool,
+    pub pure: c_bool,
+    pub keep_split: c_bool,
+    pub imatrix: *mut c_void,
+    pub kv_overrides: *const llama_model_kv_override,
+}
+
+// Additional structures
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_logit_bias {
+    pub token: llama_token,
+    pub bias: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_chat_message {
+    pub role: *const c_char,
+    pub content: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_perf_context_data {
+    pub t_start_ms: f64,
+    pub t_load_ms: f64,
+    pub t_p_eval_ms: f64,
+    pub t_eval_ms: f64,
+    pub n_p_eval: i32,
+    pub n_eval: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct llama_perf_sampler_data {
+    pub t_sample_ms: f64,
+    pub n_sample: i32,
+}
+
 
 //
 // Complete FFI function declarations - 213+ functions for 100% coverage
@@ -422,6 +478,12 @@ extern "C" {
     pub fn llama_supports_mlock() -> c_bool;
     pub fn llama_supports_gpu_offload() -> c_bool;
     pub fn llama_supports_rpc() -> c_bool;
+    pub fn llama_print_system_info() -> *const c_char;
+
+    // Model introspection
+    pub fn llama_model_n_vocab(model: *const llama_model) -> i32;
+    pub fn llama_model_n_ctx_train(model: *const llama_model) -> u32;
+    pub fn llama_model_n_embd(model: *const llama_model) -> i32;
 
     //
     // Parameter defaults
@@ -494,8 +556,6 @@ extern "C" {
     //
     pub fn llama_model_get_vocab(model: *const llama_model) -> *const llama_vocab;
     pub fn llama_model_rope_type(model: *const llama_model) -> llama_rope_type;
-    pub fn llama_model_n_ctx_train(model: *const llama_model) -> i32;
-    pub fn llama_model_n_embd(model: *const llama_model) -> i32;
     pub fn llama_model_n_layer(model: *const llama_model) -> i32;
     pub fn llama_model_n_head(model: *const llama_model) -> i32;
     pub fn llama_model_n_head_kv(model: *const llama_model) -> i32;
@@ -794,7 +854,6 @@ extern "C" {
     //
     // Utilities and system information
     //
-    pub fn llama_print_system_info() -> *const c_char;
     pub fn llama_log_set(log_callback: Option<unsafe extern "C" fn(level: i32, text: *const c_char, user_data: *mut c_void)>, user_data: *mut c_void);
     pub fn llama_log_callback_default(level: i32, text: *const c_char, user_data: *mut c_void);
     pub fn llama_dump_timing_info_yaml(stream: *mut c_void, ctx: *const llama_context);
