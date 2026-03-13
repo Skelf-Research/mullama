@@ -1,0 +1,13 @@
+[package]
+name = "mullama-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mullama"
+path = "src/main.rs"
+
+[dependencies]
+mullama = { path = ".." }
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
