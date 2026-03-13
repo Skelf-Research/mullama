@@ -1,6 +1,11 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+
+/// The llama.cpp version to use when downloading
+const LLAMA_CPP_VERSION: &str = "b4568";
+const LLAMA_CPP_REPO: &str = "https://github.com/ggml-org/llama.cpp";
 
 fn main() {
     // Tell cargo to invalidate the built crate whenever wrapper files change
@@ -10,6 +15,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_METAL");
     println!("cargo:rerun-if-env-changed=LLAMA_HIPBLAS");
     println!("cargo:rerun-if-env-changed=LLAMA_CLBLAST");
+    println!("cargo:rerun-if-env-changed=LLAMA_CPP_PATH");
 
     // Set up platform-specific configurations
     setup_platform_specific();
@@ -18,24 +24,15 @@ fn main() {
     print_dependency_errors();
 
     // Determine the path to llama.cpp
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let llama_cpp_path = manifest_dir.join("llama.cpp");
-
-    // Check if llama.cpp exists, if not, we can't proceed
-    if !llama_cpp_path.exists() {
-        eprintln!("WARNING: llama.cpp not found at {:?}", llama_cpp_path);
-        eprintln!("This crate requires the llama.cpp source code to build.");
-        eprintln!("Please either:");
-        eprintln!("1. Clone this repository with submodules: git clone --recurse-submodules");
-        eprintln!("2. Initialize submodules: git submodule update --init --recursive");
-        eprintln!("3. Set LLAMA_CPP_PATH environment variable to point to a llama.cpp checkout");
-        return;
-    }
+    let llama_cpp_path = get_llama_cpp_path();
 
     // Check if the llama.cpp directory has the required files
     if !llama_cpp_path.join("include").join("llama.h").exists() {
-        eprintln!("WARNING: llama.h not found in llama.cpp include directory");
-        return;
+        panic!(
+            "llama.h not found in llama.cpp include directory at {:?}. \
+             The llama.cpp source may be incomplete or corrupted.",
+            llama_cpp_path
+        );
     }
 
     // Build the C++ library using CMake
@@ -43,6 +40,121 @@ fn main() {
 
     // Generate bindings
     generate_bindings(&llama_cpp_path, &dst);
+}
+
+/// Get the path to llama.cpp, downloading it if necessary
+fn get_llama_cpp_path() -> PathBuf {
+    // First, check for user-specified path via environment variable
+    if let Ok(path) = env::var("LLAMA_CPP_PATH") {
+        let path = PathBuf::from(path);
+        if path.exists() && path.join("include").join("llama.h").exists() {
+            println!("cargo:warning=Using llama.cpp from LLAMA_CPP_PATH: {:?}", path);
+            return path;
+        }
+        panic!(
+            "LLAMA_CPP_PATH is set to {:?} but it doesn't contain valid llama.cpp sources",
+            path
+        );
+    }
+
+    // Check for submodule in the manifest directory
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let submodule_path = manifest_dir.join("llama.cpp");
+
+    if submodule_path.exists() && submodule_path.join("include").join("llama.h").exists() {
+        return submodule_path;
+    }
+
+    // If submodule exists but is empty (common after git clone without --recurse-submodules)
+    if submodule_path.exists() {
+        println!("cargo:warning=llama.cpp submodule exists but appears empty, attempting to initialize...");
+        let status = Command::new("git")
+            .args(["submodule", "update", "--init", "--recursive"])
+            .current_dir(&manifest_dir)
+            .status();
+
+        if status.is_ok() && submodule_path.join("include").join("llama.h").exists() {
+            return submodule_path;
+        }
+    }
+
+    // Download llama.cpp to OUT_DIR for crates.io builds
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let download_path = out_dir.join("llama.cpp");
+
+    if download_path.exists() && download_path.join("include").join("llama.h").exists() {
+        return download_path;
+    }
+
+    println!("cargo:warning=Downloading llama.cpp {} from GitHub...", LLAMA_CPP_VERSION);
+    download_llama_cpp(&download_path);
+
+    if !download_path.join("include").join("llama.h").exists() {
+        panic!(
+            "Failed to download llama.cpp. Please either:\n\
+             1. Clone with submodules: git clone --recurse-submodules {}\n\
+             2. Initialize submodule: git submodule update --init --recursive\n\
+             3. Set LLAMA_CPP_PATH environment variable to a llama.cpp checkout",
+            env::var("CARGO_PKG_REPOSITORY").unwrap_or_default()
+        );
+    }
+
+    download_path
+}
+
+/// Download llama.cpp from GitHub
+fn download_llama_cpp(target_path: &PathBuf) {
+    // Clean up any partial download
+    if target_path.exists() {
+        fs::remove_dir_all(target_path).ok();
+    }
+
+    let archive_url = format!(
+        "{}/archive/refs/tags/{}.tar.gz",
+        LLAMA_CPP_REPO, LLAMA_CPP_VERSION
+    );
+
+    let archive_path = target_path.parent().unwrap().join("llama-cpp.tar.gz");
+
+    // Try curl first, then wget
+    let download_result = Command::new("curl")
+        .args(["-L", "-o"])
+        .arg(&archive_path)
+        .arg(&archive_url)
+        .status()
+        .or_else(|_| {
+            Command::new("wget")
+                .args(["-O"])
+                .arg(&archive_path)
+                .arg(&archive_url)
+                .status()
+        });
+
+    if download_result.is_err() || !archive_path.exists() {
+        panic!(
+            "Failed to download llama.cpp. Please install curl or wget, or manually download from {}",
+            archive_url
+        );
+    }
+
+    // Extract the archive
+    fs::create_dir_all(target_path).expect("Failed to create target directory");
+
+    let extract_result = Command::new("tar")
+        .args(["xzf"])
+        .arg(&archive_path)
+        .args(["--strip-components=1", "-C"])
+        .arg(target_path)
+        .status();
+
+    // Clean up archive
+    fs::remove_file(&archive_path).ok();
+
+    if extract_result.is_err() {
+        panic!("Failed to extract llama.cpp archive. Please ensure tar is installed.");
+    }
+
+    println!("cargo:warning=Successfully downloaded llama.cpp {}", LLAMA_CPP_VERSION);
 }
 
 fn setup_platform_specific() {
