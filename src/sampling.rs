@@ -144,39 +144,29 @@ impl Sampler {
     }
 
     /// Create a penalties sampler for repetition control
+    ///
+    /// Note: The new llama.cpp API simplified this sampler - it no longer takes
+    /// vocab, special_eos_id, linefeed_id, penalize_nl, or ignore_eos parameters.
     pub fn penalties(
-        model: Arc<Model>,
-        special_eos_id: TokenId,
-        linefeed_id: TokenId,
         penalty_last_n: i32,
         penalty_repeat: f32,
         penalty_freq: f32,
         penalty_present: f32,
-        penalize_nl: bool,
-        ignore_eos: bool,
     ) -> Result<Self, MullamaError> {
-        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
         let sampler_ptr = unsafe {
             sys::llama_sampler_init_penalties(
-                vocab_ptr,
-                special_eos_id as sys::llama_token,
-                linefeed_id as sys::llama_token,
                 penalty_last_n,
                 penalty_repeat,
                 penalty_freq,
                 penalty_present,
-                penalize_nl as sys::c_bool,
-                ignore_eos as sys::c_bool,
             )
         };
 
-        Self::from_ptr(sampler_ptr, Some(model), "penalties")
+        Self::from_ptr(sampler_ptr, None, "penalties")
     }
 
     /// Create a logit bias sampler for token preference control
-    pub fn logit_bias(model: Arc<Model>, logit_biases: &[LogitBias]) -> Result<Self, MullamaError> {
-        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
-
+    pub fn logit_bias(n_vocab: i32, logit_biases: &[LogitBias]) -> Result<Self, MullamaError> {
         let sys_biases: Vec<sys::llama_logit_bias> = logit_biases
             .iter()
             .map(|bias| sys::llama_logit_bias {
@@ -187,13 +177,13 @@ impl Sampler {
 
         let sampler_ptr = unsafe {
             sys::llama_sampler_init_logit_bias(
-                vocab_ptr,
+                n_vocab,
                 sys_biases.len() as i32,
                 sys_biases.as_ptr(),
             )
         };
 
-        Self::from_ptr(sampler_ptr, Some(model), "logit-bias")
+        Self::from_ptr(sampler_ptr, None, "logit-bias")
     }
 
     /// Create a softmax sampler (normalizes probabilities)
@@ -590,21 +580,19 @@ impl Default for SamplerParams {
 
 impl SamplerParams {
     /// Create a typical sampling chain from these parameters
-    pub fn build_chain(&self, model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
+    ///
+    /// Note: The model parameter is kept for API compatibility but is no longer
+    /// required by the penalties sampler in newer llama.cpp versions.
+    pub fn build_chain(&self, _model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
         let mut chain = SamplerChain::default();
 
-        // Add penalties first
+        // Add penalties first (simplified API - no longer needs vocab/model)
         if self.penalty_repeat != 1.0 || self.penalty_freq != 0.0 || self.penalty_present != 0.0 {
             let penalties = Sampler::penalties(
-                model.clone(),
-                model.token_eos(),
-                model.token_nl(),
                 self.penalty_last_n,
                 self.penalty_repeat,
                 self.penalty_freq,
                 self.penalty_present,
-                self.penalize_nl,
-                self.ignore_eos,
             )?;
             chain.add(penalties);
         }
@@ -640,3 +628,19 @@ impl SamplerParams {
         Ok(chain)
     }
 }
+
+// SAFETY: Sampler can be sent between threads because:
+// 1. The raw pointer is only accessed through controlled methods
+// 2. llama_sampler operations are inherently thread-safe when properly synchronized
+unsafe impl Send for Sampler {}
+
+// SAFETY: Sampler can be shared between threads with proper synchronization
+unsafe impl Sync for Sampler {}
+
+// SAFETY: SamplerChain can be sent between threads because:
+// 1. It contains Samplers which are now Send
+// 2. All operations are properly synchronized
+unsafe impl Send for SamplerChain {}
+
+// SAFETY: SamplerChain can be shared between threads with proper synchronization
+unsafe impl Sync for SamplerChain {}

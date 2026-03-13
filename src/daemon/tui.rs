@@ -693,14 +693,19 @@ impl TuiApp {
             .content_length(total_items)
             .position(self.messages_scroll);
 
-        let list = List::new(items)
+        // Skip items for scrolling effect
+        let visible_items: Vec<_> = items
+            .into_iter()
+            .skip(self.messages_scroll)
+            .collect();
+
+        let list = List::new(visible_items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray))
                     .title(" Chat "),
-            )
-            .scroll((self.messages_scroll as u16, 0));
+            );
 
         f.render_widget(list, area);
 

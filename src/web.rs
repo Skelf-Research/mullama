@@ -52,13 +52,13 @@
 use axum::{
     extract::{Json, State},
     http::{header, HeaderMap, StatusCode},
-    middleware::{self, Next},
+    middleware::Next,
     response::{IntoResponse, Response, Sse},
     Router,
 };
 
 #[cfg(feature = "web")]
-use tower::{timeout::TimeoutLayer, ServiceBuilder};
+use tower::ServiceBuilder;
 #[cfg(feature = "web")]
 use tower_http::cors::{Any, CorsLayer};
 
@@ -90,7 +90,7 @@ pub struct AppState {
 }
 
 /// API metrics for monitoring
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct ApiMetrics {
     /// Total number of requests
     pub total_requests: u64,
@@ -240,13 +240,13 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize)]
 pub struct ModelInfo {
     /// Vocabulary size
-    pub vocab_size: u32,
+    pub vocab_size: i32,
     /// Training context size
-    pub context_size: u32,
+    pub context_size: i32,
     /// Embedding dimension
-    pub embedding_dim: u32,
+    pub embedding_dim: i32,
     /// Number of layers
-    pub layers: u32,
+    pub layers: i32,
 }
 
 /// Error response
@@ -480,9 +480,9 @@ pub mod handlers {
 #[cfg(feature = "web")]
 pub mod middleware {
     use super::*;
-    use axum::{http::Request, middleware, response::Response};
+    use axum::{http::Request, response::Response};
     use std::time::Duration;
-    use tower::{Layer, ServiceBuilder};
+    use tower::timeout::TimeoutLayer;
 
     /// CORS middleware
     pub fn cors() -> CorsLayer {
@@ -498,7 +498,10 @@ pub mod middleware {
     }
 
     /// Request logging middleware
-    pub async fn logging<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+    pub async fn logging(
+        request: axum::extract::Request,
+        next: Next,
+    ) -> Result<Response, StatusCode> {
         let start = std::time::Instant::now();
         let method = request.method().clone();
         let uri = request.uri().clone();
@@ -518,7 +521,10 @@ pub mod middleware {
     }
 
     /// Rate limiting middleware (simplified)
-    pub async fn rate_limit<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+    pub async fn rate_limit(
+        request: axum::extract::Request,
+        next: Next,
+    ) -> Result<Response, StatusCode> {
         // This is a simplified rate limiter
         // In production, you'd use a proper rate limiting library
 
@@ -625,27 +631,29 @@ impl RouterBuilder {
             router = router.route("/stream", axum::routing::post(handlers::generate_stream));
         }
 
-        router = router.with_state(state);
-
-        let mut service_builder = ServiceBuilder::new();
-
+        // Apply CORS if enabled (before adding state)
         if self.cors_enabled {
-            service_builder = service_builder.layer(middleware::cors());
+            router = router.layer(middleware::cors());
         }
 
-        if self.timeout_enabled {
-            service_builder = service_builder.layer(middleware::timeout());
-        }
+        // Add state
+        let router = router.with_state(state);
 
-        if self.logging_enabled {
-            service_builder = service_builder.layer(middleware::from_fn(middleware::logging));
-        }
+        // Apply logging if enabled
+        let router = if self.logging_enabled {
+            router.layer(axum::middleware::from_fn(middleware::logging))
+        } else {
+            router
+        };
 
-        if self.rate_limiting_enabled {
-            service_builder = service_builder.layer(middleware::from_fn(middleware::rate_limit));
-        }
+        // Apply rate limiting if enabled
+        let router = if self.rate_limiting_enabled {
+            router.layer(axum::middleware::from_fn(middleware::rate_limit))
+        } else {
+            router
+        };
 
-        Ok(router.layer(service_builder))
+        Ok(router)
     }
 }
 

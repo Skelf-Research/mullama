@@ -205,17 +205,30 @@ impl Daemon {
         _stream: bool,
         _stop: Vec<String>,
     ) -> Response {
+        eprintln!("[DEBUG] handle_chat_completion: ENTRY - model={:?}, messages={}, max_tokens={}",
+                  model, messages.len(), max_tokens);
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+
         // Get model
+        eprintln!("[DEBUG] handle_chat_completion: getting model");
+        std::io::stderr().flush().ok();
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
             Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
         };
+        eprintln!("[DEBUG] handle_chat_completion: got model");
+        std::io::stderr().flush().ok();
 
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::SeqCst);
 
-        // Build prompt from messages
-        let prompt = self.build_chat_prompt(&messages);
+        // Build prompt from messages using model's chat template
+        eprintln!("[DEBUG] handle_chat_completion: building prompt");
+        std::io::stderr().flush().ok();
+        let prompt = self.build_chat_prompt(&loaded.model, &messages);
+        eprintln!("[DEBUG] handle_chat_completion: prompt built, length={}", prompt.len());
+        std::io::stderr().flush().ok();
 
         // Generate
         let result = self.generate_text(&loaded, &prompt, max_tokens, temperature).await;
@@ -325,8 +338,9 @@ impl Daemon {
         }
     }
 
-    fn build_chat_prompt(&self, messages: &[ChatMessage]) -> String {
-        // Simple chat template - could be enhanced with model-specific templates
+    fn build_chat_prompt(&self, _model: &crate::Model, messages: &[ChatMessage]) -> String {
+        // TODO: Use model.apply_chat_template when llama.cpp supports raw Jinja templates
+        // For now, use a simple format to avoid crashes with unsupported template formats
         let mut prompt = String::new();
 
         for msg in messages {
@@ -357,12 +371,25 @@ impl Daemon {
         max_tokens: u32,
         temperature: f32,
     ) -> Result<(String, u32, u32), MullamaError> {
+        use std::io::Write;
+        eprintln!("[DEBUG] generate_text: starting");
+        std::io::stderr().flush().ok();
+
         // Tokenize
         let tokens = loaded.model.tokenize(prompt, true, false)?;
         let prompt_tokens = tokens.len() as u32;
+        eprintln!("[DEBUG] generate_text: tokenized {} tokens", prompt_tokens);
+        std::io::stderr().flush().ok();
 
         // Get context lock
         let mut context = loaded.context.write().await;
+        eprintln!("[DEBUG] generate_text: got context lock, ctx_ptr={:?}", context.as_ptr());
+        std::io::stderr().flush().ok();
+
+        // Clear KV cache to start fresh for each request
+        context.kv_cache_clear();
+        eprintln!("[DEBUG] generate_text: cleared KV cache");
+        std::io::stderr().flush().ok();
 
         // Setup sampler
         let mut sampler_params = SamplerParams::default();
@@ -370,19 +397,31 @@ impl Daemon {
         sampler_params.top_p = 0.9;
         sampler_params.top_k = 40;
 
+        eprintln!("[DEBUG] generate_text: about to build sampler chain");
+        std::io::stderr().flush().ok();
         let mut sampler = sampler_params.build_chain(loaded.model.clone())?;
+        eprintln!("[DEBUG] generate_text: built sampler chain");
+        std::io::stderr().flush().ok();
 
         // Decode prompt
+        eprintln!("[DEBUG] generate_text: about to decode prompt with {} tokens", tokens.len());
+        std::io::stderr().flush().ok();
         context.decode(&tokens)?;
+        eprintln!("[DEBUG] generate_text: decoded prompt successfully");
+        std::io::stderr().flush().ok();
 
         // Generate
         let mut generated = String::new();
         let mut completion_tokens = 0u32;
 
-        for _ in 0..max_tokens {
-            let next_token = sampler.sample(&mut *context, 0);
+        for i in 0..max_tokens {
+            eprintln!("[DEBUG] generate_text: loop iteration {}, about to sample", i);
+            // Use -1 to sample from the last token's logits
+            let next_token = sampler.sample(&mut *context, -1);
+            eprintln!("[DEBUG] generate_text: sampled token {}", next_token);
 
             if loaded.model.vocab_is_eog(next_token) {
+                eprintln!("[DEBUG] generate_text: EOG token, breaking");
                 break;
             }
 
@@ -390,11 +429,17 @@ impl Daemon {
                 generated.push_str(&text);
             }
 
+            // Accept the token to update sampler state (grammar, repetition, etc.)
+            sampler.accept(next_token);
+
+            eprintln!("[DEBUG] generate_text: about to decode single token");
             context.decode(&[next_token])?;
+            eprintln!("[DEBUG] generate_text: decoded single token");
             completion_tokens += 1;
         }
 
         self.models.add_tokens(completion_tokens as u64);
+        eprintln!("[DEBUG] generate_text: done, generated {} tokens", completion_tokens);
 
         Ok((generated, prompt_tokens, completion_tokens))
     }

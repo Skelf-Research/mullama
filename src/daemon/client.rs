@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use nng::options::{Options, RecvTimeout, SendTimeout};
 use nng::{Protocol, Socket};
 
 use super::protocol::*;
@@ -23,13 +24,21 @@ impl DaemonClient {
 
     /// Connect to a daemon at the given address
     pub fn connect(addr: &str) -> Result<Self, MullamaError> {
-        Self::connect_with_timeout(addr, Duration::from_secs(30))
+        Self::connect_with_timeout(addr, Duration::from_secs(5))
     }
 
     /// Connect with a custom timeout
     pub fn connect_with_timeout(addr: &str, timeout: Duration) -> Result<Self, MullamaError> {
         let socket = Socket::new(Protocol::Req0)
             .map_err(|e| MullamaError::DaemonError(format!("Failed to create socket: {}", e)))?;
+
+        // Set socket timeouts to prevent indefinite blocking
+        socket
+            .set_opt::<RecvTimeout>(Some(timeout))
+            .map_err(|e| MullamaError::DaemonError(format!("Failed to set recv timeout: {}", e)))?;
+        socket
+            .set_opt::<SendTimeout>(Some(timeout))
+            .map_err(|e| MullamaError::DaemonError(format!("Failed to set send timeout: {}", e)))?;
 
         socket.dial(addr).map_err(|e| {
             MullamaError::DaemonError(format!("Failed to connect to {}: {}", addr, e))
@@ -40,6 +49,20 @@ impl DaemonClient {
 
     /// Send a request and wait for response
     pub fn request(&self, request: &Request) -> Result<Response, MullamaError> {
+        self.request_with_timeout(request, self.timeout)
+    }
+
+    /// Send a request with a specific timeout
+    pub fn request_with_timeout(
+        &self,
+        request: &Request,
+        timeout: Duration,
+    ) -> Result<Response, MullamaError> {
+        // Temporarily set the timeout for this request
+        self.socket
+            .set_opt::<RecvTimeout>(Some(timeout))
+            .map_err(|e| MullamaError::DaemonError(format!("Failed to set timeout: {}", e)))?;
+
         let req_bytes = request
             .to_bytes()
             .map_err(|e| MullamaError::DaemonError(format!("Serialization failed: {}", e)))?;
@@ -51,7 +74,13 @@ impl DaemonClient {
         let msg = self
             .socket
             .recv()
-            .map_err(|e| MullamaError::DaemonError(format!("Receive failed: {}", e)))?;
+            .map_err(|e| {
+                if e == nng::Error::TimedOut {
+                    MullamaError::DaemonError("Request timed out - daemon may have crashed".to_string())
+                } else {
+                    MullamaError::DaemonError(format!("Receive failed: {}", e))
+                }
+            })?;
 
         Response::from_bytes(&msg)
             .map_err(|e| MullamaError::DaemonError(format!("Deserialization failed: {}", e)))
@@ -181,14 +210,20 @@ impl DaemonClient {
     ) -> Result<ChatResult, MullamaError> {
         let start = std::time::Instant::now();
 
-        match self.request(&Request::ChatCompletion {
-            model: model.map(String::from),
-            messages,
-            max_tokens,
-            temperature,
-            stream: false,
-            stop: vec![],
-        })? {
+        // Use a longer timeout for generation (up to 5 minutes)
+        let generation_timeout = Duration::from_secs(300);
+
+        match self.request_with_timeout(
+            &Request::ChatCompletion {
+                model: model.map(String::from),
+                messages,
+                max_tokens,
+                temperature,
+                stream: false,
+                stop: vec![],
+            },
+            generation_timeout,
+        )? {
             Response::ChatCompletion(resp) => Ok(ChatResult {
                 text: resp
                     .choices
@@ -215,13 +250,19 @@ impl DaemonClient {
     ) -> Result<CompletionResult, MullamaError> {
         let start = std::time::Instant::now();
 
-        match self.request(&Request::Completion {
-            model: model.map(String::from),
-            prompt: prompt.to_string(),
-            max_tokens,
-            temperature,
-            stream: false,
-        })? {
+        // Use a longer timeout for generation (up to 5 minutes)
+        let generation_timeout = Duration::from_secs(300);
+
+        match self.request_with_timeout(
+            &Request::Completion {
+                model: model.map(String::from),
+                prompt: prompt.to_string(),
+                max_tokens,
+                temperature,
+                stream: false,
+            },
+            generation_timeout,
+        )? {
             Response::Completion(resp) => Ok(CompletionResult {
                 text: resp
                     .choices

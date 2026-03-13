@@ -105,10 +105,12 @@ impl MullamaRuntime {
         F: std::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let handle = self.runtime.spawn(future);
-        self.task_tracker.track(&handle);
+        let token = self.task_tracker.token();
         self.metrics.tasks_spawned.fetch_add(1, Ordering::Relaxed);
-        handle
+        self.runtime.spawn(async move {
+            let _guard = token;
+            future.await
+        })
     }
 
     /// Spawn a blocking task
@@ -117,12 +119,14 @@ impl MullamaRuntime {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        let handle = self.runtime.spawn_blocking(f);
-        self.task_tracker.track(&handle);
+        let token = self.task_tracker.token();
         self.metrics
             .blocking_tasks_spawned
             .fetch_add(1, Ordering::Relaxed);
-        handle
+        self.runtime.spawn_blocking(move || {
+            let _guard = token;
+            f()
+        })
     }
 
     /// Block on a future
@@ -141,8 +145,8 @@ impl MullamaRuntime {
         self.task_tracker.close();
         self.task_tracker.wait().await;
 
-        // Shutdown the runtime
-        self.runtime.shutdown_timeout(Duration::from_secs(30)).await;
+        // Shutdown the runtime (this is a blocking call, not async)
+        self.runtime.shutdown_timeout(Duration::from_secs(30));
 
         println!("✅ Runtime shutdown complete");
     }
@@ -193,7 +197,7 @@ impl MullamaRuntimeBuilder {
     }
 
     /// Build the runtime
-    pub fn build(self) -> Result<MullamaRuntime, MullamaError> {
+    pub fn build(mut self) -> Result<MullamaRuntime, MullamaError> {
         let runtime = self
             .builder
             .build()
@@ -354,7 +358,7 @@ impl TaskManager {
 #[cfg(all(feature = "tokio-runtime", feature = "async"))]
 pub struct ModelPool {
     models: RwLock<Vec<Arc<AsyncModel>>>,
-    semaphore: Semaphore,
+    semaphore: Arc<Semaphore>,
     max_size: usize,
     min_idle: usize,
 }
@@ -367,8 +371,8 @@ impl ModelPool {
 
     /// Get a model from the pool
     pub async fn get(&self) -> Result<PooledModel, MullamaError> {
-        let _permit =
-            self.semaphore.acquire().await.map_err(|_| {
+        let permit =
+            self.semaphore.clone().acquire_owned().await.map_err(|_| {
                 MullamaError::ConfigError("Failed to acquire semaphore".to_string())
             })?;
 
@@ -376,7 +380,7 @@ impl ModelPool {
         if let Some(model) = models.first() {
             Ok(PooledModel {
                 model: model.clone(),
-                _permit,
+                _permit: permit,
             })
         } else {
             Err(MullamaError::ConfigError(
@@ -429,7 +433,7 @@ impl ModelPoolBuilder {
 
         Ok(ModelPool {
             models: RwLock::new(models),
-            semaphore: Semaphore::new(self.max_size),
+            semaphore: Arc::new(Semaphore::new(self.max_size)),
             max_size: self.max_size,
             min_idle: self.min_idle,
         })
@@ -440,7 +444,7 @@ impl ModelPoolBuilder {
 #[cfg(all(feature = "tokio-runtime", feature = "async"))]
 pub struct PooledModel {
     model: Arc<AsyncModel>,
-    _permit: tokio::sync::SemaphorePermit<'static>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 #[cfg(all(feature = "tokio-runtime", feature = "async"))]
@@ -482,11 +486,12 @@ impl BackgroundCoordinator {
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         let shutdown_token = self.shutdown_token.clone();
+        let task_name = name.clone();
         let handle = tokio::spawn(async move {
             tokio::select! {
                 _ = future => {},
                 _ = shutdown_token.cancelled() => {
-                    println!("🔄 Background task '{}' cancelled", name);
+                    println!("Background task '{}' cancelled", task_name);
                 }
             }
         });
@@ -527,16 +532,16 @@ pub mod coordination {
         max_concurrent: usize,
     ) -> Vec<Result<String, MullamaError>>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<String, MullamaError>>,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<String, MullamaError>> + Send,
     {
-        let semaphore = Semaphore::new(max_concurrent);
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut handles = Vec::new();
 
         for task in tasks {
-            let permit = semaphore.clone();
+            let sem = semaphore.clone();
             let handle = tokio::spawn(async move {
-                let _permit = permit.acquire().await.unwrap();
+                let _permit = sem.acquire().await.unwrap();
                 task().await
             });
             handles.push(handle);

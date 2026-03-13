@@ -340,10 +340,11 @@ impl Model {
         special: bool,
     ) -> Result<String, MullamaError> {
         let mut buf = vec![0u8; 128]; // Start with reasonable buffer size
+        let vocab = self.vocab();
 
         let n_chars = unsafe {
             sys::llama_token_to_piece(
-                self.inner.model_ptr,
+                vocab,
                 token as sys::llama_token,
                 buf.as_mut_ptr() as *mut c_char,
                 buf.len() as i32,
@@ -364,7 +365,7 @@ impl Model {
             buf.resize(n_chars as usize + 1, 0);
             let n_chars_retry = unsafe {
                 sys::llama_token_to_piece(
-                    self.inner.model_ptr,
+                    vocab,
                     token as sys::llama_token,
                     buf.as_mut_ptr() as *mut c_char,
                     buf.len() as i32,
@@ -455,10 +456,16 @@ pub struct Token {
 }
 
 impl Model {
+    /// Get the vocab pointer for this model
+    fn vocab(&self) -> *const sys::llama_vocab {
+        unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) }
+    }
+
     /// Get complete token information including attributes
     pub fn get_token_info(&self, token: TokenId) -> Result<Token, MullamaError> {
+        let vocab = self.vocab();
         let text_ptr =
-            unsafe { sys::llama_token_get_text(self.inner.model_ptr, token as sys::llama_token) };
+            unsafe { sys::llama_vocab_get_text(vocab, token as sys::llama_token) };
         if text_ptr.is_null() {
             return Err(MullamaError::TokenizationError(
                 "Token not found".to_string(),
@@ -472,9 +479,9 @@ impl Model {
         };
 
         let score =
-            unsafe { sys::llama_token_get_score(self.inner.model_ptr, token as sys::llama_token) };
+            unsafe { sys::llama_vocab_get_score(vocab, token as sys::llama_token) };
         let attr =
-            unsafe { sys::llama_token_get_attr(self.inner.model_ptr, token as sys::llama_token) };
+            unsafe { sys::llama_vocab_get_attr(vocab, token as sys::llama_token) };
 
         Ok(Token {
             id: token,
@@ -486,49 +493,49 @@ impl Model {
 
     /// Check if token is end of generation
     pub fn token_is_eog(&self, token: TokenId) -> bool {
-        unsafe { sys::llama_token_is_eog(self.inner.model_ptr, token as sys::llama_token) as bool }
+        unsafe { sys::llama_vocab_is_eog(self.vocab(), token as sys::llama_token) as bool }
     }
 
     /// Check if token is a control token
     pub fn token_is_control(&self, token: TokenId) -> bool {
         unsafe {
-            sys::llama_token_is_control(self.inner.model_ptr, token as sys::llama_token) as bool
+            sys::llama_vocab_is_control(self.vocab(), token as sys::llama_token) as bool
         }
     }
 
     /// Get special tokens
     pub fn token_bos(&self) -> TokenId {
-        unsafe { sys::llama_token_bos(self.inner.model_ptr) as TokenId }
+        unsafe { sys::llama_vocab_bos(self.vocab()) as TokenId }
     }
 
     pub fn token_eos(&self) -> TokenId {
-        unsafe { sys::llama_token_eos(self.inner.model_ptr) as TokenId }
-    }
-
-    pub fn token_cls(&self) -> TokenId {
-        unsafe { sys::llama_token_cls(self.inner.model_ptr) as TokenId }
+        unsafe { sys::llama_vocab_eos(self.vocab()) as TokenId }
     }
 
     pub fn token_sep(&self) -> TokenId {
-        unsafe { sys::llama_token_sep(self.inner.model_ptr) as TokenId }
+        unsafe { sys::llama_vocab_sep(self.vocab()) as TokenId }
     }
 
     pub fn token_nl(&self) -> TokenId {
-        unsafe { sys::llama_token_nl(self.inner.model_ptr) as TokenId }
+        unsafe { sys::llama_vocab_nl(self.vocab()) as TokenId }
     }
 
     pub fn token_pad(&self) -> TokenId {
-        unsafe { sys::llama_token_pad(self.inner.model_ptr) as TokenId }
+        unsafe { sys::llama_vocab_pad(self.vocab()) as TokenId }
+    }
+
+    pub fn token_eot(&self) -> TokenId {
+        unsafe { sys::llama_vocab_eot(self.vocab()) as TokenId }
     }
 
     /// Check if model adds BOS token
     pub fn add_bos_token(&self) -> bool {
-        unsafe { sys::llama_add_bos_token(self.inner.model_ptr) as bool }
+        unsafe { sys::llama_vocab_get_add_bos(self.vocab()) as bool }
     }
 
     /// Check if model adds EOS token
     pub fn add_eos_token(&self) -> bool {
-        unsafe { sys::llama_add_eos_token(self.inner.model_ptr) as bool }
+        unsafe { sys::llama_vocab_get_add_eos(self.vocab()) as bool }
     }
 }
 
@@ -566,7 +573,10 @@ impl Model {
 
     /// Get vocabulary size (from model)
     pub fn n_vocab(&self) -> i32 {
-        unsafe { sys::llama_model_n_vocab(self.inner.model_ptr) }
+        unsafe {
+            let vocab = sys::llama_model_get_vocab(self.inner.model_ptr);
+            sys::llama_vocab_n_tokens(vocab)
+        }
     }
 
     /// Get number of classification outputs
@@ -605,20 +615,14 @@ impl Model {
 
     /// Get the model's built-in chat template
     pub fn chat_template(&self) -> Option<String> {
-        let mut buf = vec![0u8; 4096];
-        let len = unsafe {
-            sys::llama_model_chat_template(
-                self.inner.model_ptr,
-                std::ptr::null(),
-                buf.as_mut_ptr() as *mut c_char,
-                buf.len(),
-            )
+        let template_ptr = unsafe {
+            sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null())
         };
-        if len > 0 {
-            buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
-        } else {
+        if template_ptr.is_null() {
             None
+        } else {
+            let cstr = unsafe { std::ffi::CStr::from_ptr(template_ptr) };
+            Some(cstr.to_string_lossy().to_string())
         }
     }
 
@@ -662,11 +666,23 @@ impl Model {
             })
             .collect();
 
+        // Get the template - either custom or from model
         let template_cstr = match template {
             Some(tpl) => Some(CString::new(tpl).map_err(|_| {
                 MullamaError::InvalidInput("Template contains null byte".to_string())
             })?),
-            None => None,
+            None => {
+                // Get the model's default chat template
+                let model_template_ptr = unsafe {
+                    sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null())
+                };
+                if !model_template_ptr.is_null() {
+                    let cstr = unsafe { std::ffi::CStr::from_ptr(model_template_ptr) };
+                    Some(CString::new(cstr.to_bytes()).unwrap())
+                } else {
+                    None
+                }
+            }
         };
         let template_ptr = template_cstr
             .as_ref()
@@ -675,7 +691,6 @@ impl Model {
         // First call to get required buffer size
         let required = unsafe {
             sys::llama_chat_apply_template(
-                self.inner.model_ptr,
                 template_ptr,
                 chat_messages.as_ptr(),
                 chat_messages.len(),
@@ -695,7 +710,6 @@ impl Model {
         let mut buffer = vec![0u8; required as usize + 1];
         let written = unsafe {
             sys::llama_chat_apply_template(
-                self.inner.model_ptr,
                 template_ptr,
                 chat_messages.as_ptr(),
                 chat_messages.len(),
@@ -822,11 +836,6 @@ impl Model {
     /// Get FIM sep token
     pub fn token_fim_sep(&self) -> TokenId {
         unsafe { sys::llama_token_fim_sep(self.inner.model_ptr) as TokenId }
-    }
-
-    /// Get end of turn token
-    pub fn token_eot(&self) -> TokenId {
-        unsafe { sys::llama_token_eot(self.inner.model_ptr) as TokenId }
     }
 
     // ==================== Model Persistence ====================

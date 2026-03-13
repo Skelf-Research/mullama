@@ -226,7 +226,9 @@ impl TokenStream {
                     // This would need to be made async-safe in a real implementation
                     let context_inner = context.into_inner();
                     let mut temp_context = context_inner;
-                    let token = sampler.sample(&mut temp_context, 0);
+                    // Use -1 to sample from the last token's logits
+                    let token = sampler.sample(&mut temp_context, -1);
+                    sampler.accept(token);
 
                     // Recreate async context (simplified for example)
                     context = AsyncContext::from_context(temp_context, model.model().clone());

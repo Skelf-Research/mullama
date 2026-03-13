@@ -800,3 +800,15 @@ impl Drop for Context {
         }
     }
 }
+
+// SAFETY: Context can be sent between threads because:
+// 1. The raw pointer is never dereferenced without proper synchronization
+// 2. All operations are synchronized via RwLock when used in async contexts
+// 3. llama_context is designed to be used from a single thread at a time,
+//    which we ensure through the RwLock guard
+unsafe impl Send for Context {}
+
+// SAFETY: Context can be shared between threads because:
+// 1. All mutable operations are done through &mut self
+// 2. When wrapped in RwLock, concurrent access is properly synchronized
+unsafe impl Sync for Context {}
