@@ -5,7 +5,7 @@
 //! 2. Working with embedding utilities
 //! 3. Embedding comparison and similarity
 
-use mullama::{Model, ContextParams, Embeddings, EmbeddingUtil, MullamaError};
+use mullama::{ContextParams, EmbeddingUtil, Embeddings, Model, MullamaError};
 use std::sync::Arc;
 
 fn main() -> Result<(), MullamaError> {
@@ -38,9 +38,21 @@ fn main() -> Result<(), MullamaError> {
     let embedding3 = Embeddings::new(embedding3_data.clone(), 5);
 
     println!(" Created {} embeddings", 3);
-    println!("   Embedding 1 - Dimension: {}, Length: {}", embedding1.dimension, embedding1.len());
-    println!("   Embedding 2 - Dimension: {}, Length: {}", embedding2.dimension, embedding2.len());
-    println!("   Embedding 3 - Dimension: {}, Length: {}", embedding3.dimension, embedding3.len());
+    println!(
+        "   Embedding 1 - Dimension: {}, Length: {}",
+        embedding1.dimension,
+        embedding1.len()
+    );
+    println!(
+        "   Embedding 2 - Dimension: {}, Length: {}",
+        embedding2.dimension,
+        embedding2.len()
+    );
+    println!(
+        "   Embedding 3 - Dimension: {}, Length: {}",
+        embedding3.dimension,
+        embedding3.len()
+    );
 
     println!("Computing similarities...");
     let similarity_1_2 = EmbeddingUtil::cosine_similarity(&embedding1_data, &embedding2_data);

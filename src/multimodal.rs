@@ -14,11 +14,11 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use crate::{Model, Context};
-use std::path::Path;
-use std::collections::HashMap;
-use std::time::Duration;
+use crate::{Context, Model};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+use std::time::Duration;
 
 #[cfg(all(feature = "multimodal", feature = "async"))]
 use crate::AsyncModel;
@@ -459,7 +459,7 @@ impl MultimodalProcessor {
             vision_encoder.encode_images(images)
         } else {
             Err(MullamaError::NotSupported(
-                "Vision encoder not available".to_string()
+                "Vision encoder not available".to_string(),
             ))
         }
     }
@@ -468,19 +468,19 @@ impl MultimodalProcessor {
     fn validate_input(&self, input: &MultimodalInput) -> Result<(), MullamaError> {
         if !input.images.is_empty() && !self.supports_modality(Modality::Image) {
             return Err(MullamaError::NotSupported(
-                "Image processing not supported".to_string()
+                "Image processing not supported".to_string(),
             ));
         }
 
         if !input.videos.is_empty() && !self.supports_modality(Modality::Video) {
             return Err(MullamaError::NotSupported(
-                "Video processing not supported".to_string()
+                "Video processing not supported".to_string(),
             ));
         }
 
         if !input.audio.is_empty() && !self.supports_modality(Modality::Audio) {
             return Err(MullamaError::NotSupported(
-                "Audio processing not supported".to_string()
+                "Audio processing not supported".to_string(),
             ));
         }
 
@@ -496,7 +496,7 @@ impl MultimodalProcessor {
         // Create context from text model
         // Placeholder for context creation
         return Err(MullamaError::NotImplemented(
-            "Multimodal context creation not implemented".to_string()
+            "Multimodal context creation not implemented".to_string(),
         ));
 
         // Inject image features if available
@@ -533,13 +533,18 @@ impl MultimodalProcessor {
         let mut generated_tokens = Vec::new();
 
         for _ in 0..params.max_tokens {
-            let next_token = context.sample_token(params.temperature, params.top_p, params.top_k)?;
+            let next_token =
+                context.sample_token(params.temperature, params.top_p, params.top_k)?;
 
             // Check for stop sequences
             generated_tokens.push(next_token);
             let partial_text = context.detokenize(&generated_tokens)?;
 
-            if params.stop_sequences.iter().any(|stop| partial_text.contains(stop)) {
+            if params
+                .stop_sequences
+                .iter()
+                .any(|stop| partial_text.contains(stop))
+            {
                 break;
             }
         }
@@ -548,7 +553,10 @@ impl MultimodalProcessor {
     }
 
     /// Extract attention weights for interpretability
-    fn extract_attention_weights(&self, context: &Context) -> Result<AttentionWeights, MullamaError> {
+    fn extract_attention_weights(
+        &self,
+        context: &Context,
+    ) -> Result<AttentionWeights, MullamaError> {
         // This would extract actual attention weights from the model
         // For now, return placeholder weights
         Ok(AttentionWeights {
@@ -574,7 +582,7 @@ impl VisionEncoder {
 
         if vision_model_ptr.is_null() {
             return Err(MullamaError::ModelLoadError(
-                "Failed to load vision model".to_string()
+                "Failed to load vision model".to_string(),
             ));
         }
 
@@ -618,9 +626,12 @@ impl VisionEncoder {
 
         // Simple preprocessing (in practice, this would be more sophisticated)
         for pixel in image.data.chunks(3) {
-            let r = (pixel[0] as f32 / 255.0 - self.preprocess_config.mean[0]) / self.preprocess_config.std[0];
-            let g = (pixel[1] as f32 / 255.0 - self.preprocess_config.mean[1]) / self.preprocess_config.std[1];
-            let b = (pixel[2] as f32 / 255.0 - self.preprocess_config.mean[2]) / self.preprocess_config.std[2];
+            let r = (pixel[0] as f32 / 255.0 - self.preprocess_config.mean[0])
+                / self.preprocess_config.std[0];
+            let g = (pixel[1] as f32 / 255.0 - self.preprocess_config.mean[1])
+                / self.preprocess_config.std[1];
+            let b = (pixel[2] as f32 / 255.0 - self.preprocess_config.mean[2])
+                / self.preprocess_config.std[2];
 
             processed.extend_from_slice(&[r, g, b]);
         }
@@ -769,7 +780,10 @@ pub mod utils {
 
     /// Validate image format compatibility
     pub fn validate_image_format(format: ImageFormat) -> bool {
-        matches!(format, ImageFormat::Rgb | ImageFormat::Rgba | ImageFormat::Jpeg | ImageFormat::Png)
+        matches!(
+            format,
+            ImageFormat::Rgb | ImageFormat::Rgba | ImageFormat::Jpeg | ImageFormat::Png
+        )
     }
 
     /// Calculate optimal batch size for multimodal processing
@@ -792,7 +806,10 @@ pub mod utils {
     pub async fn load_audio_from_path(path: impl AsRef<Path>) -> Result<AudioInput, MullamaError> {
         let path = path.as_ref();
         if !path.exists() {
-            return Err(MullamaError::ConfigError(format!("Audio file not found: {}", path.display())));
+            return Err(MullamaError::ConfigError(format!(
+                "Audio file not found: {}",
+                path.display()
+            )));
         }
 
         // Placeholder for actual audio loading
@@ -817,7 +834,10 @@ pub mod utils {
     }
 
     /// Process audio with noise reduction and normalization
-    pub fn process_audio(audio: &mut AudioInput, config: &AudioProcessingConfig) -> Result<(), MullamaError> {
+    pub fn process_audio(
+        audio: &mut AudioInput,
+        config: &AudioProcessingConfig,
+    ) -> Result<(), MullamaError> {
         if config.enable_noise_reduction {
             apply_noise_reduction(&mut audio.samples);
         }
@@ -828,7 +848,11 @@ pub mod utils {
 
         // Resample if needed
         if audio.sample_rate != config.default_sample_rate {
-            audio.samples = resample_audio(&audio.samples, audio.sample_rate, config.default_sample_rate)?;
+            audio.samples = resample_audio(
+                &audio.samples,
+                audio.sample_rate,
+                config.default_sample_rate,
+            )?;
             audio.sample_rate = config.default_sample_rate;
         }
 
@@ -853,7 +877,7 @@ pub mod utils {
             duration: audio.duration,
             energy: calculate_energy(&audio.samples),
             zero_crossing_rate: calculate_zero_crossing_rate(&audio.samples),
-            spectral_centroid: 1000.0, // Placeholder
+            spectral_centroid: 1000.0,           // Placeholder
             mfcc: vec![0.1, 0.2, 0.3, 0.4, 0.5], // 5 MFCC coefficients
             pitch: detect_pitch(&audio.samples, audio.sample_rate),
             tempo: detect_tempo(&audio.samples, audio.sample_rate),

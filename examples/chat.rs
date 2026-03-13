@@ -4,11 +4,10 @@
 //! It supports conversation history, customizable sampling, and graceful error handling.
 
 use mullama::{
-    Model, Context, ContextParams, SamplerParams, SamplerChain, SamplerChainParams,
-    MullamaError
+    Context, ContextParams, Model, MullamaError, SamplerChain, SamplerChainParams, SamplerParams,
 };
-use std::io::{self, Write};
 use std::collections::VecDeque;
+use std::io::{self, Write};
 
 /// Represents a chat message
 #[derive(Debug, Clone)]
@@ -55,18 +54,18 @@ impl ChatSession {
 
         // Set up sampling for natural conversation
         let mut sampler_params = SamplerParams::default();
-        sampler_params.temperature = 0.7;          // Natural but focused
-        sampler_params.top_k = 40;                 // Good variety
-        sampler_params.top_p = 0.9;                // Nucleus sampling
-        sampler_params.penalty_repeat = 1.1;       // Avoid repetition
-        sampler_params.penalty_last_n = 64;        // Look back 64 tokens
+        sampler_params.temperature = 0.7; // Natural but focused
+        sampler_params.top_k = 40; // Good variety
+        sampler_params.top_p = 0.9; // Nucleus sampling
+        sampler_params.penalty_repeat = 1.1; // Avoid repetition
+        sampler_params.penalty_last_n = 64; // Look back 64 tokens
 
-        let sampler = sampler_params.build_chain(model.clone());
+        let sampler = sampler_params.build_chain(model.clone())?;
 
         let system_prompt = system_prompt.unwrap_or_else(|| {
             "You are a helpful, harmless, and honest AI assistant. You provide clear, \
              accurate, and concise responses while being friendly and professional."
-            .to_string()
+                .to_string()
         });
 
         let mut session = Self {
@@ -138,7 +137,8 @@ impl ChatSession {
             let next_token = self.sampler.sample(&mut self.context, 0);
 
             // Check for end of generation
-            if next_token == 0 { // Placeholder for EOS token check
+            if next_token == 0 {
+                // Placeholder for EOS token check
                 break;
             }
 
@@ -172,7 +172,15 @@ impl ChatSession {
         let mut prompt = String::new();
 
         // Add recent conversation history
-        for message in self.history.iter().rev().take(6).collect::<Vec<_>>().iter().rev() {
+        for message in self
+            .history
+            .iter()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .iter()
+            .rev()
+        {
             prompt.push_str(&format!("{}: {}\n", message.role, message.content));
         }
 
@@ -273,9 +281,7 @@ fn parse_args() -> Result<(String, Option<String>, usize), String> {
 
     let model_path = args[1].clone();
     let system_prompt = args.get(2).cloned();
-    let max_history = args.get(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+    let max_history = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
 
     Ok((model_path, system_prompt, max_history))
 }
@@ -288,7 +294,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Error: {}", msg);
             eprintln!("\nExample usage:");
             eprintln!("  cargo run --example chat -- path/to/model.gguf");
-            eprintln!("  cargo run --example chat -- path/to/model.gguf \"You are a helpful assistant\"");
+            eprintln!(
+                "  cargo run --example chat -- path/to/model.gguf \"You are a helpful assistant\""
+            );
             eprintln!("  cargo run --example chat -- path/to/model.gguf \"You are a helpful assistant\" 15");
             return Ok(());
         }
@@ -354,7 +362,7 @@ fn advanced_chat_example() -> Result<(), MullamaError> {
     let model = std::sync::Arc::new(Model::load("path/to/model.gguf")?);
 
     let mut ctx_params = ContextParams::default();
-    ctx_params.n_ctx = 8192;  // Longer context for complex conversations
+    ctx_params.n_ctx = 8192; // Longer context for complex conversations
     ctx_params.n_batch = 1024; // Larger batch size
 
     let mut context = Context::new(model.clone(), ctx_params)?;

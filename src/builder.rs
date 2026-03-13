@@ -49,15 +49,18 @@
 //!             .frequency(0.1)
 //!             .presence(0.1)
 //!         )
-//!         .build(model.clone());
+//!         .build(model.clone())?;
 //!
 //!     Ok(())
 //! }
 //! ```
 
-use std::sync::Arc;
+use crate::{
+    Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain, SamplerChainParams,
+    SamplerParams,
+};
 use std::marker::PhantomData;
-use crate::{Model, Context, ModelParams, ContextParams, SamplerParams, SamplerChain, SamplerChainParams, MullamaError};
+use std::sync::Arc;
 
 #[cfg(feature = "async")]
 use crate::async_support::AsyncModel;
@@ -275,9 +278,9 @@ impl ModelBuilder {
     /// # Ok::<(), mullama::MullamaError>(())
     /// ```
     pub fn build(self) -> Result<Arc<Model>, MullamaError> {
-        let path = self.path.ok_or_else(|| {
-            MullamaError::ConfigError("Model path is required".to_string())
-        })?;
+        let path = self
+            .path
+            .ok_or_else(|| MullamaError::ConfigError("Model path is required".to_string()))?;
 
         let params = ModelParams {
             n_gpu_layers: self.gpu_layers,
@@ -319,9 +322,9 @@ impl ModelBuilder {
     /// ```
     #[cfg(feature = "async")]
     pub async fn build_async(self) -> Result<AsyncModel, MullamaError> {
-        let path = self.path.ok_or_else(|| {
-            MullamaError::ConfigError("Model path is required".to_string())
-        })?;
+        let path = self
+            .path
+            .ok_or_else(|| MullamaError::ConfigError("Model path is required".to_string()))?;
 
         let params = ModelParams {
             n_gpu_layers: self.gpu_layers,
@@ -679,9 +682,9 @@ impl ContextBuilder {
         };
 
         let model = self.model.clone();
-        let context = task::spawn_blocking(move || {
-            Context::new(model.clone(), params)
-        }).await.map_err(|e| MullamaError::ContextError(format!("Async task failed: {}", e)))?;
+        let context = task::spawn_blocking(move || Context::new(model.clone(), params))
+            .await
+            .map_err(|e| MullamaError::ContextError(format!("Async task failed: {}", e)))?;
 
         match context {
             Ok(ctx) => Ok(crate::async_support::AsyncContext::new(ctx, self.model)),
@@ -902,11 +905,11 @@ impl SamplerBuilder {
     /// let sampler = SamplerBuilder::new()
     ///     .temperature(0.8)
     ///     .top_k(50)
-    ///     .build(model);
+    ///     .build(model)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self, model: Arc<Model>) -> SamplerChain {
+    pub fn build(self, model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
         let params = SamplerParams {
             temperature: self.temperature,
             top_k: self.top_k,
@@ -1034,11 +1037,7 @@ pub mod presets {
             .temperature(0.7)
             .top_k(40)
             .nucleus(0.9)
-            .penalties(|p| p
-                .repetition(1.1)
-                .frequency(0.1)
-                .presence(0.1)
-            )
+            .penalties(|p| p.repetition(1.1).frequency(0.1).presence(0.1))
     }
 }
 
@@ -1073,12 +1072,7 @@ mod tests {
     #[test]
     fn test_penalty_builder() {
         let builder = SamplerBuilder::new()
-            .penalties(|p| p
-                .repetition(1.2)
-                .frequency(0.1)
-                .presence(0.1)
-                .lookback(128)
-            );
+            .penalties(|p| p.repetition(1.2).frequency(0.1).presence(0.1).lookback(128));
 
         assert_eq!(builder.penalty_repeat, 1.2);
         assert_eq!(builder.penalty_freq, 0.1);
@@ -1088,14 +1082,12 @@ mod tests {
 
     #[test]
     fn test_presets() {
-        let creative = SamplerBuilder::new()
-            .preset(presets::creative_sampling);
+        let creative = SamplerBuilder::new().preset(presets::creative_sampling);
 
         assert!(creative.temperature > 0.8);
         assert!(creative.top_k > 50);
 
-        let precise = SamplerBuilder::new()
-            .preset(presets::precise_sampling);
+        let precise = SamplerBuilder::new().preset(presets::precise_sampling);
 
         assert!(precise.temperature < 0.3);
         assert!(precise.top_k < 20);

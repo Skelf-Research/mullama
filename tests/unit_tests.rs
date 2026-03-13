@@ -80,8 +80,10 @@ mod ffi_tests {
         assert!(context_params_size > 50); // Should have many fields
         assert!(batch_size > 20); // Should have multiple pointers
 
-        println!("Struct sizes - model_params: {}, context_params: {}, batch: {}",
-                model_params_size, context_params_size, batch_size);
+        println!(
+            "Struct sizes - model_params: {}, context_params: {}, batch: {}",
+            model_params_size, context_params_size, batch_size
+        );
     }
 }
 
@@ -203,9 +205,21 @@ mod sampling_tests {
     #[test]
     fn test_token_data_array_creation() {
         let candidates = vec![
-            TokenData { id: 1, logit: 1.0, p: 0.5 },
-            TokenData { id: 2, logit: 2.0, p: 0.3 },
-            TokenData { id: 3, logit: 0.5, p: 0.2 },
+            TokenData {
+                id: 1,
+                logit: 1.0,
+                p: 0.5,
+            },
+            TokenData {
+                id: 2,
+                logit: 2.0,
+                p: 0.3,
+            },
+            TokenData {
+                id: 3,
+                logit: 0.5,
+                p: 0.2,
+            },
         ];
 
         let array = TokenDataArray::new(candidates.clone());

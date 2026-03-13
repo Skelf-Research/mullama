@@ -35,20 +35,20 @@
 
 use std::{
     collections::HashMap,
+    io::{BufReader, BufWriter, Cursor},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
-    io::{BufReader, BufWriter, Cursor},
 };
 
 use serde::{Deserialize, Serialize};
 use tokio::{fs, io::AsyncReadExt, sync::Semaphore};
 
 #[cfg(feature = "format-conversion")]
-use image::{ImageFormat, DynamicImage, ImageOutputFormat, ImageBuffer, RgbImage, RgbaImage};
+use image::{DynamicImage, ImageBuffer, ImageFormat, ImageOutputFormat, RgbImage, RgbaImage};
 
 #[cfg(feature = "format-conversion")]
-use hound::{WavReader, WavWriter, WavSpec, SampleFormat};
+use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 #[cfg(feature = "format-conversion")]
 use symphonia::{
@@ -211,7 +211,13 @@ impl AudioConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        self.convert_audio(input_path, AudioFormatType::Mp3, AudioFormatType::Wav, config).await
+        self.convert_audio(
+            input_path,
+            AudioFormatType::Mp3,
+            AudioFormatType::Wav,
+            config,
+        )
+        .await
     }
 
     /// Convert WAV to MP3 format
@@ -220,7 +226,13 @@ impl AudioConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        self.convert_audio(input_path, AudioFormatType::Wav, AudioFormatType::Mp3, config).await
+        self.convert_audio(
+            input_path,
+            AudioFormatType::Wav,
+            AudioFormatType::Mp3,
+            config,
+        )
+        .await
     }
 
     /// Convert FLAC to WAV format
@@ -229,7 +241,13 @@ impl AudioConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        self.convert_audio(input_path, AudioFormatType::Flac, AudioFormatType::Wav, config).await
+        self.convert_audio(
+            input_path,
+            AudioFormatType::Flac,
+            AudioFormatType::Wav,
+            config,
+        )
+        .await
     }
 
     /// Convert between any supported audio formats
@@ -240,35 +258,45 @@ impl AudioConverter {
         output_format: AudioFormatType,
         config: ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string()))?;
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string())
+        })?;
 
         let input_path = input_path.as_ref();
-        let cache_key = format!("{:?}_{:?}_{}", input_path.display(), output_format,
-                               serde_json::to_string(&config).unwrap_or_default());
+        let cache_key = format!(
+            "{:?}_{:?}_{}",
+            input_path.display(),
+            output_format,
+            serde_json::to_string(&config).unwrap_or_default()
+        );
 
         // Check cache first
         if self.config.enable_cache {
             let cache = self.conversion_cache.read().await;
             if let Some(cached_data) = cache.get(&cache_key) {
-                return self.create_audio_result(cached_data.clone(), output_format, &config).await;
+                return self
+                    .create_audio_result(cached_data.clone(), output_format, &config)
+                    .await;
             }
         }
 
         // Perform conversion
         let result = match (input_format, output_format) {
             (AudioFormatType::Mp3, AudioFormatType::Wav) => {
-                self.decode_and_encode_audio(input_path, output_format, &config).await?
+                self.decode_and_encode_audio(input_path, output_format, &config)
+                    .await?
             }
             (AudioFormatType::Wav, AudioFormatType::Mp3) => {
                 self.encode_wav_to_mp3(input_path, &config).await?
             }
             (AudioFormatType::Flac, AudioFormatType::Wav) => {
-                self.decode_and_encode_audio(input_path, output_format, &config).await?
+                self.decode_and_encode_audio(input_path, output_format, &config)
+                    .await?
             }
             _ => {
                 // Generic conversion using symphonia
-                self.decode_and_encode_audio(input_path, output_format, &config).await?
+                self.decode_and_encode_audio(input_path, output_format, &config)
+                    .await?
             }
         };
 
@@ -289,8 +317,9 @@ impl AudioConverter {
         output_format: AudioFormatType,
         config: ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string()))?;
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string())
+        })?;
 
         match (input_format, output_format) {
             (AudioFormatType::Wav, AudioFormatType::Mp3) => {
@@ -300,7 +329,8 @@ impl AudioConverter {
                 self.mp3_bytes_to_wav(input_data, &config).await
             }
             _ => {
-                self.generic_audio_conversion(input_data, input_format, output_format, &config).await
+                self.generic_audio_conversion(input_data, input_format, output_format, &config)
+                    .await
             }
         }
     }
@@ -313,7 +343,9 @@ impl AudioConverter {
         let mut results = Vec::new();
 
         for (path, input_fmt, output_fmt, config) in conversions {
-            let result = self.convert_audio(&path, input_fmt, output_fmt, config).await?;
+            let result = self
+                .convert_audio(&path, input_fmt, output_fmt, config)
+                .await?;
             results.push(result);
         }
 
@@ -334,7 +366,10 @@ impl AudioConverter {
 
         #[cfg(feature = "format-conversion")]
         {
-            use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+            use rubato::{
+                Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+                WindowFunction,
+            };
 
             let params = SincInterpolationParameters {
                 sinc_len: 256,
@@ -350,10 +385,12 @@ impl AudioConverter {
                 params,
                 input_data.len(),
                 channels as usize,
-            ).map_err(|e| MullamaError::ConfigError(format!("Resampler error: {}", e)))?;
+            )
+            .map_err(|e| MullamaError::ConfigError(format!("Resampler error: {}", e)))?;
 
             // Convert to channel-interleaved format expected by rubato
-            let mut channel_data = vec![vec![0.0f32; input_data.len() / channels as usize]; channels as usize];
+            let mut channel_data =
+                vec![vec![0.0f32; input_data.len() / channels as usize]; channels as usize];
 
             for (i, sample) in input_data.iter().enumerate() {
                 let channel = i % channels as usize;
@@ -363,7 +400,8 @@ impl AudioConverter {
                 }
             }
 
-            let output_channels = resampler.process(&channel_data, None)
+            let output_channels = resampler
+                .process(&channel_data, None)
                 .map_err(|e| MullamaError::ConfigError(format!("Resampling failed: {}", e)))?;
 
             // Convert back to interleaved format
@@ -405,14 +443,17 @@ impl AudioConverter {
         config: &ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
         // Read input file
-        let input_data = fs::read(input_path).await
+        let input_data = fs::read(input_path)
+            .await
             .map_err(|e| MullamaError::ConfigError(format!("Failed to read audio file: {}", e)))?;
 
         // Decode using symphonia
         let audio_data = self.decode_with_symphonia(&input_data).await?;
 
         // Encode to target format
-        let output_data = self.encode_audio_data(&audio_data, output_format, config).await?;
+        let output_data = self
+            .encode_audio_data(&audio_data, output_format, config)
+            .await?;
 
         Ok(output_data)
     }
@@ -425,14 +466,20 @@ impl AudioConverter {
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
 
-        let probed = get_probe().format(&hint, mss, &fmt_opts, &meta_opts)
-            .map_err(|e| MullamaError::ConfigError(format!("Failed to probe audio format: {}", e)))?;
+        let probed = get_probe()
+            .format(&hint, mss, &fmt_opts, &meta_opts)
+            .map_err(|e| {
+                MullamaError::ConfigError(format!("Failed to probe audio format: {}", e))
+            })?;
 
         let mut format = probed.format;
-        let track = format.tracks()
+        let track = format
+            .tracks()
             .iter()
             .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-            .ok_or_else(|| MullamaError::ConfigError("No supported audio track found".to_string()))?;
+            .ok_or_else(|| {
+                MullamaError::ConfigError("No supported audio track found".to_string())
+            })?;
 
         let dec_opts: DecoderOptions = Default::default();
         let mut decoder = symphonia::default::get_codecs()
@@ -534,7 +581,10 @@ impl AudioConverter {
             AudioFormatType::Wav => self.encode_to_wav(audio, config).await,
             AudioFormatType::Mp3 => self.encode_to_mp3(audio, config).await,
             AudioFormatType::Flac => self.encode_to_flac(audio, config).await,
-            _ => Err(MullamaError::ConfigError(format!("Unsupported output format: {:?}", format))),
+            _ => Err(MullamaError::ConfigError(format!(
+                "Unsupported output format: {:?}",
+                format
+            ))),
         }
     }
 
@@ -555,12 +605,14 @@ impl AudioConverter {
 
         let mut cursor = Cursor::new(Vec::new());
         {
-            let mut writer = WavWriter::new(&mut cursor, spec)
-                .map_err(|e| MullamaError::ConfigError(format!("Failed to create WAV writer: {}", e)))?;
+            let mut writer = WavWriter::new(&mut cursor, spec).map_err(|e| {
+                MullamaError::ConfigError(format!("Failed to create WAV writer: {}", e))
+            })?;
 
             // Resample if needed
             let samples = if sample_rate != audio.sample_rate {
-                self.resample_audio(&audio.samples, audio.sample_rate, sample_rate, channels).await?
+                self.resample_audio(&audio.samples, audio.sample_rate, sample_rate, channels)
+                    .await?
             } else {
                 audio.samples.clone()
             };
@@ -568,15 +620,19 @@ impl AudioConverter {
             // Convert to i16 and write
             for sample in samples {
                 let sample_i16 = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-                writer.write_sample(sample_i16)
-                    .map_err(|e| MullamaError::ConfigError(format!("Failed to write WAV sample: {}", e)))?;
+                writer.write_sample(sample_i16).map_err(|e| {
+                    MullamaError::ConfigError(format!("Failed to write WAV sample: {}", e))
+                })?;
             }
 
-            writer.finalize()
+            writer
+                .finalize()
                 .map_err(|e| MullamaError::ConfigError(format!("Failed to finalize WAV: {}", e)))?;
         }
 
-        let duration = Duration::from_secs_f32(audio.samples.len() as f32 / sample_rate as f32 / channels as f32);
+        let duration = Duration::from_secs_f32(
+            audio.samples.len() as f32 / sample_rate as f32 / channels as f32,
+        );
 
         Ok(AudioConversionResult {
             data: cursor.into_inner(),
@@ -618,7 +674,8 @@ impl AudioConverter {
             .map_err(|e| MullamaError::ConfigError(format!("Failed to read WAV: {}", e)))?;
 
         let spec = reader.spec();
-        let samples: Result<Vec<f32>, _> = reader.samples::<i16>()
+        let samples: Result<Vec<f32>, _> = reader
+            .samples::<i16>()
             .map(|s| s.map(|sample| sample as f32 / 32768.0))
             .collect();
 
@@ -659,7 +716,8 @@ impl AudioConverter {
         input_path: &Path,
         config: &ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {
-        let wav_data = fs::read(input_path).await
+        let wav_data = fs::read(input_path)
+            .await
             .map_err(|e| MullamaError::ConfigError(format!("Failed to read WAV file: {}", e)))?;
 
         self.wav_bytes_to_mp3(&wav_data, config).await
@@ -713,7 +771,13 @@ impl ImageConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
-        self.convert_image(input_path, ImageFormatType::Jpeg, ImageFormatType::Png, config).await
+        self.convert_image(
+            input_path,
+            ImageFormatType::Jpeg,
+            ImageFormatType::Png,
+            config,
+        )
+        .await
     }
 
     /// Convert PNG to JPEG
@@ -722,7 +786,13 @@ impl ImageConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
-        self.convert_image(input_path, ImageFormatType::Png, ImageFormatType::Jpeg, config).await
+        self.convert_image(
+            input_path,
+            ImageFormatType::Png,
+            ImageFormatType::Jpeg,
+            config,
+        )
+        .await
     }
 
     /// Convert WebP to PNG
@@ -731,7 +801,13 @@ impl ImageConverter {
         input_path: impl AsRef<Path>,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
-        self.convert_image(input_path, ImageFormatType::WebP, ImageFormatType::Png, config).await
+        self.convert_image(
+            input_path,
+            ImageFormatType::WebP,
+            ImageFormatType::Png,
+            config,
+        )
+        .await
     }
 
     /// Convert between any supported image formats
@@ -742,18 +818,25 @@ impl ImageConverter {
         output_format: ImageFormatType,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string()))?;
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string())
+        })?;
 
         let input_path = input_path.as_ref();
-        let cache_key = format!("{:?}_{:?}_{}", input_path.display(), output_format,
-                               serde_json::to_string(&config).unwrap_or_default());
+        let cache_key = format!(
+            "{:?}_{:?}_{}",
+            input_path.display(),
+            output_format,
+            serde_json::to_string(&config).unwrap_or_default()
+        );
 
         // Check cache first
         if self.config.enable_cache {
             let cache = self.conversion_cache.read().await;
             if let Some(cached_data) = cache.get(&cache_key) {
-                return self.create_image_result(cached_data.clone(), output_format, &config).await;
+                return self
+                    .create_image_result(cached_data.clone(), output_format, &config)
+                    .await;
             }
         }
 
@@ -761,7 +844,9 @@ impl ImageConverter {
         let img = image::open(input_path)
             .map_err(|e| MullamaError::ConfigError(format!("Failed to open image: {}", e)))?;
 
-        let result = self.convert_dynamic_image(img, output_format, &config).await?;
+        let result = self
+            .convert_dynamic_image(img, output_format, &config)
+            .await?;
 
         // Cache result
         if self.config.enable_cache {
@@ -780,13 +865,16 @@ impl ImageConverter {
         output_format: ImageFormatType,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string()))?;
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            MullamaError::ConfigError("Failed to acquire conversion semaphore".to_string())
+        })?;
 
-        let img = image::load_from_memory(input_data)
-            .map_err(|e| MullamaError::ConfigError(format!("Failed to load image from memory: {}", e)))?;
+        let img = image::load_from_memory(input_data).map_err(|e| {
+            MullamaError::ConfigError(format!("Failed to load image from memory: {}", e))
+        })?;
 
-        self.convert_dynamic_image(img, output_format, &config).await
+        self.convert_dynamic_image(img, output_format, &config)
+            .await
     }
 
     /// Resize image to specific dimensions
@@ -806,7 +894,8 @@ impl ImageConverter {
             ..Default::default()
         };
 
-        self.convert_dynamic_image(resized, ImageFormatType::Png, &config).await
+        self.convert_dynamic_image(resized, ImageFormatType::Png, &config)
+            .await
     }
 
     /// Batch convert multiple images
@@ -817,7 +906,9 @@ impl ImageConverter {
         let mut results = Vec::new();
 
         for (path, input_fmt, output_fmt, config) in conversions {
-            let result = self.convert_image(&path, input_fmt, output_fmt, config).await?;
+            let result = self
+                .convert_image(&path, input_fmt, output_fmt, config)
+                .await?;
             results.push(result);
         }
 
@@ -839,11 +930,10 @@ impl ImageConverter {
         // Check dimensions against max limits
         let (width, height) = (img.width(), img.height());
         if width > self.config.max_dimensions.0 || height > self.config.max_dimensions.1 {
-            return Err(MullamaError::ConfigError(
-                format!("Image dimensions {}x{} exceed maximum {}x{}",
-                       width, height,
-                       self.config.max_dimensions.0, self.config.max_dimensions.1)
-            ));
+            return Err(MullamaError::ConfigError(format!(
+                "Image dimensions {}x{} exceed maximum {}x{}",
+                width, height, self.config.max_dimensions.0, self.config.max_dimensions.1
+            )));
         }
 
         // Convert to target format
@@ -853,7 +943,9 @@ impl ImageConverter {
             ImageFormatType::Jpeg => {
                 let quality = config.quality.unwrap_or(self.config.jpeg_quality as f32) as u8;
                 img.write_to(&mut cursor, ImageOutputFormat::Jpeg(quality))
-                    .map_err(|e| MullamaError::ConfigError(format!("JPEG encoding failed: {}", e)))?;
+                    .map_err(|e| {
+                        MullamaError::ConfigError(format!("JPEG encoding failed: {}", e))
+                    })?;
             }
             ImageFormatType::Png => {
                 let compression = if let Some(quality) = config.quality {
@@ -862,24 +954,35 @@ impl ImageConverter {
                     self.config.png_compression
                 };
                 img.write_to(&mut cursor, ImageOutputFormat::Png)
-                    .map_err(|e| MullamaError::ConfigError(format!("PNG encoding failed: {}", e)))?;
+                    .map_err(|e| {
+                        MullamaError::ConfigError(format!("PNG encoding failed: {}", e))
+                    })?;
             }
             ImageFormatType::WebP => {
                 let quality = config.quality.unwrap_or(self.config.webp_quality);
                 // Note: WebP support would require additional dependencies
                 img.write_to(&mut cursor, ImageOutputFormat::Png)
-                    .map_err(|e| MullamaError::ConfigError(format!("WebP encoding failed: {}", e)))?;
+                    .map_err(|e| {
+                        MullamaError::ConfigError(format!("WebP encoding failed: {}", e))
+                    })?;
             }
             ImageFormatType::Bmp => {
                 img.write_to(&mut cursor, ImageOutputFormat::Bmp)
-                    .map_err(|e| MullamaError::ConfigError(format!("BMP encoding failed: {}", e)))?;
+                    .map_err(|e| {
+                        MullamaError::ConfigError(format!("BMP encoding failed: {}", e))
+                    })?;
             }
             ImageFormatType::Tiff => {
                 img.write_to(&mut cursor, ImageOutputFormat::Tiff)
-                    .map_err(|e| MullamaError::ConfigError(format!("TIFF encoding failed: {}", e)))?;
+                    .map_err(|e| {
+                        MullamaError::ConfigError(format!("TIFF encoding failed: {}", e))
+                    })?;
             }
             _ => {
-                return Err(MullamaError::ConfigError(format!("Unsupported output format: {:?}", output_format)));
+                return Err(MullamaError::ConfigError(format!(
+                    "Unsupported output format: {:?}",
+                    output_format
+                )));
             }
         }
 
@@ -965,7 +1068,8 @@ impl StreamingConverter {
     }
 
     /// Convert audio stream in real-time
-    pub async fn convert_audio_stream<S>(&self,
+    pub async fn convert_audio_stream<S>(
+        &self,
         mut input_stream: S,
         input_format: AudioFormatType,
         output_format: AudioFormatType,
@@ -988,7 +1092,9 @@ impl StreamingConverter {
                 std::mem::swap(&mut chunk_buffer, &mut frame_data);
 
                 // Convert this frame
-                let converted_frame = self.convert_audio_frame(&frame_data, input_format, output_format, &config).await?;
+                let converted_frame = self
+                    .convert_audio_frame(&frame_data, input_format, output_format, &config)
+                    .await?;
                 output_buffer.extend_from_slice(&converted_frame);
 
                 chunk_buffer.clear();
@@ -997,7 +1103,9 @@ impl StreamingConverter {
 
         // Process remaining data
         if !chunk_buffer.is_empty() {
-            let converted_frame = self.convert_audio_frame(&chunk_buffer, input_format, output_format, &config).await?;
+            let converted_frame = self
+                .convert_audio_frame(&chunk_buffer, input_format, output_format, &config)
+                .await?;
             output_buffer.extend_from_slice(&converted_frame);
         }
 
@@ -1017,7 +1125,11 @@ impl StreamingConverter {
         match (input_format, output_format) {
             (AudioFormatType::WAV, AudioFormatType::MP3) => {
                 // Simulate WAV to MP3 conversion with compression
-                Ok(frame_data.iter().take(frame_data.len() / 2).cloned().collect())
+                Ok(frame_data
+                    .iter()
+                    .take(frame_data.len() / 2)
+                    .cloned()
+                    .collect())
             }
             (AudioFormatType::MP3, AudioFormatType::WAV) => {
                 // Simulate MP3 to WAV decompression

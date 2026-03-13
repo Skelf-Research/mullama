@@ -8,9 +8,9 @@
 //! - Penalty systems for repetition control
 //! - Logit bias for token preference control
 
-use crate::{sys, error::MullamaError, model::Model, context::Context, token::TokenId};
-use std::{ffi::CString, ptr, sync::Arc};
+use crate::{context::Context, error::MullamaError, model::Model, sys, token::TokenId};
 use std::os::raw::c_void;
+use std::{ffi::CString, ptr, sync::Arc};
 
 /// High-level sampler wrapper providing safe access to llama.cpp sampling
 pub struct Sampler {
@@ -19,115 +19,112 @@ pub struct Sampler {
 }
 
 impl Sampler {
+    fn from_ptr(
+        sampler_ptr: *mut sys::llama_sampler,
+        model: Option<Arc<Model>>,
+        name: &str,
+    ) -> Result<Self, MullamaError> {
+        if sampler_ptr.is_null() {
+            Err(MullamaError::SamplingError(format!(
+                "Failed to create {} sampler",
+                name
+            )))
+        } else {
+            Ok(Self {
+                sampler_ptr,
+                _model: model,
+            })
+        }
+    }
+
     /// Create a default greedy sampler
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, MullamaError> {
         Self::greedy()
     }
 
     /// Create a greedy sampler (always picks highest probability token)
-    pub fn greedy() -> Self {
+    pub fn greedy() -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_greedy() };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "greedy")
     }
 
     /// Create a distribution sampler with random seed
-    pub fn dist(seed: u32) -> Self {
+    pub fn dist(seed: u32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_dist(seed) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "distribution")
     }
 
     /// Create a top-k sampler
-    pub fn top_k(k: i32) -> Self {
+    pub fn top_k(k: i32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_top_k(k) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "top-k")
     }
 
     /// Create a top-p (nucleus) sampler
-    pub fn top_p(p: f32, min_keep: usize) -> Self {
+    pub fn top_p(p: f32, min_keep: usize) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_top_p(p, min_keep) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "top-p")
     }
 
     /// Create a min-p sampler
-    pub fn min_p(p: f32, min_keep: usize) -> Self {
+    pub fn min_p(p: f32, min_keep: usize) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_min_p(p, min_keep) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "min-p")
     }
 
     /// Create a tail-free sampling (TFS) sampler
-    pub fn tail_free(z: f32, min_keep: usize) -> Self {
+    pub fn tail_free(z: f32, min_keep: usize) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_tail_free(z, min_keep) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "tail-free")
     }
 
     /// Create a typical sampling sampler
-    pub fn typical(p: f32, min_keep: usize) -> Self {
+    pub fn typical(p: f32, min_keep: usize) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_typical(p, min_keep) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "typical")
     }
 
     /// Create a temperature sampler
-    pub fn temperature(temperature: f32) -> Self {
+    pub fn temperature(temperature: f32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_temp(temperature) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "temperature")
     }
 
     /// Create an extended temperature sampler with additional parameters
-    pub fn temperature_ext(temperature: f32, delta: f32, exponent: f32) -> Self {
+    pub fn temperature_ext(
+        temperature: f32,
+        delta: f32,
+        exponent: f32,
+    ) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_temp_ext(temperature, delta, exponent) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "temperature-ext")
     }
 
     /// Create a Mirostat sampler (version 1)
-    pub fn mirostat(model: Arc<Model>, seed: u32, tau: f32, eta: f32, m: i32) -> Self {
+    pub fn mirostat(
+        model: Arc<Model>,
+        seed: u32,
+        tau: f32,
+        eta: f32,
+        m: i32,
+    ) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
-        let sampler_ptr = unsafe {
-            sys::llama_sampler_init_mirostat(vocab_ptr, seed, tau, eta, m)
-        };
-        Self {
-            sampler_ptr,
-            _model: Some(model),
-        }
+        let sampler_ptr = unsafe { sys::llama_sampler_init_mirostat(vocab_ptr, seed, tau, eta, m) };
+        Self::from_ptr(sampler_ptr, Some(model), "mirostat")
     }
 
     /// Create a Mirostat v2 sampler
-    pub fn mirostat_v2(seed: u32, tau: f32, eta: f32) -> Self {
+    pub fn mirostat_v2(seed: u32, tau: f32, eta: f32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_mirostat_v2(seed, tau, eta) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "mirostat-v2")
     }
 
     /// Create a grammar-constrained sampler
-    pub fn grammar(model: Arc<Model>, grammar_str: &str, grammar_root: &str) -> Result<Self, MullamaError> {
+    pub fn grammar(
+        model: Arc<Model>,
+        grammar_str: &str,
+        grammar_root: &str,
+    ) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
 
         let c_grammar_str = CString::new(grammar_str)
@@ -143,14 +140,7 @@ impl Sampler {
             )
         };
 
-        if sampler_ptr.is_null() {
-            return Err(MullamaError::SamplingError("Failed to create grammar sampler".to_string()));
-        }
-
-        Ok(Self {
-            sampler_ptr,
-            _model: Some(model),
-        })
+        Self::from_ptr(sampler_ptr, Some(model), "grammar")
     }
 
     /// Create a penalties sampler for repetition control
@@ -164,7 +154,7 @@ impl Sampler {
         penalty_present: f32,
         penalize_nl: bool,
         ignore_eos: bool,
-    ) -> Self {
+    ) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
         let sampler_ptr = unsafe {
             sys::llama_sampler_init_penalties(
@@ -180,14 +170,11 @@ impl Sampler {
             )
         };
 
-        Self {
-            sampler_ptr,
-            _model: Some(model),
-        }
+        Self::from_ptr(sampler_ptr, Some(model), "penalties")
     }
 
     /// Create a logit bias sampler for token preference control
-    pub fn logit_bias(model: Arc<Model>, logit_biases: &[LogitBias]) -> Self {
+    pub fn logit_bias(model: Arc<Model>, logit_biases: &[LogitBias]) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
 
         let sys_biases: Vec<sys::llama_logit_bias> = logit_biases
@@ -206,39 +193,27 @@ impl Sampler {
             )
         };
 
-        Self {
-            sampler_ptr,
-            _model: Some(model),
-        }
+        Self::from_ptr(sampler_ptr, Some(model), "logit-bias")
     }
 
     /// Create a softmax sampler (normalizes probabilities)
-    pub fn softmax() -> Self {
+    pub fn softmax() -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_softmax() };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "softmax")
     }
 
     /// Create a top-n sigma sampler
-    pub fn top_n_sigma(n: f32) -> Self {
+    pub fn top_n_sigma(n: f32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_top_n_sigma(n) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "top-n-sigma")
     }
 
     /// Create an XTC (Exclude Top Choices) sampler
     ///
     /// Randomly excludes top tokens to increase diversity.
-    pub fn xtc(p: f32, t: f32, min_keep: usize, seed: u32) -> Self {
+    pub fn xtc(p: f32, t: f32, min_keep: usize, seed: u32) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_xtc(p, t, min_keep, seed) };
-        Self {
-            sampler_ptr,
-            _model: None,
-        }
+        Self::from_ptr(sampler_ptr, None, "xtc")
     }
 
     /// Create a DRY (Don't Repeat Yourself) sampler
@@ -252,7 +227,7 @@ impl Sampler {
         allowed_length: i32,
         penalty_last_n: i32,
         seq_breakers: &[&str],
-    ) -> Self {
+    ) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
 
         // Convert seq_breakers to C strings
@@ -260,10 +235,7 @@ impl Sampler {
             .iter()
             .filter_map(|s| CString::new(*s).ok())
             .collect();
-        let c_ptrs: Vec<*const i8> = c_strings
-            .iter()
-            .map(|s| s.as_ptr())
-            .collect();
+        let c_ptrs: Vec<*const i8> = c_strings.iter().map(|s| s.as_ptr()).collect();
 
         let sampler_ptr = unsafe {
             sys::llama_sampler_init_dry(
@@ -278,27 +250,19 @@ impl Sampler {
             )
         };
 
-        Self {
-            sampler_ptr,
-            _model: Some(model),
-        }
+        Self::from_ptr(sampler_ptr, Some(model), "dry")
     }
 
     /// Create an infill sampler for code completion
-    pub fn infill(model: Arc<Model>) -> Self {
+    pub fn infill(model: Arc<Model>) -> Result<Self, MullamaError> {
         let vocab_ptr = unsafe { sys::llama_model_get_vocab(model.as_ptr()) };
         let sampler_ptr = unsafe { sys::llama_sampler_init_infill(vocab_ptr) };
-        Self {
-            sampler_ptr,
-            _model: Some(model),
-        }
+        Self::from_ptr(sampler_ptr, Some(model), "infill")
     }
 
     /// Sample a token from the given context at the specified position
     pub fn sample(&mut self, context: &mut Context, idx: i32) -> TokenId {
-        let token = unsafe {
-            sys::llama_sampler_sample(self.sampler_ptr, context.as_ptr(), idx)
-        };
+        let token = unsafe { sys::llama_sampler_sample(self.sampler_ptr, context.as_ptr(), idx) };
         token as TokenId
     }
 
@@ -327,7 +291,9 @@ impl Sampler {
     pub fn try_clone(&self) -> Result<Self, MullamaError> {
         let cloned_ptr = unsafe { sys::llama_sampler_clone(self.sampler_ptr) };
         if cloned_ptr.is_null() {
-            return Err(MullamaError::SamplingError("Failed to clone sampler".to_string()));
+            return Err(MullamaError::SamplingError(
+                "Failed to clone sampler".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -454,9 +420,7 @@ impl SamplerChain {
 
     /// Sample using the entire chain
     pub fn sample(&mut self, context: &mut Context, idx: i32) -> TokenId {
-        let token = unsafe {
-            sys::llama_sampler_sample(self.chain_ptr, context.as_ptr(), idx)
-        };
+        let token = unsafe { sys::llama_sampler_sample(self.chain_ptr, context.as_ptr(), idx) };
         token as TokenId
     }
 
@@ -515,6 +479,7 @@ pub struct LogitBias {
 }
 
 /// Token data with probability information
+#[repr(C)]
 #[derive(Debug, Clone)]
 pub struct TokenData {
     pub id: TokenId,
@@ -547,10 +512,7 @@ impl TokenDataArray {
             sorted: false as sys::c_bool,
         };
 
-        Self {
-            inner,
-            _data: data,
-        }
+        Self { inner, _data: data }
     }
 
     /// Get the number of candidates
@@ -579,13 +541,7 @@ impl TokenDataArray {
 
     /// Get candidates as a slice
     pub fn candidates(&self) -> &[TokenData] {
-        unsafe {
-            let data_slice = std::slice::from_raw_parts(
-                self.inner.data as *const sys::llama_token_data,
-                self.inner.size,
-            );
-            std::mem::transmute(data_slice)
-        }
+        unsafe { std::slice::from_raw_parts(self.inner.data as *const TokenData, self.inner.size) }
     }
 }
 
@@ -634,7 +590,7 @@ impl Default for SamplerParams {
 
 impl SamplerParams {
     /// Create a typical sampling chain from these parameters
-    pub fn build_chain(&self, model: Arc<Model>) -> SamplerChain {
+    pub fn build_chain(&self, model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
         let mut chain = SamplerChain::default();
 
         // Add penalties first
@@ -649,38 +605,38 @@ impl SamplerParams {
                 self.penalty_present,
                 self.penalize_nl,
                 self.ignore_eos,
-            );
+            )?;
             chain.add(penalties);
         }
 
         // Add top-k filtering
         if self.top_k > 0 {
-            chain.add(Sampler::top_k(self.top_k));
+            chain.add(Sampler::top_k(self.top_k)?);
         }
 
         // Add tail-free sampling if enabled
         if self.typical_p < 1.0 && self.typical_p > 0.0 {
-            chain.add(Sampler::typical(self.typical_p, 1));
+            chain.add(Sampler::typical(self.typical_p, 1)?);
         }
 
         // Add top-p filtering
         if self.top_p < 1.0 {
-            chain.add(Sampler::top_p(self.top_p, 1));
+            chain.add(Sampler::top_p(self.top_p, 1)?);
         }
 
         // Add min-p filtering
         if self.min_p > 0.0 {
-            chain.add(Sampler::min_p(self.min_p, 1));
+            chain.add(Sampler::min_p(self.min_p, 1)?);
         }
 
         // Add temperature scaling
         if self.temperature > 0.0 {
-            chain.add(Sampler::temperature(self.temperature));
+            chain.add(Sampler::temperature(self.temperature)?);
         }
 
         // Add final distribution sampler
-        chain.add(Sampler::dist(self.seed));
+        chain.add(Sampler::dist(self.seed)?);
 
-        chain
+        Ok(chain)
     }
 }

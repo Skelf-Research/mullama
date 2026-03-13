@@ -50,27 +50,27 @@
 
 #[cfg(feature = "web")]
 use axum::{
-    extract::{State, Json},
-    http::{StatusCode, HeaderMap, header},
-    response::{Response, IntoResponse, Sse},
+    extract::{Json, State},
+    http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
+    response::{IntoResponse, Response, Sse},
     Router,
 };
 
 #[cfg(feature = "web")]
-use tower::{ServiceBuilder, timeout::TimeoutLayer};
+use tower::{timeout::TimeoutLayer, ServiceBuilder};
 #[cfg(feature = "web")]
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 
 #[cfg(feature = "web")]
 use futures::Stream;
 #[cfg(feature = "web")]
-use std::time::Duration;
-#[cfg(feature = "web")]
 use std::sync::Arc;
+#[cfg(feature = "web")]
+use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use crate::{MullamaError, TokenId};
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "async")]
 use crate::async_support::AsyncModel;
@@ -143,9 +143,9 @@ impl AppStateBuilder {
 
     /// Build the application state
     pub async fn build(self) -> Result<AppState, MullamaError> {
-        let model_path = self.model_path.ok_or_else(|| {
-            MullamaError::ConfigError("Model path is required".to_string())
-        })?;
+        let model_path = self
+            .model_path
+            .ok_or_else(|| MullamaError::ConfigError("Model path is required".to_string()))?;
 
         let model = AsyncModel::load(model_path).await?;
 
@@ -274,11 +274,21 @@ pub struct StreamChunk {
 }
 
 // Default values for request parameters
-fn default_max_tokens() -> usize { 100 }
-fn default_temperature() -> f32 { 0.8 }
-fn default_top_k() -> i32 { 40 }
-fn default_top_p() -> f32 { 0.95 }
-fn default_repeat_penalty() -> f32 { 1.1 }
+fn default_max_tokens() -> usize {
+    100
+}
+fn default_temperature() -> f32 {
+    0.8
+}
+fn default_top_k() -> i32 {
+    40
+}
+fn default_top_p() -> f32 {
+    0.95
+}
+fn default_repeat_penalty() -> f32 {
+    1.1
+}
 
 /// HTTP handlers for the API
 #[cfg(feature = "web")]
@@ -307,11 +317,16 @@ pub mod handlers {
         }
 
         if request.max_tokens == 0 || request.max_tokens > 4096 {
-            return Err(AppError::BadRequest("max_tokens must be between 1 and 4096".to_string()));
+            return Err(AppError::BadRequest(
+                "max_tokens must be between 1 and 4096".to_string(),
+            ));
         }
 
         // Generate text
-        let result = state.model.generate_async(&request.prompt, request.max_tokens).await
+        let result = state
+            .model
+            .generate_async(&request.prompt, request.max_tokens)
+            .await
             .map_err(|e| AppError::Internal(format!("Generation failed: {}", e)))?;
 
         let generation_time = start_time.elapsed().as_millis() as f64;
@@ -326,8 +341,9 @@ pub mod handlers {
             if metrics.total_requests == 1 {
                 metrics.avg_response_time_ms = generation_time;
             } else {
-                metrics.avg_response_time_ms =
-                    (metrics.avg_response_time_ms * (metrics.total_requests - 1) as f64 + generation_time)
+                metrics.avg_response_time_ms = (metrics.avg_response_time_ms
+                    * (metrics.total_requests - 1) as f64
+                    + generation_time)
                     / metrics.total_requests as f64;
             }
         }
@@ -345,7 +361,10 @@ pub mod handlers {
     pub async fn generate_stream(
         State(state): State<AppState>,
         Json(request): Json<GenerateRequest>,
-    ) -> Result<Sse<impl Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, AppError> {
+    ) -> Result<
+        Sse<impl Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>,
+        AppError,
+    > {
         // Validate request
         if request.prompt.is_empty() {
             return Err(AppError::BadRequest("Prompt cannot be empty".to_string()));
@@ -359,7 +378,8 @@ pub mod handlers {
             .top_p(request.top_p);
 
         // Create token stream
-        let token_stream = TokenStream::new(state.model.clone(), request.prompt, config).await
+        let token_stream = TokenStream::new(state.model.clone(), request.prompt, config)
+            .await
             .map_err(|e| AppError::Internal(format!("Failed to create stream: {}", e)))?;
 
         // Convert to SSE stream
@@ -402,7 +422,7 @@ pub mod handlers {
         Ok(Sse::new(sse_stream).keep_alive(
             axum::response::sse::KeepAlive::new()
                 .interval(Duration::from_secs(1))
-                .text("keep-alive-text")
+                .text("keep-alive-text"),
         ))
     }
 
@@ -415,7 +435,10 @@ pub mod handlers {
             return Err(AppError::BadRequest("Text cannot be empty".to_string()));
         }
 
-        let tokens = state.model.model().tokenize(&request.text, request.add_bos, request.special)
+        let tokens = state
+            .model
+            .model()
+            .tokenize(&request.text, request.add_bos, request.special)
             .map_err(|e| AppError::Internal(format!("Tokenization failed: {}", e)))?;
 
         Ok(Json(TokenizeResponse {
@@ -425,9 +448,7 @@ pub mod handlers {
     }
 
     /// Health check handler
-    pub async fn health(
-        State(state): State<AppState>,
-    ) -> Json<HealthResponse> {
+    pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         let model_info = ModelInfo {
             vocab_size: state.model.model().vocab_size(),
             context_size: state.model.model().n_ctx_train(),
@@ -445,9 +466,7 @@ pub mod handlers {
     }
 
     /// Model information handler
-    pub async fn model_info(
-        State(state): State<AppState>,
-    ) -> Json<ModelInfo> {
+    pub async fn model_info(State(state): State<AppState>) -> Json<ModelInfo> {
         Json(ModelInfo {
             vocab_size: state.model.model().vocab_size(),
             context_size: state.model.model().n_ctx_train(),
@@ -461,9 +480,9 @@ pub mod handlers {
 #[cfg(feature = "web")]
 pub mod middleware {
     use super::*;
-    use axum::{middleware, http::Request, response::Response};
-    use tower::{ServiceBuilder, Layer};
+    use axum::{http::Request, middleware, response::Response};
     use std::time::Duration;
+    use tower::{Layer, ServiceBuilder};
 
     /// CORS middleware
     pub fn cors() -> CorsLayer {
@@ -479,10 +498,7 @@ pub mod middleware {
     }
 
     /// Request logging middleware
-    pub async fn logging<B>(
-        request: Request<B>,
-        next: Next<B>,
-    ) -> Result<Response, StatusCode> {
+    pub async fn logging<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
         let start = std::time::Instant::now();
         let method = request.method().clone();
         let uri = request.uri().clone();
@@ -502,10 +518,7 @@ pub mod middleware {
     }
 
     /// Rate limiting middleware (simplified)
-    pub async fn rate_limit<B>(
-        request: Request<B>,
-        next: Next<B>,
-    ) -> Result<Response, StatusCode> {
+    pub async fn rate_limit<B>(request: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
         // This is a simplified rate limiter
         // In production, you'd use a proper rate limiting library
 
@@ -647,10 +660,7 @@ pub mod utils {
         bind_address: impl Into<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Create application state
-        let state = AppState::builder()
-            .model_path(model_path)
-            .build()
-            .await?;
+        let state = AppState::builder().model_path(model_path).build().await?;
 
         // Build router
         let router = RouterBuilder::new()

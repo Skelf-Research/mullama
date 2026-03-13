@@ -7,9 +7,9 @@
 //! - Memory usage optimization
 
 use mullama::{
-    Model, ModelParams, Context, ContextParams,
-    sampling::{SamplerParams, Sampler, SamplerChain},
-    batch::Batch, sys,
+    batch::Batch,
+    sampling::{Sampler, SamplerChain, SamplerParams},
+    sys, Context, ContextParams, Model, ModelParams,
 };
 use std::{sync::Arc, time::Instant};
 
@@ -34,7 +34,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::borrow::Cow::Borrowed("System info unavailable")
         }
     };
-    println!("   System: {}\n", system_info.lines().next().unwrap_or("Unknown"));
+    println!(
+        "   System: {}\n",
+        system_info.lines().next().unwrap_or("Unknown")
+    );
 
     // Run benchmarks (would need actual model)
     println!("📈 Benchmark Results (Simulated):");
@@ -51,7 +54,10 @@ fn simulate_benchmarks() {
     // Simulate tokenization work
     std::thread::sleep(std::time::Duration::from_millis(10));
     let duration = start.elapsed();
-    println!("   Text tokenization: {:.2}ms", duration.as_secs_f64() * 1000.0);
+    println!(
+        "   Text tokenization: {:.2}ms",
+        duration.as_secs_f64() * 1000.0
+    );
     println!("   Estimated: ~50,000 tokens/sec\n");
 
     println!("⚡ Sampling Strategy Comparison:");
@@ -67,7 +73,12 @@ fn simulate_benchmarks() {
         let start = Instant::now();
         std::thread::sleep(std::time::Duration::from_millis(5));
         let duration = start.elapsed();
-        println!("   {}: {:.2}ms - {}", name, duration.as_secs_f64() * 1000.0, desc);
+        println!(
+            "   {}: {:.2}ms - {}",
+            name,
+            duration.as_secs_f64() * 1000.0,
+            desc
+        );
     }
 
     println!("\n Memory Usage Optimization:");
@@ -79,7 +90,9 @@ fn simulate_benchmarks() {
     println!("\n🚄 Throughput Estimates:");
     println!("   Single sequence: ~100-200 tokens/sec");
     println!("   Batch processing: ~500-1000 tokens/sec");
-    println!("   Multi-sequence: Up to {}x parallel", unsafe { sys::llama_max_parallel_sequences() });
+    println!("   Multi-sequence: Up to {}x parallel", unsafe {
+        sys::llama_max_parallel_sequences()
+    });
 
     println!("\n Quality Metrics:");
     println!("   API Coverage: 100% (213+ functions)");

@@ -7,9 +7,8 @@
 //! - Performance monitoring concepts
 
 use mullama::{
-    Model, ModelParams, Context, ContextParams,
-    SamplerParams, SamplerChain, SamplerChainParams,
-    Batch, MullamaError
+    Batch, Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain,
+    SamplerChainParams, SamplerParams,
 };
 use std::sync::Arc;
 
@@ -36,15 +35,15 @@ fn main() -> Result<(), MullamaError> {
     // Advanced context parameters
     println!("\nAdvanced Context Parameters:");
     let ctx_params = ContextParams {
-        n_ctx: 4096,         // Large context size
-        n_batch: 512,        // Batch size
-        n_ubatch: 256,       // Physical batch size
-        n_seq_max: 4,        // Support multiple sequences
-        n_threads: 8,        // Generation threads
-        n_threads_batch: 8,  // Batch processing threads
-        embeddings: true,    // Enable embeddings
-        flash_attn: true,    // Use flash attention
-        offload_kqv: true,   // Offload KV operations to GPU
+        n_ctx: 4096,        // Large context size
+        n_batch: 512,       // Batch size
+        n_ubatch: 256,      // Physical batch size
+        n_seq_max: 4,       // Support multiple sequences
+        n_threads: 8,       // Generation threads
+        n_threads_batch: 8, // Batch processing threads
+        embeddings: true,   // Enable embeddings
+        flash_attn: true,   // Use flash attention
+        offload_kqv: true,  // Offload KV operations to GPU
         ..Default::default()
     };
 
@@ -60,14 +59,14 @@ fn main() -> Result<(), MullamaError> {
     // Advanced sampling parameters
     println!("\nAdvanced Sampling Parameters:");
     let sampler_params = SamplerParams {
-        temperature: 0.7,      // Controlled randomness
-        top_k: 40,             // Top-k sampling
-        top_p: 0.9,            // Nucleus sampling
-        min_p: 0.1,            // Minimum probability
-        penalty_repeat: 1.05,  // Repetition penalty
-        penalty_freq: 0.1,     // Frequency penalty
-        penalty_present: 0.1,  // Presence penalty
-        penalty_last_n: 128,   // Penalty lookback
+        temperature: 0.7,     // Controlled randomness
+        top_k: 40,            // Top-k sampling
+        top_p: 0.9,           // Nucleus sampling
+        min_p: 0.1,           // Minimum probability
+        penalty_repeat: 1.05, // Repetition penalty
+        penalty_freq: 0.1,    // Frequency penalty
+        penalty_present: 0.1, // Presence penalty
+        penalty_last_n: 128,  // Penalty lookback
         ..Default::default()
     };
 

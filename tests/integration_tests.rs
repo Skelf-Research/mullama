@@ -4,7 +4,7 @@
 //! Some tests require actual model files and will be skipped if not available.
 
 use mullama::*;
-use std::{sync::Arc, path::Path};
+use std::{path::Path, sync::Arc};
 
 #[cfg(test)]
 mod model_integration_tests {
@@ -40,7 +40,7 @@ mod model_integration_tests {
             match result {
                 Err(MullamaError::ModelLoadError(_)) => {
                     println!("Config {} correctly failed with model load error", i);
-                },
+                }
                 Err(other) => panic!("Config {} failed with unexpected error: {:?}", i, other),
                 Ok(_) => panic!("Config {} unexpectedly succeeded", i),
             }
@@ -104,7 +104,7 @@ mod model_integration_tests {
             match result {
                 Err(MullamaError::ModelLoadError(_)) => {
                     println!("Edge case {} handled correctly", i);
-                },
+                }
                 other => panic!("Edge case {} had unexpected result: {:?}", i, other),
             }
         }
@@ -123,12 +123,10 @@ mod model_integration_tests {
             use_mlock: false,
             check_tensors: true,
             use_extra_bufts: false,
-            kv_overrides: vec![
-                ModelKvOverride {
-                    key: "test.key".to_string(),
-                    value: ModelKvOverrideValue::Int(42),
-                }
-            ],
+            kv_overrides: vec![ModelKvOverride {
+                key: "test.key".to_string(),
+                value: ModelKvOverrideValue::Int(42),
+            }],
             progress_callback: None,
         };
 
@@ -182,11 +180,11 @@ mod context_integration_tests {
             },
             // Edge case configuration
             ContextParams {
-                n_ctx: 0, // Use model default
+                n_ctx: 0,   // Use model default
                 n_batch: 1, // Minimal batch
                 n_ubatch: 1,
                 n_seq_max: 1,
-                n_threads: 128, // High thread count
+                n_threads: 128,     // High thread count
                 n_threads_batch: 1, // Minimal batch threads
                 rope_scaling_type: llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_YARN,
                 pooling_type: llama_pooling_type::LLAMA_POOLING_TYPE_MEAN,
@@ -197,8 +195,16 @@ mod context_integration_tests {
 
         for (i, params) in configs.iter().enumerate() {
             // Test parameter validation
-            assert!(params.n_batch >= params.n_ubatch, "Config {} has invalid batch sizes", i);
-            assert!(params.n_threads >= 1, "Config {} has invalid thread count", i);
+            assert!(
+                params.n_batch >= params.n_ubatch,
+                "Config {} has invalid batch sizes",
+                i
+            );
+            assert!(
+                params.n_threads >= 1,
+                "Config {} has invalid thread count",
+                i
+            );
             assert!(params.n_seq_max >= 1, "Config {} has invalid seq_max", i);
 
             // Test cloning and debug
@@ -213,11 +219,11 @@ mod context_integration_tests {
     fn test_context_thread_management() {
         // Test thread configuration validation
         let thread_configs = vec![
-            (1, 1),     // Minimal
-            (4, 4),     // Balanced
-            (16, 8),    // More generation threads
-            (8, 16),    // More batch threads
-            (32, 32),   // High performance
+            (1, 1),   // Minimal
+            (4, 4),   // Balanced
+            (16, 8),  // More generation threads
+            (8, 16),  // More batch threads
+            (32, 32), // High performance
         ];
 
         for (gen_threads, batch_threads) in thread_configs {
@@ -231,17 +237,36 @@ mod context_integration_tests {
             assert!(params.n_threads >= 1 && params.n_threads <= 256);
             assert!(params.n_threads_batch >= 1 && params.n_threads_batch <= 256);
 
-            println!("Thread config ({}, {}) validated", gen_threads, batch_threads);
+            println!(
+                "Thread config ({}, {}) validated",
+                gen_threads, batch_threads
+            );
         }
     }
 
     #[test]
     fn test_rope_scaling_configurations() {
         let rope_configs = vec![
-            (llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_NONE, 0.0, 0.0),
-            (llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_LINEAR, 10000.0, 1.0),
-            (llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_YARN, 10000.0, 1.0),
-            (llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_LONGROPE, 500000.0, 1.0),
+            (
+                llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_NONE,
+                0.0,
+                0.0,
+            ),
+            (
+                llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_LINEAR,
+                10000.0,
+                1.0,
+            ),
+            (
+                llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_YARN,
+                10000.0,
+                1.0,
+            ),
+            (
+                llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_LONGROPE,
+                500000.0,
+                1.0,
+            ),
         ];
 
         for (scaling_type, freq_base, freq_scale) in rope_configs {
@@ -303,7 +328,7 @@ mod sampling_integration_tests {
             // Edge cases
             SamplerParams {
                 temperature: 2.0,
-                top_k: 0, // Disabled
+                top_k: 0,   // Disabled
                 top_p: 0.1, // Very restrictive
                 min_p: 0.5, // High threshold
                 typical_p: 0.5,
@@ -317,12 +342,36 @@ mod sampling_integration_tests {
 
         for (i, params) in combinations.iter().enumerate() {
             // Validate parameter ranges
-            assert!(params.temperature >= 0.0, "Config {} has negative temperature", i);
-            assert!(params.top_p > 0.0 && params.top_p <= 1.0, "Config {} has invalid top_p", i);
-            assert!(params.min_p >= 0.0 && params.min_p <= 1.0, "Config {} has invalid min_p", i);
-            assert!(params.typical_p >= 0.0, "Config {} has negative typical_p", i);
-            assert!(params.penalty_repeat >= 0.0, "Config {} has negative penalty_repeat", i);
-            assert!(params.penalty_last_n >= 0, "Config {} has negative penalty_last_n", i);
+            assert!(
+                params.temperature >= 0.0,
+                "Config {} has negative temperature",
+                i
+            );
+            assert!(
+                params.top_p > 0.0 && params.top_p <= 1.0,
+                "Config {} has invalid top_p",
+                i
+            );
+            assert!(
+                params.min_p >= 0.0 && params.min_p <= 1.0,
+                "Config {} has invalid min_p",
+                i
+            );
+            assert!(
+                params.typical_p >= 0.0,
+                "Config {} has negative typical_p",
+                i
+            );
+            assert!(
+                params.penalty_repeat >= 0.0,
+                "Config {} has negative penalty_repeat",
+                i
+            );
+            assert!(
+                params.penalty_last_n >= 0,
+                "Config {} has negative penalty_last_n",
+                i
+            );
 
             // Test that parameters can be cloned and formatted
             let cloned = params.clone();
@@ -338,17 +387,35 @@ mod sampling_integration_tests {
             // Empty bias
             vec![],
             // Single bias
-            vec![LogitBias { token: 100, bias: 1.0 }],
+            vec![LogitBias {
+                token: 100,
+                bias: 1.0,
+            }],
             // Multiple biases
             vec![
-                LogitBias { token: 1, bias: -1.0 }, // Suppress token
-                LogitBias { token: 2, bias: 1.0 },  // Promote token
-                LogitBias { token: 3, bias: 0.0 },  // Neutral
+                LogitBias {
+                    token: 1,
+                    bias: -1.0,
+                }, // Suppress token
+                LogitBias {
+                    token: 2,
+                    bias: 1.0,
+                }, // Promote token
+                LogitBias {
+                    token: 3,
+                    bias: 0.0,
+                }, // Neutral
             ],
             // Extreme biases
             vec![
-                LogitBias { token: 50, bias: -100.0 }, // Strongly suppress
-                LogitBias { token: 51, bias: 100.0 },  // Strongly promote
+                LogitBias {
+                    token: 50,
+                    bias: -100.0,
+                }, // Strongly suppress
+                LogitBias {
+                    token: 51,
+                    bias: 100.0,
+                }, // Strongly promote
             ],
         ];
 
@@ -360,7 +427,11 @@ mod sampling_integration_tests {
                 assert!(bias.bias.is_finite(), "Config {} has non-finite bias", i);
             }
 
-            println!("Logit bias config {} validated ({} biases)", i, biases.len());
+            println!(
+                "Logit bias config {} validated ({} biases)",
+                i,
+                biases.len()
+            );
         }
     }
 
@@ -370,18 +441,46 @@ mod sampling_integration_tests {
             // Empty array
             vec![],
             // Single token
-            vec![TokenData { id: 1, logit: 1.0, p: 1.0 }],
+            vec![TokenData {
+                id: 1,
+                logit: 1.0,
+                p: 1.0,
+            }],
             // Multiple tokens with different probabilities
             vec![
-                TokenData { id: 1, logit: 2.0, p: 0.5 },
-                TokenData { id: 2, logit: 1.0, p: 0.3 },
-                TokenData { id: 3, logit: 0.0, p: 0.2 },
+                TokenData {
+                    id: 1,
+                    logit: 2.0,
+                    p: 0.5,
+                },
+                TokenData {
+                    id: 2,
+                    logit: 1.0,
+                    p: 0.3,
+                },
+                TokenData {
+                    id: 3,
+                    logit: 0.0,
+                    p: 0.2,
+                },
             ],
             // Edge case probabilities
             vec![
-                TokenData { id: 10, logit: f32::NEG_INFINITY, p: 0.0 },
-                TokenData { id: 11, logit: 0.0, p: 0.5 },
-                TokenData { id: 12, logit: f32::INFINITY, p: 0.5 },
+                TokenData {
+                    id: 10,
+                    logit: f32::NEG_INFINITY,
+                    p: 0.0,
+                },
+                TokenData {
+                    id: 11,
+                    logit: 0.0,
+                    p: 0.5,
+                },
+                TokenData {
+                    id: 12,
+                    logit: f32::INFINITY,
+                    p: 0.5,
+                },
             ],
         ];
 
@@ -389,16 +488,44 @@ mod sampling_integration_tests {
             let array = TokenDataArray::new(candidates.clone());
 
             // Test basic properties
-            assert_eq!(array.len(), candidates.len(), "Array {} has wrong length", i);
-            assert_eq!(array.is_empty(), candidates.is_empty(), "Array {} empty check failed", i);
-            assert_eq!(array.selected(), None, "Array {} should have no selection", i);
-            assert!(!array.is_sorted(), "Array {} should not be sorted initially", i);
+            assert_eq!(
+                array.len(),
+                candidates.len(),
+                "Array {} has wrong length",
+                i
+            );
+            assert_eq!(
+                array.is_empty(),
+                candidates.is_empty(),
+                "Array {} empty check failed",
+                i
+            );
+            assert_eq!(
+                array.selected(),
+                None,
+                "Array {} should have no selection",
+                i
+            );
+            assert!(
+                !array.is_sorted(),
+                "Array {} should not be sorted initially",
+                i
+            );
 
             // Test candidate access
             let retrieved = array.candidates();
-            assert_eq!(retrieved.len(), candidates.len(), "Array {} candidate access failed", i);
+            assert_eq!(
+                retrieved.len(),
+                candidates.len(),
+                "Array {} candidate access failed",
+                i
+            );
 
-            println!("Token data array {} validated ({} tokens)", i, candidates.len());
+            println!(
+                "Token data array {} validated ({} tokens)",
+                i,
+                candidates.len()
+            );
         }
     }
 }
@@ -428,7 +555,12 @@ mod batch_integration_tests {
             let batch = Batch::from_tokens(tokens);
 
             // Test basic properties
-            assert_eq!(batch.is_empty(), tokens.is_empty(), "Batch {} empty check failed", i);
+            assert_eq!(
+                batch.is_empty(),
+                tokens.is_empty(),
+                "Batch {} empty check failed",
+                i
+            );
 
             // Test that llama_batch can be retrieved
             let _llama_batch = batch.get_llama_batch();
@@ -442,7 +574,7 @@ mod batch_integration_tests {
         // Test that batches can be created and dropped safely
         let batches: Vec<Batch> = (0..10)
             .map(|i| {
-                let tokens: Vec<TokenId> = (0..i*10).collect();
+                let tokens: Vec<TokenId> = (0..i * 10).collect();
                 Batch::from_tokens(&tokens)
             })
             .collect();
@@ -450,7 +582,12 @@ mod batch_integration_tests {
         // All batches should be valid
         for (i, batch) in batches.iter().enumerate() {
             let expected_empty = i == 0;
-            assert_eq!(batch.is_empty(), expected_empty, "Batch {} has wrong empty state", i);
+            assert_eq!(
+                batch.is_empty(),
+                expected_empty,
+                "Batch {} has wrong empty state",
+                i
+            );
         }
 
         // Batches will be dropped here - should not crash
@@ -461,15 +598,19 @@ mod batch_integration_tests {
     fn test_batch_with_special_tokens() {
         // Test batches with special token values
         let special_tokens = vec![
-            vec![LLAMA_TOKEN_NULL], // Null token
+            vec![LLAMA_TOKEN_NULL],          // Null token
             vec![0, 1, LLAMA_TOKEN_NULL, 2], // Mixed with null
-            vec![-1, -2, -100], // Negative tokens
-            vec![1000000, 2000000], // Large token IDs
+            vec![-1, -2, -100],              // Negative tokens
+            vec![1000000, 2000000],          // Large token IDs
         ];
 
         for (i, tokens) in special_tokens.iter().enumerate() {
             let batch = Batch::from_tokens(tokens);
-            assert!(!batch.is_empty() || tokens.is_empty(), "Special batch {} failed", i);
+            assert!(
+                !batch.is_empty() || tokens.is_empty(),
+                "Special batch {} failed",
+                i
+            );
             println!("Special token batch {} validated", i);
         }
     }
@@ -498,7 +639,7 @@ mod error_handling_integration_tests {
             match result {
                 Err(MullamaError::ModelLoadError(_)) => {
                     println!("✓ {}: {}", path, description);
-                },
+                }
                 other => panic!("Path '{}' had unexpected result: {:?}", path, other),
             }
         }
@@ -570,10 +711,13 @@ mod error_handling_integration_tests {
 
         match result {
             Err(MullamaError::ModelLoadError(msg)) => {
-                assert!(msg.contains("not found") || msg.contains("Model file"),
-                       "Error message should be informative: {}", msg);
+                assert!(
+                    msg.contains("not found") || msg.contains("Model file"),
+                    "Error message should be informative: {}",
+                    msg
+                );
                 println!("✓ Error message quality: {}", msg);
-            },
+            }
             other => panic!("Expected ModelLoadError, got: {:?}", other),
         }
     }
@@ -617,8 +761,14 @@ mod performance_integration_tests {
         }
 
         let duration = start.elapsed();
-        assert!(duration.as_millis() < 100, "Parameter creation should be fast");
-        println!("✓ Created 3000 parameter objects in {}ms", duration.as_millis());
+        assert!(
+            duration.as_millis() < 100,
+            "Parameter creation should be fast"
+        );
+        println!(
+            "✓ Created 3000 parameter objects in {}ms",
+            duration.as_millis()
+        );
     }
 
     #[test]
@@ -633,7 +783,10 @@ mod performance_integration_tests {
         let duration = start.elapsed();
 
         assert!(duration.as_millis() < 1000, "Batch creation should be fast");
-        println!("✓ Created 100 batches of 10k tokens in {}ms", duration.as_millis());
+        println!(
+            "✓ Created 100 batches of 10k tokens in {}ms",
+            duration.as_millis()
+        );
     }
 
     #[test]
@@ -653,8 +806,14 @@ mod performance_integration_tests {
         }
         let duration = start.elapsed();
 
-        assert!(duration.as_millis() < 500, "Token data array creation should be fast");
-        println!("✓ Created 100 token arrays of 1k tokens in {}ms", duration.as_millis());
+        assert!(
+            duration.as_millis() < 500,
+            "Token data array creation should be fast"
+        );
+        println!(
+            "✓ Created 100 token arrays of 1k tokens in {}ms",
+            duration.as_millis()
+        );
     }
 
     #[test]
@@ -670,8 +829,17 @@ mod performance_integration_tests {
         println!("  SamplerParams: {} bytes", sampler_params_size);
 
         // Reasonable size limits
-        assert!(model_params_size < 1024, "ModelParams should be reasonably sized");
-        assert!(context_params_size < 1024, "ContextParams should be reasonably sized");
-        assert!(sampler_params_size < 512, "SamplerParams should be reasonably sized");
+        assert!(
+            model_params_size < 1024,
+            "ModelParams should be reasonably sized"
+        );
+        assert!(
+            context_params_size < 1024,
+            "ContextParams should be reasonably sized"
+        );
+        assert!(
+            sampler_params_size < 512,
+            "SamplerParams should be reasonably sized"
+        );
     }
 }

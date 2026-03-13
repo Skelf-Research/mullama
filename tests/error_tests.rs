@@ -260,26 +260,56 @@ mod sampling_error_tests {
         assert_eq!(empty_array.len(), 0);
 
         // Test with single element
-        let single_element = TokenDataArray::new(vec![
-            TokenData { id: 1, logit: 1.0, p: 1.0 }
-        ]);
+        let single_element = TokenDataArray::new(vec![TokenData {
+            id: 1,
+            logit: 1.0,
+            p: 1.0,
+        }]);
         assert_eq!(single_element.len(), 1);
         assert!(!single_element.is_empty());
 
         // Test with extreme values
         let extreme_values = TokenDataArray::new(vec![
-            TokenData { id: TokenId::MAX, logit: f32::MAX, p: 1.0 },
-            TokenData { id: TokenId::MIN, logit: f32::MIN, p: 0.0 },
-            TokenData { id: 0, logit: f32::INFINITY, p: 0.5 },
-            TokenData { id: 1, logit: f32::NEG_INFINITY, p: 0.25 },
-            TokenData { id: 2, logit: f32::NAN, p: f32::NAN },
+            TokenData {
+                id: TokenId::MAX,
+                logit: f32::MAX,
+                p: 1.0,
+            },
+            TokenData {
+                id: TokenId::MIN,
+                logit: f32::MIN,
+                p: 0.0,
+            },
+            TokenData {
+                id: 0,
+                logit: f32::INFINITY,
+                p: 0.5,
+            },
+            TokenData {
+                id: 1,
+                logit: f32::NEG_INFINITY,
+                p: 0.25,
+            },
+            TokenData {
+                id: 2,
+                logit: f32::NAN,
+                p: f32::NAN,
+            },
         ]);
         assert_eq!(extreme_values.len(), 5);
 
         // Test with duplicate IDs
         let duplicate_ids = TokenDataArray::new(vec![
-            TokenData { id: 1, logit: 1.0, p: 0.5 },
-            TokenData { id: 1, logit: 2.0, p: 0.5 },
+            TokenData {
+                id: 1,
+                logit: 1.0,
+                p: 0.5,
+            },
+            TokenData {
+                id: 1,
+                logit: 2.0,
+                p: 0.5,
+            },
         ]);
         assert_eq!(duplicate_ids.len(), 2);
     }
@@ -306,13 +336,7 @@ mod batch_error_tests {
 
     #[test]
     fn test_batch_with_extreme_tokens() {
-        let extreme_tokens = vec![
-            TokenId::MAX,
-            TokenId::MIN,
-            0,
-            -1,
-            1000000,
-        ];
+        let extreme_tokens = vec![TokenId::MAX, TokenId::MIN, 0, -1, 1000000];
 
         let batch = Batch::from_tokens(&extreme_tokens);
         assert!(!batch.is_empty());
@@ -390,8 +414,14 @@ mod memory_error_tests {
 
         // Test with extreme values
         let extreme_embeddings = Embeddings::new(
-            vec![f32::MAX, f32::MIN, f32::INFINITY, f32::NEG_INFINITY, f32::NAN],
-            5
+            vec![
+                f32::MAX,
+                f32::MIN,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NAN,
+            ],
+            5,
         );
         assert_eq!(extreme_embeddings.len(), 1);
         assert_eq!(extreme_embeddings.dimension, 5);
@@ -470,8 +500,8 @@ mod ffi_error_tests {
 #[cfg(test)]
 mod thread_safety_tests {
     use super::*;
-    use std::thread;
     use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn test_concurrent_parameter_creation() {
@@ -510,7 +540,9 @@ mod thread_safety_tests {
 
                 // Create structures concurrently
                 let _batch = Batch::from_tokens(&[1, 2, 3]);
-                let _session = Session { data: vec![1, 2, 3] };
+                let _session = Session {
+                    data: vec![1, 2, 3],
+                };
                 let _embeddings = Embeddings::new(vec![1.0, 2.0, 3.0], 3);
 
                 // Should not crash

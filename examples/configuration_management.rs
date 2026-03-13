@@ -5,8 +5,8 @@
 //!
 //! Run with: cargo run --example configuration_management
 
-use mullama::prelude::*;
 use mullama::config::presets;
+use mullama::prelude::*;
 use serde_json;
 use std::collections::HashMap;
 
@@ -109,8 +109,14 @@ async fn demonstrate_basic_configuration() -> Result<(), MullamaError> {
         },
         metadata: {
             let mut metadata = HashMap::new();
-            metadata.insert("version".to_string(), serde_json::Value::String("1.0.0".to_string()));
-            metadata.insert("author".to_string(), serde_json::Value::String("user".to_string()));
+            metadata.insert(
+                "version".to_string(),
+                serde_json::Value::String("1.0.0".to_string()),
+            );
+            metadata.insert(
+                "author".to_string(),
+                serde_json::Value::String("user".to_string()),
+            );
             metadata
         },
     };
@@ -121,7 +127,10 @@ async fn demonstrate_basic_configuration() -> Result<(), MullamaError> {
     println!("   Context size: {}", custom_config.context.n_ctx);
     println!("   Flash attention: {}", custom_config.context.flash_attn);
     println!("   Temperature: {}", custom_config.sampling.temperature);
-    println!("   Performance monitoring: {}", custom_config.performance.enable_monitoring);
+    println!(
+        "   Performance monitoring: {}",
+        custom_config.performance.enable_monitoring
+    );
 
     Ok(())
 }
@@ -300,10 +309,16 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     // Creative writing preset
     println!("1️⃣ Creative writing preset:");
     let creative_config = presets::creative_writing();
-    println!("   🎨 Temperature: {}", creative_config.sampling.temperature);
+    println!(
+        "   🎨 Temperature: {}",
+        creative_config.sampling.temperature
+    );
     println!("   🎨 Top-k: {}", creative_config.sampling.top_k);
     println!("   🎨 Top-p: {}", creative_config.sampling.top_p);
-    println!("   🎨 Repeat penalty: {}", creative_config.sampling.repeat_penalty);
+    println!(
+        "   🎨 Repeat penalty: {}",
+        creative_config.sampling.repeat_penalty
+    );
 
     // Code generation preset
     println!("\n2️⃣ Code generation preset:");
@@ -311,7 +326,10 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     println!("   💻 Temperature: {}", code_config.sampling.temperature);
     println!("   💻 Top-k: {}", code_config.sampling.top_k);
     println!("   💻 Top-p: {}", code_config.sampling.top_p);
-    println!("   💻 Repeat penalty: {}", code_config.sampling.repeat_penalty);
+    println!(
+        "   💻 Repeat penalty: {}",
+        code_config.sampling.repeat_penalty
+    );
 
     // Question answering preset
     println!("\n3️⃣ Question answering preset:");
@@ -331,14 +349,20 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     let perf_config = presets::performance_optimized();
     println!("   ⚡ Batch size: {}", perf_config.context.n_batch);
     println!("   ⚡ Flash attention: {}", perf_config.context.flash_attn);
-    println!("   ⚡ Memory optimization: {}", perf_config.performance.memory_optimization);
+    println!(
+        "   ⚡ Memory optimization: {}",
+        perf_config.performance.memory_optimization
+    );
 
     // Memory optimized preset
     println!("\n6️⃣ Memory optimized preset:");
     let mem_config = presets::memory_optimized();
     println!("   💾 Context size: {}", mem_config.context.n_ctx);
     println!("   💾 Batch size: {}", mem_config.context.n_batch);
-    println!("   💾 Memory optimization: {}", mem_config.performance.memory_optimization);
+    println!(
+        "   💾 Memory optimization: {}",
+        mem_config.performance.memory_optimization
+    );
 
     Ok(())
 }
@@ -368,7 +392,10 @@ async fn demonstrate_merging() -> Result<(), MullamaError> {
         },
         metadata: {
             let mut metadata = HashMap::new();
-            metadata.insert("environment".to_string(), serde_json::Value::String("production".to_string()));
+            metadata.insert(
+                "environment".to_string(),
+                serde_json::Value::String("production".to_string()),
+            );
             metadata
         },
         ..Default::default()
@@ -386,7 +413,10 @@ async fn demonstrate_merging() -> Result<(), MullamaError> {
     println!("   Model path: {}", base_config.model.path);
     println!("   GPU layers: {}", base_config.model.gpu_layers);
     println!("   Temperature: {}", base_config.sampling.temperature);
-    println!("   Context size: {} (preserved from base)", base_config.context.n_ctx);
+    println!(
+        "   Context size: {} (preserved from base)",
+        base_config.context.n_ctx
+    );
     println!("   Metadata entries: {}", base_config.metadata.len());
 
     Ok(())
@@ -398,7 +428,8 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
 
     // Pattern 1: Conditional configuration
     println!("1️⃣ Conditional configuration:");
-    let is_production = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()) == "production";
+    let is_production =
+        std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()) == "production";
 
     let conditional_config = if is_production {
         println!("   🏭 Production environment detected");
@@ -415,7 +446,10 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
     };
 
     println!("   Log level: {}", conditional_config.logging.level);
-    println!("   Monitoring: {}", conditional_config.performance.enable_monitoring);
+    println!(
+        "   Monitoring: {}",
+        conditional_config.performance.enable_monitoring
+    );
 
     // Pattern 2: Configuration hierarchy
     println!("\n2️⃣ Configuration hierarchy:");

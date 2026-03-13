@@ -5,8 +5,8 @@
 //!
 //! Run with: cargo run --example builder_patterns --features async
 
-use mullama::prelude::*;
 use mullama::builder::presets;
+use mullama::prelude::*;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -172,12 +172,12 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
         .top_k(50)
         .nucleus(0.95)
         .min_probability(0.02)
-        .penalties(|p| p
-            .repetition(1.15)
-            .frequency(0.1)
-            .presence(0.1)
-            .lookback(128)
-        )
+        .penalties(|p| {
+            p.repetition(1.15)
+                .frequency(0.1)
+                .presence(0.1)
+                .lookback(128)
+        })
         .seed(12345);
 
     println!("   ✅ Advanced sampler configured");
@@ -192,8 +192,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("      - Seed: 12345");
 
     println!("\n3️⃣ Creative sampling preset:");
-    let creative_sampler_builder = SamplerBuilder::new()
-        .preset(presets::creative_sampling);
+    let creative_sampler_builder = SamplerBuilder::new().preset(presets::creative_sampling);
 
     println!("   ✅ Creative sampling configured");
     println!("      - High temperature for creativity");
@@ -201,8 +200,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("      - Adjusted penalties");
 
     println!("\n4️⃣ Precise sampling preset:");
-    let precise_sampler_builder = SamplerBuilder::new()
-        .preset(presets::precise_sampling);
+    let precise_sampler_builder = SamplerBuilder::new().preset(presets::precise_sampling);
 
     println!("   ✅ Precise sampling configured");
     println!("      - Low temperature for consistency");
@@ -243,18 +241,15 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     println!("\n2️⃣ Sampling presets:");
 
     // Creative sampling
-    let creative_sampling = SamplerBuilder::new()
-        .preset(presets::creative_sampling);
+    let creative_sampling = SamplerBuilder::new().preset(presets::creative_sampling);
     println!("   🎨 Creative: temp=0.9, top_k=60, high diversity");
 
     // Precise sampling
-    let precise_sampling = SamplerBuilder::new()
-        .preset(presets::precise_sampling);
+    let precise_sampling = SamplerBuilder::new().preset(presets::precise_sampling);
     println!("   🎯 Precise: temp=0.2, top_k=10, high consistency");
 
     // Balanced sampling
-    let balanced_sampling = SamplerBuilder::new()
-        .preset(presets::balanced_sampling);
+    let balanced_sampling = SamplerBuilder::new().preset(presets::balanced_sampling);
     println!("   ⚖️  Balanced: temp=0.7, top_k=40, moderate settings");
 
     Ok(())
@@ -336,9 +331,15 @@ async fn demonstrate_complex_workflow() -> Result<(), MullamaError> {
         });
 
     println!("   ⚙️  Conditional model configured:");
-    println!("      - GPU usage: {}", if use_gpu { "enabled" } else { "disabled" });
+    println!(
+        "      - GPU usage: {}",
+        if use_gpu { "enabled" } else { "disabled" }
+    );
     println!("      - Context size: {}", context_size);
-    println!("      - Preset: {}", if use_gpu { "performance" } else { "memory" });
+    println!(
+        "      - Preset: {}",
+        if use_gpu { "performance" } else { "memory" }
+    );
 
     Ok(())
 }

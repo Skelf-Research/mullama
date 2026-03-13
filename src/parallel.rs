@@ -35,18 +35,18 @@
 
 #[cfg(feature = "parallel")]
 use rayon::{
+    iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     prelude::*,
     ThreadPool, ThreadPoolBuilder,
-    iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator},
 };
 
 use std::{
-    sync::{Arc, Mutex},
     collections::HashMap,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use crate::{Model, Context, ContextParams, SamplerParams, SamplerChain, MullamaError, TokenId};
+use crate::{Context, ContextParams, Model, MullamaError, SamplerChain, SamplerParams, TokenId};
 
 /// Parallel processor for batch operations
 #[cfg(feature = "parallel")]
@@ -69,18 +69,16 @@ impl ParallelProcessor {
 
         let process_batch = |texts: &[&str]| -> Result<Vec<Vec<TokenId>>, MullamaError> {
             match &self.thread_pool {
-                Some(pool) => {
-                    pool.install(|| {
-                        texts.par_iter()
-                            .map(|text| model.tokenize(text, true, false))
-                            .collect()
-                    })
-                }
-                None => {
-                    texts.par_iter()
+                Some(pool) => pool.install(|| {
+                    texts
+                        .par_iter()
                         .map(|text| model.tokenize(text, true, false))
                         .collect()
-                }
+                }),
+                None => texts
+                    .par_iter()
+                    .map(|text| model.tokenize(text, true, false))
+                    .collect(),
             }
         };
 
@@ -88,33 +86,36 @@ impl ParallelProcessor {
     }
 
     /// Process multiple token sequences in parallel for detokenization
-    pub fn batch_detokenize(&self, token_sequences: &[&[TokenId]]) -> Result<Vec<String>, MullamaError> {
+    pub fn batch_detokenize(
+        &self,
+        token_sequences: &[&[TokenId]],
+    ) -> Result<Vec<String>, MullamaError> {
         let model = &self.model;
 
         let process_batch = |sequences: &[&[TokenId]]| -> Result<Vec<String>, MullamaError> {
             match &self.thread_pool {
-                Some(pool) => {
-                    pool.install(|| {
-                        sequences.par_iter()
-                            .map(|tokens| {
-                                tokens.iter()
-                                    .map(|&token| model.token_to_str(token, 0, false))
-                                    .collect::<Result<Vec<String>, _>>()
-                                    .map(|parts| parts.join(""))
-                            })
-                            .collect()
-                    })
-                }
-                None => {
-                    sequences.par_iter()
+                Some(pool) => pool.install(|| {
+                    sequences
+                        .par_iter()
                         .map(|tokens| {
-                            tokens.iter()
+                            tokens
+                                .iter()
                                 .map(|&token| model.token_to_str(token, 0, false))
                                 .collect::<Result<Vec<String>, _>>()
                                 .map(|parts| parts.join(""))
                         })
                         .collect()
-                }
+                }),
+                None => sequences
+                    .par_iter()
+                    .map(|tokens| {
+                        tokens
+                            .iter()
+                            .map(|&token| model.token_to_str(token, 0, false))
+                            .collect::<Result<Vec<String>, _>>()
+                            .map(|parts| parts.join(""))
+                    })
+                    .collect(),
             }
         };
 
@@ -132,18 +133,16 @@ impl ParallelProcessor {
 
         let process_batch = |prompts: &[&str]| -> Result<Vec<GenerationResult>, MullamaError> {
             match &self.thread_pool {
-                Some(pool) => {
-                    pool.install(|| {
-                        prompts.par_iter()
-                            .map(|prompt| self.generate_single(prompt, &generation_config))
-                            .collect()
-                    })
-                }
-                None => {
-                    prompts.par_iter()
+                Some(pool) => pool.install(|| {
+                    prompts
+                        .par_iter()
                         .map(|prompt| self.generate_single(prompt, &generation_config))
                         .collect()
-                }
+                }),
+                None => prompts
+                    .par_iter()
+                    .map(|prompt| self.generate_single(prompt, &generation_config))
+                    .collect(),
             }
         };
 
@@ -164,17 +163,15 @@ impl ParallelProcessor {
     {
         let process_chunks = |chunks: &[&[T]]| -> Result<Vec<R>, MullamaError> {
             match &self.thread_pool {
-                Some(pool) => {
-                    pool.install(|| {
-                        let results: Result<Vec<Vec<R>>, MullamaError> = chunks.par_iter()
-                            .map(|chunk| processor(chunk))
-                            .collect();
+                Some(pool) => pool.install(|| {
+                    let results: Result<Vec<Vec<R>>, MullamaError> =
+                        chunks.par_iter().map(|chunk| processor(chunk)).collect();
 
-                        results.map(|vecs| vecs.into_iter().flatten().collect())
-                    })
-                }
+                    results.map(|vecs| vecs.into_iter().flatten().collect())
+                }),
                 None => {
-                    let results: Result<Vec<Vec<R>>, MullamaError> = data.par_chunks(chunk_size)
+                    let results: Result<Vec<Vec<R>>, MullamaError> = data
+                        .par_chunks(chunk_size)
                         .map(|chunk| processor(chunk))
                         .collect();
 
@@ -190,7 +187,9 @@ impl ParallelProcessor {
     /// Get processor statistics
     pub fn stats(&self) -> ProcessorStats {
         ProcessorStats {
-            thread_count: self.thread_pool.as_ref()
+            thread_count: self
+                .thread_pool
+                .as_ref()
                 .map(|pool| pool.current_num_threads())
                 .unwrap_or_else(|| rayon::current_num_threads()),
             has_custom_pool: self.thread_pool.is_some(),
@@ -198,7 +197,11 @@ impl ParallelProcessor {
         }
     }
 
-    fn generate_single(&self, prompt: &str, config: &BatchGenerationConfig) -> Result<GenerationResult, MullamaError> {
+    fn generate_single(
+        &self,
+        prompt: &str,
+        config: &BatchGenerationConfig,
+    ) -> Result<GenerationResult, MullamaError> {
         let start_time = Instant::now();
 
         // Create context (this would need thread-local storage in real implementation)
@@ -335,7 +338,8 @@ impl ThreadPoolConfig {
             });
         }
 
-        builder.build()
+        builder
+            .build()
             .map_err(|e| MullamaError::ConfigError(format!("Failed to build thread pool: {}", e)))
     }
 }
@@ -407,21 +411,17 @@ pub mod data_processing {
     use super::*;
 
     /// Process text data in parallel for preprocessing
-    pub fn parallel_preprocess<F>(
-        texts: &[String],
-        processor: F,
-    ) -> Vec<String>
+    pub fn parallel_preprocess<F>(texts: &[String], processor: F) -> Vec<String>
     where
         F: Fn(&str) -> String + Sync + Send,
     {
-        texts.par_iter()
-            .map(|text| processor(text))
-            .collect()
+        texts.par_iter().map(|text| processor(text)).collect()
     }
 
     /// Parallel text cleaning and normalization
     pub fn parallel_clean_texts(texts: &[String]) -> Vec<String> {
-        texts.par_iter()
+        texts
+            .par_iter()
             .map(|text| {
                 text.trim()
                     .replace('\n', " ")
@@ -439,17 +439,17 @@ pub mod data_processing {
 
         let vocab = Mutex::new(HashMap::new());
 
-        texts.par_iter()
-            .for_each(|text| {
-                let words: Vec<String> = text.split_whitespace()
-                    .map(|word| word.to_lowercase())
-                    .collect();
+        texts.par_iter().for_each(|text| {
+            let words: Vec<String> = text
+                .split_whitespace()
+                .map(|word| word.to_lowercase())
+                .collect();
 
-                let mut vocab_lock = vocab.lock().unwrap();
-                for word in words {
-                    *vocab_lock.entry(word).or_insert(0) += 1;
-                }
-            });
+            let mut vocab_lock = vocab.lock().unwrap();
+            for word in words {
+                *vocab_lock.entry(word).or_insert(0) += 1;
+            }
+        });
 
         vocab.into_inner().unwrap()
     }
@@ -460,7 +460,8 @@ pub mod data_processing {
         texts: &[String],
         max_length: usize,
     ) -> Result<Vec<Vec<TokenId>>, MullamaError> {
-        texts.par_iter()
+        texts
+            .par_iter()
             .map(|text| {
                 let mut tokens = model.tokenize(text, true, false)?;
                 if tokens.len() > max_length {
@@ -490,7 +491,8 @@ pub mod patterns {
         MapF: Fn(&[T]) -> Result<R, MullamaError> + Sync + Send,
         ReduceF: Fn(R, R) -> R,
     {
-        let results: Result<Vec<R>, MullamaError> = data.par_chunks(chunk_size)
+        let results: Result<Vec<R>, MullamaError> = data
+            .par_chunks(chunk_size)
             .map(|chunk| map_fn(chunk))
             .collect();
 
@@ -528,7 +530,8 @@ pub mod patterns {
         R: Send,
         F: Fn(&T, usize) -> Result<R, MullamaError> + Sync + Send,
     {
-        tree_data.par_iter()
+        tree_data
+            .par_iter()
             .map(|node| processor(node, depth))
             .collect()
     }
@@ -540,11 +543,7 @@ pub mod optimization {
     use super::*;
 
     /// Auto-tune chunk size for optimal performance
-    pub fn auto_tune_chunk_size<T, F>(
-        data: &[T],
-        processor: F,
-        max_iterations: usize,
-    ) -> usize
+    pub fn auto_tune_chunk_size<T, F>(data: &[T], processor: F, max_iterations: usize) -> usize
     where
         T: Sync + Send,
         F: Fn(&[T]) -> Duration + Sync + Send,
@@ -594,9 +593,12 @@ pub mod optimization {
         // Calculate adaptive chunk size based on memory constraints
         let estimated_item_size = std::mem::size_of::<T>();
         let max_items_per_chunk = (max_memory_mb * 1024 * 1024) / estimated_item_size;
-        let chunk_size = max_items_per_chunk.min(data.len() / rayon::current_num_threads()).max(1);
+        let chunk_size = max_items_per_chunk
+            .min(data.len() / rayon::current_num_threads())
+            .max(1);
 
-        let results: Result<Vec<Vec<R>>, MullamaError> = data.par_chunks(chunk_size)
+        let results: Result<Vec<Vec<R>>, MullamaError> = data
+            .par_chunks(chunk_size)
             .map(|chunk| processor(chunk))
             .collect();
 

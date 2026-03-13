@@ -6,7 +6,7 @@
 //!
 //! **NOTE**: These are low-level FFI bindings. Use the safe Rust API in other modules.
 
-use std::os::raw::{c_char, c_int, c_uint, c_float, c_void, c_longlong};
+use std::os::raw::{c_char, c_float, c_int, c_longlong, c_uint, c_void};
 
 // c_bool type alias for compatibility
 pub type c_bool = bool;
@@ -82,7 +82,8 @@ pub struct ggml_tensor {
 }
 
 // Callback type aliases
-pub type ggml_backend_sched_eval_callback = Option<unsafe extern "C" fn(t: *mut ggml_tensor, ask: bool, user_data: *mut c_void) -> bool>;
+pub type ggml_backend_sched_eval_callback =
+    Option<unsafe extern "C" fn(t: *mut ggml_tensor, ask: bool, user_data: *mut c_void) -> bool>;
 pub type ggml_abort_callback = Option<unsafe extern "C" fn(data: *mut c_void) -> bool>;
 pub type ggml_backend_dev_t = *mut ggml_backend_dev;
 
@@ -327,7 +328,8 @@ pub struct llama_batch {
     pub logits: *mut i8,
 }
 
-pub type llama_progress_callback = Option<unsafe extern "C" fn(progress: c_float, user_data: *mut c_void) -> c_bool>;
+pub type llama_progress_callback =
+    Option<unsafe extern "C" fn(progress: c_float, user_data: *mut c_void) -> c_bool>;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -390,12 +392,12 @@ pub struct llama_model_params {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct llama_context_params {
-    pub n_ctx: u32,             // text context, 0 = from model
-    pub n_batch: u32,           // logical maximum batch size
-    pub n_ubatch: u32,          // physical maximum batch size
-    pub n_seq_max: u32,         // max number of sequences
-    pub n_threads: i32,         // number of threads for generation
-    pub n_threads_batch: i32,   // number of threads for batch processing
+    pub n_ctx: u32,           // text context, 0 = from model
+    pub n_batch: u32,         // logical maximum batch size
+    pub n_ubatch: u32,        // physical maximum batch size
+    pub n_seq_max: u32,       // max number of sequences
+    pub n_threads: i32,       // number of threads for generation
+    pub n_threads_batch: i32, // number of threads for batch processing
 
     pub rope_scaling_type: llama_rope_scaling_type,
     pub pooling_type: llama_pooling_type,
@@ -487,7 +489,6 @@ pub struct llama_perf_sampler_data {
     pub n_sample: i32,
 }
 
-
 //
 // Complete FFI function declarations - 213+ functions for 100% coverage
 //
@@ -545,10 +546,7 @@ extern "C" {
         params: llama_model_params,
     ) -> *mut llama_model;
 
-    pub fn llama_model_save_to_file(
-        model: *const llama_model,
-        path_model: *const c_char,
-    );
+    pub fn llama_model_save_to_file(model: *const llama_model, path_model: *const c_char);
 
     pub fn llama_model_free(model: *mut llama_model);
 
@@ -691,37 +689,20 @@ extern "C" {
     //
     // Batch processing
     //
-    pub fn llama_batch_get_one(
-        tokens: *mut llama_token,
-        n_tokens: i32,
-    ) -> llama_batch;
+    pub fn llama_batch_get_one(tokens: *mut llama_token, n_tokens: i32) -> llama_batch;
 
-    pub fn llama_batch_init(
-        n_tokens: i32,
-        embd: i32,
-        n_seq_max: i32,
-    ) -> llama_batch;
+    pub fn llama_batch_init(n_tokens: i32, embd: i32, n_seq_max: i32) -> llama_batch;
 
     pub fn llama_batch_free(batch: llama_batch);
 
     //
     // Inference and decoding
     //
-    pub fn llama_encode(
-        ctx: *mut llama_context,
-        batch: llama_batch,
-    ) -> i32;
+    pub fn llama_encode(ctx: *mut llama_context, batch: llama_batch) -> i32;
 
-    pub fn llama_decode(
-        ctx: *mut llama_context,
-        batch: llama_batch,
-    ) -> i32;
+    pub fn llama_decode(ctx: *mut llama_context, batch: llama_batch) -> i32;
 
-    pub fn llama_set_n_threads(
-        ctx: *mut llama_context,
-        n_threads: i32,
-        n_threads_batch: i32,
-    );
+    pub fn llama_set_n_threads(ctx: *mut llama_context, n_threads: i32, n_threads_batch: i32);
 
     pub fn llama_n_threads(ctx: *mut llama_context) -> i32;
     pub fn llama_n_threads_batch(ctx: *mut llama_context) -> i32;
@@ -739,16 +720,8 @@ extern "C" {
     // State management
     //
     pub fn llama_state_get_size(ctx: *const llama_context) -> usize;
-    pub fn llama_state_get_data(
-        ctx: *const llama_context,
-        dst: *mut u8,
-        size: usize,
-    ) -> usize;
-    pub fn llama_state_set_data(
-        ctx: *mut llama_context,
-        src: *const u8,
-        size: usize,
-    ) -> usize;
+    pub fn llama_state_get_data(ctx: *const llama_context, dst: *mut u8, size: usize) -> usize;
+    pub fn llama_state_set_data(ctx: *mut llama_context, src: *const u8, size: usize) -> usize;
     pub fn llama_state_load_file(
         ctx: *mut llama_context,
         path_session: *const c_char,
@@ -766,10 +739,7 @@ extern "C" {
     //
     // Sequence state management
     //
-    pub fn llama_state_seq_get_size(
-        ctx: *const llama_context,
-        seq_id: llama_seq_id,
-    ) -> usize;
+    pub fn llama_state_seq_get_size(ctx: *const llama_context, seq_id: llama_seq_id) -> usize;
     pub fn llama_state_seq_get_data(
         ctx: *const llama_context,
         dst: *mut u8,
@@ -809,10 +779,28 @@ extern "C" {
     pub fn llama_sampler_init_tail_free(z: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_typical(p: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_temp(t: c_float) -> *mut llama_sampler;
-    pub fn llama_sampler_init_temp_ext(t: c_float, delta: c_float, exponent: c_float) -> *mut llama_sampler;
-    pub fn llama_sampler_init_mirostat(vocab: *const llama_vocab, seed: u32, tau: c_float, eta: c_float, m: i32) -> *mut llama_sampler;
-    pub fn llama_sampler_init_mirostat_v2(seed: u32, tau: c_float, eta: c_float) -> *mut llama_sampler;
-    pub fn llama_sampler_init_grammar(vocab: *const llama_vocab, grammar_str: *const c_char, grammar_root: *const c_char) -> *mut llama_sampler;
+    pub fn llama_sampler_init_temp_ext(
+        t: c_float,
+        delta: c_float,
+        exponent: c_float,
+    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_mirostat(
+        vocab: *const llama_vocab,
+        seed: u32,
+        tau: c_float,
+        eta: c_float,
+        m: i32,
+    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_mirostat_v2(
+        seed: u32,
+        tau: c_float,
+        eta: c_float,
+    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_grammar(
+        vocab: *const llama_vocab,
+        grammar_str: *const c_char,
+        grammar_root: *const c_char,
+    ) -> *mut llama_sampler;
     pub fn llama_sampler_init_penalties(
         vocab: *const llama_vocab,
         special_eos_id: llama_token,
@@ -842,7 +830,11 @@ extern "C" {
     //
     // Sampling operations
     //
-    pub fn llama_sampler_sample(smpl: *mut llama_sampler, ctx: *mut llama_context, idx: i32) -> llama_token;
+    pub fn llama_sampler_sample(
+        smpl: *mut llama_sampler,
+        ctx: *mut llama_context,
+        idx: i32,
+    ) -> llama_token;
     pub fn llama_sampler_accept(smpl: *mut llama_sampler, token: llama_token);
     pub fn llama_sampler_apply(smpl: *mut llama_sampler, cur: *mut llama_token_data_array);
     pub fn llama_sampler_reset(smpl: *mut llama_sampler);
@@ -888,10 +880,7 @@ extern "C" {
         adapter: *mut llama_adapter_lora,
         scale: f32,
     ) -> i32;
-    pub fn llama_rm_adapter_lora(
-        ctx: *mut llama_context,
-        adapter: *mut llama_adapter_lora,
-    ) -> i32;
+    pub fn llama_rm_adapter_lora(ctx: *mut llama_context, adapter: *mut llama_adapter_lora) -> i32;
     pub fn llama_clear_adapter_lora(ctx: *mut llama_context);
 
     //
@@ -1014,12 +1003,8 @@ extern "C" {
         seq_breakers: *const *const c_char,
         num_breakers: usize,
     ) -> *mut llama_sampler;
-    pub fn llama_sampler_init_xtc(
-        p: f32,
-        t: f32,
-        min_keep: usize,
-        seed: u32,
-    ) -> *mut llama_sampler;
+    pub fn llama_sampler_init_xtc(p: f32, t: f32, min_keep: usize, seed: u32)
+        -> *mut llama_sampler;
     pub fn llama_sampler_init_infill(vocab: *const llama_vocab) -> *mut llama_sampler;
 
     //
@@ -1038,18 +1023,41 @@ extern "C" {
     //
     // Utilities and system information
     //
-    pub fn llama_log_set(log_callback: Option<unsafe extern "C" fn(level: i32, text: *const c_char, user_data: *mut c_void)>, user_data: *mut c_void);
+    pub fn llama_log_set(
+        log_callback: Option<
+            unsafe extern "C" fn(level: i32, text: *const c_char, user_data: *mut c_void),
+        >,
+        user_data: *mut c_void,
+    );
     pub fn llama_log_callback_default(level: i32, text: *const c_char, user_data: *mut c_void);
     pub fn llama_dump_timing_info_yaml(stream: *mut c_void, ctx: *const llama_context);
-    pub fn llama_split_path(split_path: *mut c_char, maxlen: usize, path_prefix: *const c_char, split_no: c_int, split_count: c_int) -> c_int;
-    pub fn llama_split_prefix(split_prefix: *mut c_char, maxlen: usize, split_path: *const c_char, split_no: c_int, split_count: c_int) -> c_int;
+    pub fn llama_split_path(
+        split_path: *mut c_char,
+        maxlen: usize,
+        path_prefix: *const c_char,
+        split_no: c_int,
+        split_count: c_int,
+    ) -> c_int;
+    pub fn llama_split_prefix(
+        split_prefix: *mut c_char,
+        maxlen: usize,
+        split_path: *const c_char,
+        split_no: c_int,
+        split_count: c_int,
+    ) -> c_int;
 
     //
     // Additional model/context functions
     //
-    pub fn llama_load_model_from_file(path_model: *const c_char, params: llama_model_params) -> *mut llama_model;
+    pub fn llama_load_model_from_file(
+        path_model: *const c_char,
+        params: llama_model_params,
+    ) -> *mut llama_model;
     pub fn llama_free_model(model: *mut llama_model);
-    pub fn llama_new_context_with_model(model: *mut llama_model, params: llama_context_params) -> *mut llama_context;
+    pub fn llama_new_context_with_model(
+        model: *mut llama_model,
+        params: llama_context_params,
+    ) -> *mut llama_context;
     pub fn llama_get_pooling_type(ctx: *const llama_context) -> llama_pooling_type;
     pub fn llama_model_is_diffusion(model: *const llama_model) -> c_bool;
 

@@ -5,7 +5,7 @@
 //! 2. Batch API usage patterns
 //! 3. Efficient processing concepts
 
-use mullama::{Model, ContextParams, Batch, MullamaError};
+use mullama::{Batch, ContextParams, Model, MullamaError};
 use std::sync::Arc;
 
 fn main() -> Result<(), MullamaError> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), MullamaError> {
     println!("Creating context parameters for batch processing...");
     let mut ctx_params = ContextParams::default();
     ctx_params.n_batch = 512; // Set batch size
-    ctx_params.n_ctx = 2048;  // Set context size
+    ctx_params.n_ctx = 2048; // Set context size
     println!(" Context parameters configured");
     println!("   Batch size: {}", ctx_params.n_batch);
     println!("   Context size: {}", ctx_params.n_ctx);

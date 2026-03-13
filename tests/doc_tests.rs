@@ -27,11 +27,21 @@ mod api_documentation_tests {
         let _vocabulary: Vocabulary = Vocabulary::new();
 
         // Sampling types should be available
-        let _sampler: Sampler = Sampler::new();
-        let _token_data: TokenData = TokenData { id: 0, logit: 0.0, p: 0.0 };
-        let _logit_bias: LogitBias = LogitBias { token: 0, bias: 0.0 };
+        let _sampler: Sampler = Sampler::new().expect("Failed to create sampler");
+        let _token_data: TokenData = TokenData {
+            id: 0,
+            logit: 0.0,
+            p: 0.0,
+        };
+        let _logit_bias: LogitBias = LogitBias {
+            token: 0,
+            bias: 0.0,
+        };
         let _token_data_array: TokenDataArray = TokenDataArray::new(vec![]);
-        let _sampler_perf: SamplerPerfData = SamplerPerfData { t_sample_ms: 0.0, n_sample: 0 };
+        let _sampler_perf: SamplerPerfData = SamplerPerfData {
+            t_sample_ms: 0.0,
+            n_sample: 0,
+        };
 
         // Error types should be available
         let _error: MullamaError = MullamaError::ModelLoadError("test".to_string());
@@ -168,10 +178,14 @@ mod documentation_example_tests {
                 return Err(MullamaError::ModelLoadError("Model not found".to_string()));
             }
             if false {
-                return Err(MullamaError::ContextError("Context creation failed".to_string()));
+                return Err(MullamaError::ContextError(
+                    "Context creation failed".to_string(),
+                ));
             }
             if false {
-                return Err(MullamaError::GenerationError("Generation failed".to_string()));
+                return Err(MullamaError::GenerationError(
+                    "Generation failed".to_string(),
+                ));
             }
             Ok(())
         }
@@ -371,12 +385,10 @@ mod feature_completeness_tests {
             use_mlock: false,
             check_tensors: true,
             use_extra_bufts: false,
-            kv_overrides: vec![
-                ModelKvOverride {
-                    key: "context_length".to_string(),
-                    value: ModelKvOverrideValue::Int(4096),
-                }
-            ],
+            kv_overrides: vec![ModelKvOverride {
+                key: "context_length".to_string(),
+                value: ModelKvOverrideValue::Int(4096),
+            }],
             progress_callback: None,
         };
 

@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 #[cfg(all(feature = "web", feature = "async"))]
 use mullama::{
-    AsyncModel, AppState, GenerateRequest, GenerateResponse,
-    TokenizeRequest, TokenizeResponse, create_router, ApiMetrics
+    create_router, ApiMetrics, AppState, AsyncModel, GenerateRequest, GenerateResponse,
+    TokenizeRequest, TokenizeResponse,
 };
 
 #[cfg(all(feature = "web", feature = "async"))]
@@ -81,14 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let addr = format!("0.0.0.0:{}", port);
         println!("🚀 Starting server on http://{}", addr);
 
-        let listener = TcpListener::bind(&addr).await
+        let listener = TcpListener::bind(&addr)
+            .await
             .map_err(|e| format!("Failed to bind to {}: {}", addr, e))?;
 
         println!("✅ Server ready! Try these commands:");
         print_example_commands(port);
 
         // Start the server
-        axum::serve(listener, app).await
+        axum::serve(listener, app)
+            .await
             .map_err(|e| format!("Server error: {}", e))?;
     }
 
@@ -107,8 +109,8 @@ async fn load_configuration() -> Result<MullamaConfig, Box<dyn std::error::Error
     let mut config = MullamaConfig::from_env().unwrap_or_default();
 
     // Override with some web service specific settings
-    config.model.path = std::env::var("MODEL_PATH")
-        .unwrap_or_else(|_| "path/to/model.gguf".to_string());
+    config.model.path =
+        std::env::var("MODEL_PATH").unwrap_or_else(|_| "path/to/model.gguf".to_string());
 
     config.context.n_ctx = 2048;
     config.context.n_batch = 512;
@@ -121,7 +123,8 @@ async fn load_configuration() -> Result<MullamaConfig, Box<dyn std::error::Error
     config.sampling.top_p = 0.9;
 
     // Validate configuration
-    config.validate()
+    config
+        .validate()
         .map_err(|e| format!("Configuration validation failed: {}", e))?;
 
     Ok(config)
@@ -208,7 +211,10 @@ fn print_example_commands(port: u16) {
     println!("   curl http://localhost:{}/api/v1/health", port);
 
     println!("\n🤖 Text generation:");
-    println!("   curl -X POST http://localhost:{}/api/v1/generate \\", port);
+    println!(
+        "   curl -X POST http://localhost:{}/api/v1/generate \\",
+        port
+    );
     println!("     -H 'Content-Type: application/json' \\");
     println!("     -d '{{");
     println!("       \"prompt\": \"The future of AI is\",");
@@ -217,12 +223,18 @@ fn print_example_commands(port: u16) {
     println!("     }}'");
 
     println!("\n🔤 Tokenization:");
-    println!("   curl -X POST http://localhost:{}/api/v1/tokenize \\", port);
+    println!(
+        "   curl -X POST http://localhost:{}/api/v1/tokenize \\",
+        port
+    );
     println!("     -H 'Content-Type: application/json' \\");
     println!("     -d '{{\"text\": \"Hello, world!\"}}'");
 
     println!("\n🌊 Streaming (in browser or with curl):");
-    println!("   curl http://localhost:{}/api/v1/stream/Hello%20world", port);
+    println!(
+        "   curl http://localhost:{}/api/v1/stream/Hello%20world",
+        port
+    );
 
     println!("\n📊 Metrics:");
     println!("   curl http://localhost:{}/api/v1/metrics", port);

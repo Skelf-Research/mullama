@@ -43,15 +43,15 @@ use futures::{Stream, StreamExt};
 #[cfg(feature = "streaming")]
 use std::pin::Pin;
 #[cfg(feature = "streaming")]
+use std::sync::Arc;
+#[cfg(feature = "streaming")]
 use std::task::{Context as TaskContext, Poll};
 #[cfg(feature = "streaming")]
 use tokio::sync::mpsc;
-#[cfg(feature = "streaming")]
-use std::sync::Arc;
 
-use crate::{MullamaError, TokenId, SamplerParams, ContextParams};
 #[cfg(feature = "async")]
 use crate::async_support::AsyncModel;
+use crate::{ContextParams, MullamaError, SamplerParams, TokenId};
 
 /// Data emitted by token streams
 #[cfg(feature = "streaming")]
@@ -207,8 +207,10 @@ impl TokenStream {
         let (sender, receiver) = mpsc::channel(config.buffer_size);
 
         // Create context
-        let context = model.create_context_async(config.context_params.clone()).await?;
-        let sampler = config.sampler_params.build_chain(model.model().clone());
+        let context = model
+            .create_context_async(config.context_params.clone())
+            .await?;
+        let sampler = config.sampler_params.build_chain(model.model().clone())?;
 
         // Tokenize prompt
         let tokens = model.model().tokenize(&prompt, true, false)?;
@@ -331,10 +333,7 @@ impl TokenStream {
 impl Stream for TokenStream {
     type Item = Result<TokenData, MullamaError>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         self.receiver.poll_recv(cx)
     }
 }

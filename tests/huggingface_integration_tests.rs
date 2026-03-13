@@ -10,12 +10,12 @@
 //!
 //! Run with: cargo test --no-default-features -- --ignored --nocapture
 
-use mullama::*;
+use mullama::context::ContextParams;
+use mullama::embedding::*;
 use mullama::huggingface::*;
 use mullama::lora::*;
-use mullama::embedding::*;
-use mullama::context::ContextParams;
 use mullama::Context;
+use mullama::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,24 +30,24 @@ struct TestConfig {
 
 impl TestConfig {
     fn new() -> Self {
-        let download_dir = std::env::temp_dir()
-            .join("mullama_integration_tests");
+        let download_dir = std::env::temp_dir().join("mullama_integration_tests");
 
-        let client = HFClient::with_download_dir(&download_dir)
-            .with_token_from_env();
+        let client = HFClient::with_download_dir(&download_dir).with_token_from_env();
 
-        Self { download_dir, client }
+        Self {
+            download_dir,
+            client,
+        }
     }
 
     fn ensure_model(&self, model_id: &str) -> Result<PathBuf, MullamaError> {
         let gguf_files = self.client.list_gguf_files(model_id)?;
 
         // Get smallest file for faster testing
-        let smallest = gguf_files.iter()
+        let smallest = gguf_files
+            .iter()
             .min_by_key(|f| f.size)
-            .ok_or_else(|| MullamaError::HuggingFaceError(
-                "No GGUF files found".to_string()
-            ))?;
+            .ok_or_else(|| MullamaError::HuggingFaceError("No GGUF files found".to_string()))?;
 
         self.client.download_gguf(model_id, smallest, None)
     }
@@ -87,7 +87,8 @@ fn test_model_loading_and_params() {
         Err(_e) => {
             println!("Failed to download SmolLM2, trying alternative...");
             // Fall back to TinyLlama
-            config.ensure_model("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
+            config
+                .ensure_model("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
                 .expect("Failed to download any test model")
         }
     };
@@ -134,7 +135,8 @@ fn test_tokenization() {
     let config = TestConfig::new();
     let model_id = "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF";
 
-    let model_path = config.ensure_model(model_id)
+    let model_path = config
+        .ensure_model(model_id)
         .or_else(|_| config.ensure_model("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"))
         .expect("Failed to download test model");
 
@@ -178,8 +180,16 @@ fn test_lora_manager_operations() {
     // Test basic manager operations (no model required)
     let manager = LoRAManager::new();
 
-    assert_eq!(manager.adapter_count(), 0, "New manager should have no adapters");
-    assert_eq!(manager.active_adapters().len(), 0, "New manager should have no active adapters");
+    assert_eq!(
+        manager.adapter_count(),
+        0,
+        "New manager should have no adapters"
+    );
+    assert_eq!(
+        manager.active_adapters().len(),
+        0,
+        "New manager should have no active adapters"
+    );
 
     // Test preset creation
     let chat_manager = LoRAManager::create_preset(LoRAPreset::ChatAssistant);
@@ -187,9 +197,18 @@ fn test_lora_manager_operations() {
     let creative_manager = LoRAManager::create_preset(LoRAPreset::CreativeWriting);
 
     println!("Created preset managers:");
-    println!("  Chat Assistant: {} adapters", chat_manager.adapter_count());
-    println!("  Code Generation: {} adapters", code_manager.adapter_count());
-    println!("  Creative Writing: {} adapters", creative_manager.adapter_count());
+    println!(
+        "  Chat Assistant: {} adapters",
+        chat_manager.adapter_count()
+    );
+    println!(
+        "  Code Generation: {} adapters",
+        code_manager.adapter_count()
+    );
+    println!(
+        "  Creative Writing: {} adapters",
+        creative_manager.adapter_count()
+    );
 
     // Test composition modes
     let additive = LoRAComposition::new(CompositionMode::Additive);
@@ -198,7 +217,10 @@ fn test_lora_manager_operations() {
 
     assert_eq!(additive.adapter_count(), 0);
     assert!(matches!(additive.mode(), CompositionMode::Additive));
-    assert!(matches!(multiplicative.mode(), CompositionMode::Multiplicative));
+    assert!(matches!(
+        multiplicative.mode(),
+        CompositionMode::Multiplicative
+    ));
     assert!(matches!(average.mode(), CompositionMode::Average));
 
     println!("\nComposition modes validated");
@@ -208,7 +230,9 @@ fn test_lora_manager_operations() {
     assert_eq!(training_params.rank, 16);
     assert_eq!(training_params.alpha, 32.0);
     assert_eq!(training_params.dropout, 0.1);
-    assert!(training_params.target_modules.contains(&"q_proj".to_string()));
+    assert!(training_params
+        .target_modules
+        .contains(&"q_proj".to_string()));
 
     println!("Training params defaults validated");
 
@@ -242,7 +266,8 @@ fn test_lora_with_model() {
     let config = TestConfig::new();
     let model_id = "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF";
 
-    let model_path = config.ensure_model(model_id)
+    let model_path = config
+        .ensure_model(model_id)
         .or_else(|_| config.ensure_model("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"))
         .expect("Failed to download test model");
 
@@ -257,7 +282,10 @@ fn test_lora_with_model() {
 
     // Attempt to activate non-existent adapter (should fail gracefully)
     let result = manager.activate_adapter(0, 1.0);
-    assert!(result.is_err(), "Activating non-existent adapter should fail");
+    assert!(
+        result.is_err(),
+        "Activating non-existent adapter should fail"
+    );
 
     println!("Error handling for missing adapters works correctly");
     println!("\n=== LoRA with Model Test Passed! ===\n");
@@ -281,7 +309,8 @@ fn test_real_lora_adapter() {
     // Step 1: Download TinyLlama base model
     println!("Step 1: Downloading TinyLlama base model...");
     let base_model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF";
-    let model_path = config.ensure_model(base_model_id)
+    let model_path = config
+        .ensure_model(base_model_id)
         .expect("Failed to download TinyLlama base model");
     println!("  Base model: {:?}", model_path);
 
@@ -300,18 +329,18 @@ fn test_real_lora_adapter() {
 
             // Try alternative LoRA repo with smaller adapter
             let alt_repo = "ngxson/test_gguf_lora_adapter";
-            config.client.download_lora(
-                alt_repo,
-                Some("chk-ol3b-shakespeare-LATEST.gguf"),
-                None
-            ).expect("Failed to download alternative LoRA adapter")
+            config
+                .client
+                .download_lora(alt_repo, Some("chk-ol3b-shakespeare-LATEST.gguf"), None)
+                .expect("Failed to download alternative LoRA adapter")
         }
     };
 
     // Step 3: Load the base model
     println!("\nStep 3: Loading base model...");
     let model = Model::load(&model_path).expect("Failed to load model");
-    println!("  Model loaded: {} params, {} layers",
+    println!(
+        "  Model loaded: {} params, {} layers",
         format_params(model.n_params()),
         model.n_layer()
     );
@@ -337,8 +366,8 @@ fn test_real_lora_adapter() {
                 ..Default::default()
             };
 
-            let mut ctx = Context::new(Arc::new(model), ctx_params)
-                .expect("Failed to create context");
+            let mut ctx =
+                Context::new(Arc::new(model), ctx_params).expect("Failed to create context");
 
             match adapter.apply(&mut ctx) {
                 Ok(()) => {
@@ -411,13 +440,13 @@ fn test_embedding_utilities() {
     // Test find_most_similar
     let query = vec![1.0, 0.0];
     let embeddings = vec![
-        vec![1.0, 0.0],   // Most similar
-        vec![0.0, 1.0],   // Orthogonal
-        vec![0.7, 0.7],   // Somewhat similar
+        vec![1.0, 0.0], // Most similar
+        vec![0.0, 1.0], // Orthogonal
+        vec![0.7, 0.7], // Somewhat similar
     ];
 
-    let (idx, sim) = EmbeddingUtil::find_most_similar(&query, &embeddings)
-        .expect("Should find most similar");
+    let (idx, sim) =
+        EmbeddingUtil::find_most_similar(&query, &embeddings).expect("Should find most similar");
     println!("\nMost similar index: {} with similarity {:.4}", idx, sim);
     assert_eq!(idx, 0);
 
@@ -428,7 +457,7 @@ fn test_embedding_utilities() {
         println!("  {}: index {} with similarity {:.4}", i + 1, idx, sim);
     }
     assert_eq!(top_k.len(), 2);
-    assert_eq!(top_k[0].0, 0);  // First should be index 0
+    assert_eq!(top_k[0].0, 0); // First should be index 0
 
     // Test average
     let avg = EmbeddingUtil::average(&embeddings).expect("Should compute average");
@@ -438,7 +467,10 @@ fn test_embedding_utilities() {
     let weights = vec![0.5, 0.3, 0.2];
     let weighted_avg = EmbeddingUtil::weighted_average(&embeddings, &weights)
         .expect("Should compute weighted average");
-    println!("Weighted average: [{:.4}, {:.4}]", weighted_avg[0], weighted_avg[1]);
+    println!(
+        "Weighted average: [{:.4}, {:.4}]",
+        weighted_avg[0], weighted_avg[1]
+    );
 
     println!("\n=== Embedding Utilities Test Passed! ===\n");
 }
@@ -488,7 +520,8 @@ fn test_embedding_generation() {
     let config = TestConfig::new();
     let model_id = "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF";
 
-    let model_path = config.ensure_model(model_id)
+    let model_path = config
+        .ensure_model(model_id)
         .or_else(|_| config.ensure_model("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"))
         .expect("Failed to download test model");
 
@@ -506,7 +539,10 @@ fn test_embedding_generation() {
     let mut generator = match EmbeddingGenerator::new(model.clone(), emb_config) {
         Ok(g) => g,
         Err(e) => {
-            println!("Note: Embedding generation may not be supported by this model: {}", e);
+            println!(
+                "Note: Embedding generation may not be supported by this model: {}",
+                e
+            );
             return;
         }
     };
@@ -518,14 +554,23 @@ fn test_embedding_generation() {
     match generator.embed_text(text) {
         Ok(embedding) => {
             println!("  Embedding dimension: {}", embedding.len());
-            println!("  First 5 values: {:?}", &embedding[..5.min(embedding.len())]);
+            println!(
+                "  First 5 values: {:?}",
+                &embedding[..5.min(embedding.len())]
+            );
 
             // Check it's normalized
             let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-            println!("  Magnitude: {:.4} (should be ~1.0 if normalized)", magnitude);
+            println!(
+                "  Magnitude: {:.4} (should be ~1.0 if normalized)",
+                magnitude
+            );
         }
         Err(e) => {
-            println!("  Embedding generation failed (may be expected for some models): {}", e);
+            println!(
+                "  Embedding generation failed (may be expected for some models): {}",
+                e
+            );
         }
     }
 
@@ -561,7 +606,10 @@ fn test_quantization_types() {
     ];
 
     println!("Testing quantization parsing:\n");
-    println!("{:<25} {:>10} {:>15} {:>10}", "Filename", "Type", "Bits/Weight", "Quality");
+    println!(
+        "{:<25} {:>10} {:>15} {:>10}",
+        "Filename", "Type", "Bits/Weight", "Quality"
+    );
     println!("{}", "-".repeat(65));
 
     for (filename, expected_type, expected_bits, expected_quality) in test_filenames {
@@ -570,10 +618,20 @@ fn test_quantization_types() {
         let quality = parsed.quality_rating();
 
         assert_eq!(parsed, expected_type, "Failed for {}", filename);
-        assert!((bits - expected_bits).abs() < 0.1, "Wrong bits for {}", filename);
+        assert!(
+            (bits - expected_bits).abs() < 0.1,
+            "Wrong bits for {}",
+            filename
+        );
         assert_eq!(quality, expected_quality, "Wrong quality for {}", filename);
 
-        println!("{:<25} {:>10} {:>15.1} {:>10}", filename, format!("{}", parsed), bits, quality);
+        println!(
+            "{:<25} {:>10} {:>15.1} {:>10}",
+            filename,
+            format!("{}", parsed),
+            bits,
+            quality
+        );
     }
 
     // Test display formatting
@@ -591,10 +649,10 @@ fn test_gguf_file_properties() {
     println!("\n=== Test: GGUFFile Properties ===\n");
 
     let test_files = vec![
-        (1024 * 1024 * 100, "100.00 MB"),        // 100 MB
-        (1024 * 1024 * 1024 * 4, "4.00 GB"),     // 4 GB
-        (1024 * 512, "512.00 KB"),               // 512 KB
-        (500, "500 bytes"),                       // 500 bytes
+        (1024 * 1024 * 100, "100.00 MB"),    // 100 MB
+        (1024 * 1024 * 1024 * 4, "4.00 GB"), // 4 GB
+        (1024 * 512, "512.00 KB"),           // 512 KB
+        (500, "500 bytes"),                  // 500 bytes
     ];
 
     println!("File size formatting:");
@@ -623,7 +681,7 @@ fn test_gguf_file_properties() {
 
     let vram = file_4gb.estimated_vram_mb();
     println!("\nVRAM estimation for 4GB file: ~{}MB", vram);
-    assert!(vram > 4000 && vram < 5000);  // Should be file size + overhead
+    assert!(vram > 4000 && vram < 5000); // Should be file size + overhead
 
     println!("\n=== GGUFFile Properties Test Passed! ===\n");
 }
@@ -652,7 +710,7 @@ fn test_download_progress() {
             downloaded: 0,
             total: 1000,
             speed_bps: 1000,
-            eta_seconds: 3700,  // > 1 hour
+            eta_seconds: 3700, // > 1 hour
             filename: "slow.gguf".to_string(),
         },
     ];
@@ -712,7 +770,10 @@ fn test_full_pipeline() {
     // Load model
     let load_start = Instant::now();
     let model = Model::load(&model_path).expect("Failed to load model");
-    println!("\nModel loaded in {:.2}ms", load_start.elapsed().as_millis());
+    println!(
+        "\nModel loaded in {:.2}ms",
+        load_start.elapsed().as_millis()
+    );
 
     // Get model info
     println!("\nModel Information:");
@@ -731,7 +792,8 @@ fn test_full_pipeline() {
 
     println!("\nTokenization tests:");
     for text in test_texts {
-        let tokens = model.tokenize(text, true, false)
+        let tokens = model
+            .tokenize(text, true, false)
             .expect("Tokenization failed");
         println!("  \"{}\" -> {} tokens", text, tokens.len());
     }
@@ -755,7 +817,8 @@ fn test_hf_client_operations() {
         Ok(files) => {
             println!("Found {} GGUF files:", files.len());
             for file in &files {
-                println!("  - {} ({}) [{}] - VRAM: ~{}MB",
+                println!(
+                    "  - {} ({}) [{}] - VRAM: ~{}MB",
                     file.filename,
                     file.size_human(),
                     file.quantization,
@@ -783,7 +846,10 @@ fn test_hf_client_operations() {
                     };
 
                     if let Some(best) = model_info.best_quantization_for_vram(vram) {
-                        println!("  {}MB VRAM -> {} ({})", vram, best.filename, best.quantization);
+                        println!(
+                            "  {}MB VRAM -> {} ({})",
+                            vram, best.filename, best.quantization
+                        );
                     } else {
                         println!("  {}MB VRAM -> No suitable quantization", vram);
                     }
@@ -851,26 +917,38 @@ fn test_real_embedder() {
 
             // Try alternative
             let alt_model_id = "second-state/Nomic-embed-text-v1.5-Embedding-GGUF";
-            config.client.list_gguf_files(alt_model_id)
+            config
+                .client
+                .list_gguf_files(alt_model_id)
                 .expect("Failed to list embedding model files")
         }
     };
 
     // Find smallest quantization for faster testing
-    let smallest = gguf_files.iter()
+    let smallest = gguf_files
+        .iter()
         .min_by_key(|f| f.size)
         .expect("No GGUF files found");
 
-    println!("\n  Downloading: {} ({})", smallest.filename, smallest.size_human());
+    println!(
+        "\n  Downloading: {} ({})",
+        smallest.filename,
+        smallest.size_human()
+    );
 
-    let model_path = config.client.download_gguf(embedding_model_id, smallest, None)
+    let model_path = config
+        .client
+        .download_gguf(embedding_model_id, smallest, None)
         .or_else(|_| {
             let alt_model_id = "second-state/Nomic-embed-text-v1.5-Embedding-GGUF";
             let alt_files = config.client.list_gguf_files(alt_model_id)?;
-            let smallest_alt = alt_files.iter()
+            let smallest_alt = alt_files
+                .iter()
                 .min_by_key(|f| f.size)
                 .ok_or_else(|| MullamaError::HuggingFaceError("No files".to_string()))?;
-            config.client.download_gguf(alt_model_id, smallest_alt, None)
+            config
+                .client
+                .download_gguf(alt_model_id, smallest_alt, None)
         })
         .expect("Failed to download embedding model");
 
@@ -916,7 +994,11 @@ fn test_real_embedder() {
             for text in &test_texts {
                 match model.tokenize(text, true, false) {
                     Ok(tokens) => {
-                        println!("  \"{}...\" -> {} tokens", &text[..40.min(text.len())], tokens.len());
+                        println!(
+                            "  \"{}...\" -> {} tokens",
+                            &text[..40.min(text.len())],
+                            tokens.len()
+                        );
                     }
                     Err(e) => {
                         println!("  Tokenization failed: {}", e);
@@ -946,8 +1028,11 @@ fn test_real_embedder() {
     for doc in &documents {
         match generator.embed_text(doc) {
             Ok(emb) => {
-                println!("  Generated embedding for: \"{}...\" (dim={})",
-                    &doc[17..47.min(doc.len())], emb.len());
+                println!(
+                    "  Generated embedding for: \"{}...\" (dim={})",
+                    &doc[17..47.min(doc.len())],
+                    emb.len()
+                );
                 doc_embeddings.push(emb);
             }
             Err(e) => {
@@ -980,7 +1065,12 @@ fn test_real_embedder() {
         for (i, (doc, emb)) in documents.iter().zip(doc_embeddings.iter()).enumerate() {
             let similarity = EmbeddingUtil::cosine_similarity(&query_embedding, emb);
             let doc_text = &doc[17..]; // Remove "search_document: " prefix
-            println!("  {}: {:.4} - \"{}...\"", i + 1, similarity, &doc_text[..30.min(doc_text.len())]);
+            println!(
+                "  {}: {:.4} - \"{}...\"",
+                i + 1,
+                similarity,
+                &doc_text[..30.min(doc_text.len())]
+            );
         }
 
         // The first two documents should be most similar to the query
@@ -991,7 +1081,10 @@ fn test_real_embedder() {
 
             println!("\n  Semantic check:");
             println!("    Fox/dog documents should be most similar to query about animals jumping");
-            println!("    sim(fox) = {:.4}, sim(canine) = {:.4}, sim(ML) = {:.4}", sim1, sim2, sim3);
+            println!(
+                "    sim(fox) = {:.4}, sim(canine) = {:.4}, sim(ML) = {:.4}",
+                sim1, sim2, sim3
+            );
 
             if sim1 > sim3 && sim2 > sim3 {
                 println!("    ✓ Semantic similarity working correctly!");
@@ -1027,8 +1120,12 @@ fn test_lfm2_model() {
         Ok(files) => {
             println!("  Found {} GGUF files:", files.len());
             for file in &files {
-                println!("    - {} ({}) [{}]",
-                    file.filename, file.size_human(), file.quantization);
+                println!(
+                    "    - {} ({}) [{}]",
+                    file.filename,
+                    file.size_human(),
+                    file.quantization
+                );
             }
             files
         }
@@ -1041,9 +1138,14 @@ fn test_lfm2_model() {
     };
 
     // Find Q4_K_M for good balance of size/quality, or smallest if not available
-    let target = gguf_files.iter()
+    let target = gguf_files
+        .iter()
         .find(|f| f.quantization == QuantizationType::Q4_K_M)
-        .or_else(|| gguf_files.iter().find(|f| f.quantization == QuantizationType::Q4_0))
+        .or_else(|| {
+            gguf_files
+                .iter()
+                .find(|f| f.quantization == QuantizationType::Q4_0)
+        })
         .or_else(|| gguf_files.iter().min_by_key(|f| f.size));
 
     let target = match target {
@@ -1054,7 +1156,11 @@ fn test_lfm2_model() {
         }
     };
 
-    println!("\n  Downloading: {} ({})", target.filename, target.size_human());
+    println!(
+        "\n  Downloading: {} ({})",
+        target.filename,
+        target.size_human()
+    );
 
     let model_path = match config.client.download_gguf(lfm2_model_id, target, None) {
         Ok(path) => {
@@ -1180,17 +1286,20 @@ fn test_lfm2_audio_model() {
     println!("\nStep 2: Identifying model components...");
 
     // Find main model (not mmproj, not audiodecoder)
-    let main_model = gguf_files.iter()
-        .find(|f| !f.filename.contains("mmproj") &&
-                  !f.filename.contains("audiodecoder") &&
-                  f.filename.contains("Q8_0"));
+    let main_model = gguf_files.iter().find(|f| {
+        !f.filename.contains("mmproj")
+            && !f.filename.contains("audiodecoder")
+            && f.filename.contains("Q8_0")
+    });
 
     // Find audio encoder (mmproj)
-    let audio_encoder = gguf_files.iter()
+    let audio_encoder = gguf_files
+        .iter()
         .find(|f| f.filename.contains("mmproj") && f.filename.contains("Q8_0"));
 
     // Find audio decoder
-    let audio_decoder = gguf_files.iter()
+    let audio_decoder = gguf_files
+        .iter()
         .find(|f| f.filename.contains("audiodecoder") && f.filename.contains("Q8_0"));
 
     println!("  Main model: {:?}", main_model.map(|f| &f.filename));
@@ -1203,12 +1312,19 @@ fn test_lfm2_audio_model() {
         Some(f) => f,
         None => {
             println!("  Could not find main model file");
-            println!("  Available files: {:?}", gguf_files.iter().map(|f| &f.filename).collect::<Vec<_>>());
+            println!(
+                "  Available files: {:?}",
+                gguf_files.iter().map(|f| &f.filename).collect::<Vec<_>>()
+            );
             return;
         }
     };
 
-    println!("  Downloading: {} ({})", main_file.filename, main_file.size_human());
+    println!(
+        "  Downloading: {} ({})",
+        main_file.filename,
+        main_file.size_human()
+    );
 
     let model_path = match config.client.download_gguf(audio_model_id, main_file, None) {
         Ok(path) => {
@@ -1224,7 +1340,11 @@ fn test_lfm2_audio_model() {
     // Step 4: Download audio encoder (optional - for full functionality)
     println!("\nStep 4: Downloading audio encoder...");
     let encoder_path = if let Some(enc_file) = audio_encoder {
-        println!("  Downloading: {} ({})", enc_file.filename, enc_file.size_human());
+        println!(
+            "  Downloading: {} ({})",
+            enc_file.filename,
+            enc_file.size_human()
+        );
         match config.client.download_gguf(audio_model_id, enc_file, None) {
             Ok(path) => {
                 println!("  Downloaded to: {:?}", path);
@@ -1243,7 +1363,11 @@ fn test_lfm2_audio_model() {
     // Step 5: Download audio decoder (optional - for full functionality)
     println!("\nStep 5: Downloading audio decoder...");
     let decoder_path = if let Some(dec_file) = audio_decoder {
-        println!("  Downloading: {} ({})", dec_file.filename, dec_file.size_human());
+        println!(
+            "  Downloading: {} ({})",
+            dec_file.filename,
+            dec_file.size_human()
+        );
         match config.client.download_gguf(audio_model_id, dec_file, None) {
             Ok(path) => {
                 println!("  Downloaded to: {:?}", path);
@@ -1329,7 +1453,9 @@ fn test_lfm2_audio_model() {
     println!("  Audio encoder: {:?}", encoder_path);
     println!("  Audio decoder: {:?}", decoder_path);
     println!("\n  Usage with llama.cpp llama-lfm2-audio binary:");
-    println!("    ASR: llama-lfm2-audio -m <model> --mmproj <encoder> -mv <decoder> --audio input.wav");
+    println!(
+        "    ASR: llama-lfm2-audio -m <model> --mmproj <encoder> -mv <decoder> --audio input.wav"
+    );
     println!("    TTS: llama-lfm2-audio -m <model> --mmproj <encoder> -mv <decoder> --output output.wav -p \"Hello world\"");
 
     println!("\n=== LFM2-Audio Test Completed! ===\n");

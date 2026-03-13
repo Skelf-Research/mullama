@@ -5,7 +5,7 @@
 //! 2. Create a context
 //! 3. Show API usage patterns
 
-use mullama::{Model, ContextParams, MullamaError};
+use mullama::{ContextParams, Model, MullamaError};
 use std::sync::Arc;
 
 fn main() -> Result<(), MullamaError> {

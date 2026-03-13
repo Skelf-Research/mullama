@@ -49,22 +49,19 @@ use tokio::{
 };
 
 #[cfg(feature = "tokio-runtime")]
-use tokio_util::{
-    sync::CancellationToken,
-    task::TaskTracker,
-};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[cfg(feature = "tokio-runtime")]
 use std::{
+    collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    collections::HashMap,
 };
 
 #[cfg(feature = "async")]
-use crate::{AsyncModel, AsyncContext, MullamaError};
+use crate::{AsyncContext, AsyncModel, MullamaError};
 
 /// Managed Tokio runtime for Mullama operations
 #[cfg(feature = "tokio-runtime")]
@@ -122,7 +119,9 @@ impl MullamaRuntime {
     {
         let handle = self.runtime.spawn_blocking(f);
         self.task_tracker.track(&handle);
-        self.metrics.blocking_tasks_spawned.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .blocking_tasks_spawned
+            .fetch_add(1, Ordering::Relaxed);
         handle
     }
 
@@ -195,7 +194,9 @@ impl MullamaRuntimeBuilder {
 
     /// Build the runtime
     pub fn build(self) -> Result<MullamaRuntime, MullamaError> {
-        let runtime = self.builder.build()
+        let runtime = self
+            .builder
+            .build()
             .map_err(|e| MullamaError::ConfigError(format!("Failed to build runtime: {}", e)))?;
 
         Ok(MullamaRuntime {
@@ -238,7 +239,7 @@ impl RuntimeMetrics {
 
         // Calculate rolling average
         *avg = Duration::from_nanos(
-            ((avg.as_nanos() as u64 * (count - 1)) + duration.as_nanos() as u64) / count
+            ((avg.as_nanos() as u64 * (count - 1)) + duration.as_nanos() as u64) / count,
         );
     }
 
@@ -336,7 +337,9 @@ impl TaskManager {
     }
 
     /// Wait for all managed tasks to complete
-    pub async fn wait_all(&mut self) -> Vec<Result<Result<(), MullamaError>, tokio::task::JoinError>> {
+    pub async fn wait_all(
+        &mut self,
+    ) -> Vec<Result<Result<(), MullamaError>, tokio::task::JoinError>> {
         let mut results = Vec::new();
 
         while let Some(result) = self.join_set.join_next().await {
@@ -364,8 +367,10 @@ impl ModelPool {
 
     /// Get a model from the pool
     pub async fn get(&self) -> Result<PooledModel, MullamaError> {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| MullamaError::ConfigError("Failed to acquire semaphore".to_string()))?;
+        let _permit =
+            self.semaphore.acquire().await.map_err(|_| {
+                MullamaError::ConfigError("Failed to acquire semaphore".to_string())
+            })?;
 
         let models = self.models.read().await;
         if let Some(model) = models.first() {
@@ -374,7 +379,9 @@ impl ModelPool {
                 _permit,
             })
         } else {
-            Err(MullamaError::ConfigError("No models available in pool".to_string()))
+            Err(MullamaError::ConfigError(
+                "No models available in pool".to_string(),
+            ))
         }
     }
 
@@ -539,7 +546,10 @@ pub mod coordination {
         for handle in handles {
             match handle.await {
                 Ok(result) => results.push(result),
-                Err(e) => results.push(Err(MullamaError::GenerationError(format!("Task failed: {}", e)))),
+                Err(e) => results.push(Err(MullamaError::GenerationError(format!(
+                    "Task failed: {}",
+                    e
+                )))),
             }
         }
 

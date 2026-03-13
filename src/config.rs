@@ -44,10 +44,10 @@
 //! let loaded_config: MullamaConfig = serde_json::from_str(&json).unwrap();
 //! ```
 
+use crate::{ContextParams, ModelParams, MullamaError, SamplerParams};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use crate::{ModelParams, ContextParams, SamplerParams, MullamaError};
+use std::path::{Path, PathBuf};
 
 /// Complete Mullama configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,19 +344,45 @@ pub enum KvOverrideValue {
 }
 
 // Default value functions
-fn default_context_size() -> u32 { 2048 }
-fn default_batch_size() -> u32 { 512 }
-fn default_ubatch_size() -> u32 { 512 }
-fn default_seq_max() -> u32 { 1 }
-fn default_temperature() -> f32 { 0.8 }
-fn default_top_k() -> i32 { 40 }
-fn default_top_p() -> f32 { 0.95 }
-fn default_min_p() -> f32 { 0.05 }
-fn default_repeat_penalty() -> f32 { 1.1 }
-fn default_repeat_last_n() -> i32 { 64 }
-fn default_memory_optimization() -> u8 { 1 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_true() -> bool { true }
+fn default_context_size() -> u32 {
+    2048
+}
+fn default_batch_size() -> u32 {
+    512
+}
+fn default_ubatch_size() -> u32 {
+    512
+}
+fn default_seq_max() -> u32 {
+    1
+}
+fn default_temperature() -> f32 {
+    0.8
+}
+fn default_top_k() -> i32 {
+    40
+}
+fn default_top_p() -> f32 {
+    0.95
+}
+fn default_min_p() -> f32 {
+    0.05
+}
+fn default_repeat_penalty() -> f32 {
+    1.1
+}
+fn default_repeat_last_n() -> i32 {
+    64
+}
+fn default_memory_optimization() -> u8 {
+    1
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_true() -> bool {
+    true
+}
 
 impl MullamaConfig {
     /// Load configuration from a JSON file
@@ -429,39 +455,47 @@ impl MullamaConfig {
             config.model.path = path;
         }
         if let Ok(gpu_layers) = std::env::var("MULLAMA_MODEL_GPU_LAYERS") {
-            config.model.gpu_layers = gpu_layers.parse()
+            config.model.gpu_layers = gpu_layers
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid GPU layers: {}", e)))?;
         }
         if let Ok(context_size) = std::env::var("MULLAMA_MODEL_CONTEXT_SIZE") {
-            config.model.context_size = context_size.parse()
+            config.model.context_size = context_size
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid context size: {}", e)))?;
         }
 
         // Context configuration
         if let Ok(n_ctx) = std::env::var("MULLAMA_CONTEXT_N_CTX") {
-            config.context.n_ctx = n_ctx.parse()
+            config.context.n_ctx = n_ctx
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid n_ctx: {}", e)))?;
         }
         if let Ok(n_batch) = std::env::var("MULLAMA_CONTEXT_N_BATCH") {
-            config.context.n_batch = n_batch.parse()
+            config.context.n_batch = n_batch
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid n_batch: {}", e)))?;
         }
         if let Ok(n_threads) = std::env::var("MULLAMA_CONTEXT_N_THREADS") {
-            config.context.n_threads = n_threads.parse()
+            config.context.n_threads = n_threads
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid n_threads: {}", e)))?;
         }
 
         // Sampling configuration
         if let Ok(temperature) = std::env::var("MULLAMA_SAMPLING_TEMPERATURE") {
-            config.sampling.temperature = temperature.parse()
+            config.sampling.temperature = temperature
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid temperature: {}", e)))?;
         }
         if let Ok(top_k) = std::env::var("MULLAMA_SAMPLING_TOP_K") {
-            config.sampling.top_k = top_k.parse()
+            config.sampling.top_k = top_k
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid top_k: {}", e)))?;
         }
         if let Ok(top_p) = std::env::var("MULLAMA_SAMPLING_TOP_P") {
-            config.sampling.top_p = top_p.parse()
+            config.sampling.top_p = top_p
+                .parse()
                 .map_err(|e| MullamaError::ConfigError(format!("Invalid top_p: {}", e)))?;
         }
 
@@ -509,37 +543,53 @@ impl MullamaConfig {
     pub fn validate(&self) -> Result<(), MullamaError> {
         // Validate model configuration
         if self.model.path.is_empty() {
-            return Err(MullamaError::ConfigError("Model path cannot be empty".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Model path cannot be empty".to_string(),
+            ));
         }
 
         if self.model.context_size == 0 {
-            return Err(MullamaError::ConfigError("Context size must be greater than 0".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Context size must be greater than 0".to_string(),
+            ));
         }
 
         if self.model.gpu_layers < 0 {
-            return Err(MullamaError::ConfigError("GPU layers cannot be negative".to_string()));
+            return Err(MullamaError::ConfigError(
+                "GPU layers cannot be negative".to_string(),
+            ));
         }
 
         // Validate context configuration
         if self.context.n_ctx == 0 {
-            return Err(MullamaError::ConfigError("Context size must be greater than 0".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Context size must be greater than 0".to_string(),
+            ));
         }
 
         if self.context.n_batch == 0 {
-            return Err(MullamaError::ConfigError("Batch size must be greater than 0".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Batch size must be greater than 0".to_string(),
+            ));
         }
 
         // Validate sampling configuration
         if self.sampling.temperature < 0.0 {
-            return Err(MullamaError::ConfigError("Temperature cannot be negative".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Temperature cannot be negative".to_string(),
+            ));
         }
 
         if self.sampling.top_p <= 0.0 || self.sampling.top_p > 1.0 {
-            return Err(MullamaError::ConfigError("Top-p must be between 0 and 1".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Top-p must be between 0 and 1".to_string(),
+            ));
         }
 
         if self.sampling.repeat_penalty <= 0.0 {
-            return Err(MullamaError::ConfigError("Repeat penalty must be positive".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Repeat penalty must be positive".to_string(),
+            ));
         }
 
         Ok(())
@@ -676,7 +726,10 @@ mod tests {
         let config = MullamaConfig::default();
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: MullamaConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(config.sampling.temperature, deserialized.sampling.temperature);
+        assert_eq!(
+            config.sampling.temperature,
+            deserialized.sampling.temperature
+        );
     }
 
     #[test]
