@@ -1,6 +1,11 @@
-use crate::{sys, context::{Context, ContextParams}, error::MullamaError, token::TokenId};
-use std::{path::Path, sync::Arc, ffi::CString, ptr};
+use crate::{
+    context::{Context, ContextParams},
+    error::MullamaError,
+    sys,
+    token::TokenId,
+};
 use std::os::raw::{c_char, c_void};
+use std::{ffi::CString, path::Path, ptr, sync::Arc};
 
 /// Inner struct to hold the model pointer with proper cleanup
 #[derive(Debug)]
@@ -91,9 +96,12 @@ impl Model {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, MullamaError> {
         Self::load_with_params(path, ModelParams::default())
     }
-    
+
     /// Load a model with advanced parameters and full feature support
-    pub fn load_with_params(path: impl AsRef<Path>, params: ModelParams) -> Result<Self, MullamaError> {
+    pub fn load_with_params(
+        path: impl AsRef<Path>,
+        params: ModelParams,
+    ) -> Result<Self, MullamaError> {
         let path = path.as_ref();
         if !path.exists() {
             return Err(MullamaError::ModelLoadError(format!(
@@ -136,7 +144,8 @@ impl Model {
         }
 
         // Set up KV overrides if provided
-        let kv_overrides: Vec<sys::llama_model_kv_override> = params.kv_overrides
+        let kv_overrides: Vec<sys::llama_model_kv_override> = params
+            .kv_overrides
             .iter()
             .map(|override_| Self::convert_kv_override(override_))
             .collect::<Result<Vec<_>, _>>()?;
@@ -162,13 +171,11 @@ impl Model {
         llama_params.tensor_buft_overrides = ptr::null();
 
         // Load the model with full parameter support
-        let model_ptr = unsafe {
-            sys::llama_model_load_from_file(c_path.as_ptr(), llama_params)
-        };
+        let model_ptr = unsafe { sys::llama_model_load_from_file(c_path.as_ptr(), llama_params) };
 
         if model_ptr.is_null() {
             return Err(MullamaError::ModelLoadError(
-                "Failed to load model - check file format and parameters".to_string()
+                "Failed to load model - check file format and parameters".to_string(),
             ));
         }
 
@@ -176,14 +183,19 @@ impl Model {
             inner: Arc::new(ModelInner { model_ptr }),
         })
     }
-    
+
     /// Create a context for this model
     pub fn create_context(&self, params: ContextParams) -> Result<Context, MullamaError> {
         Context::new(Arc::new(self.clone()), params)
     }
-    
+
     /// Tokenize text using this model's vocabulary with advanced options
-    pub fn tokenize(&self, text: &str, add_bos: bool, special: bool) -> Result<Vec<TokenId>, MullamaError> {
+    pub fn tokenize(
+        &self,
+        text: &str,
+        add_bos: bool,
+        special: bool,
+    ) -> Result<Vec<TokenId>, MullamaError> {
         // Convert text to C string
         let c_text = CString::new(text)
             .map_err(|_| MullamaError::TokenizationError("Invalid text".to_string()))?;
@@ -191,7 +203,9 @@ impl Model {
         // Get the vocab from the model
         let vocab = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
         if vocab.is_null() {
-            return Err(MullamaError::TokenizationError("Failed to get vocabulary".to_string()));
+            return Err(MullamaError::TokenizationError(
+                "Failed to get vocabulary".to_string(),
+            ));
         }
 
         // First, get the required buffer size by passing null tokens
@@ -230,17 +244,27 @@ impl Model {
         };
 
         if actual_tokens < 0 {
-            return Err(MullamaError::TokenizationError(
-                format!("Tokenization failed with code: {}", actual_tokens)
-            ));
+            return Err(MullamaError::TokenizationError(format!(
+                "Tokenization failed with code: {}",
+                actual_tokens
+            )));
         }
 
         // Convert to TokenId and return
-        Ok(tokens.into_iter().take(actual_tokens as usize).map(|t| t as TokenId).collect())
+        Ok(tokens
+            .into_iter()
+            .take(actual_tokens as usize)
+            .map(|t| t as TokenId)
+            .collect())
     }
 
     /// Detokenize tokens back to text with advanced options
-    pub fn detokenize(&self, tokens: &[TokenId], remove_special: bool, unparse_special: bool) -> Result<String, MullamaError> {
+    pub fn detokenize(
+        &self,
+        tokens: &[TokenId],
+        remove_special: bool,
+        unparse_special: bool,
+    ) -> Result<String, MullamaError> {
         if tokens.is_empty() {
             return Ok(String::new());
         }
@@ -248,11 +272,14 @@ impl Model {
         // Get the vocab from the model
         let vocab = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
         if vocab.is_null() {
-            return Err(MullamaError::TokenizationError("Failed to get vocabulary".to_string()));
+            return Err(MullamaError::TokenizationError(
+                "Failed to get vocabulary".to_string(),
+            ));
         }
 
         // Convert tokens to the correct type
-        let llama_tokens: Vec<sys::llama_token> = tokens.iter().map(|&t| t as sys::llama_token).collect();
+        let llama_tokens: Vec<sys::llama_token> =
+            tokens.iter().map(|&t| t as sys::llama_token).collect();
 
         // First, get the required buffer size
         let max_chars = unsafe {
@@ -268,9 +295,10 @@ impl Model {
         };
 
         if max_chars < 0 {
-            return Err(MullamaError::TokenizationError(
-                format!("Detokenization failed with code: {}", max_chars)
-            ));
+            return Err(MullamaError::TokenizationError(format!(
+                "Detokenization failed with code: {}",
+                max_chars
+            )));
         }
 
         if max_chars == 0 {
@@ -292,9 +320,10 @@ impl Model {
         };
 
         if actual_chars < 0 {
-            return Err(MullamaError::TokenizationError(
-                format!("Detokenization failed with code: {}", actual_chars)
-            ));
+            return Err(MullamaError::TokenizationError(format!(
+                "Detokenization failed with code: {}",
+                actual_chars
+            )));
         }
 
         // Convert to string, handling the null terminator
@@ -302,9 +331,14 @@ impl Model {
         let result = String::from_utf8_lossy(result_bytes).to_string();
         Ok(result)
     }
-    
+
     /// Convert a token to its text representation with advanced options
-    pub fn token_to_str(&self, token: TokenId, lstrip: i32, special: bool) -> Result<String, MullamaError> {
+    pub fn token_to_str(
+        &self,
+        token: TokenId,
+        lstrip: i32,
+        special: bool,
+    ) -> Result<String, MullamaError> {
         let mut buf = vec![0u8; 128]; // Start with reasonable buffer size
 
         let n_chars = unsafe {
@@ -319,9 +353,10 @@ impl Model {
         };
 
         if n_chars < 0 {
-            return Err(MullamaError::TokenizationError(
-                format!("Failed to convert token to string: {}", n_chars)
-            ));
+            return Err(MullamaError::TokenizationError(format!(
+                "Failed to convert token to string: {}",
+                n_chars
+            )));
         }
 
         // Resize buffer if needed and retry
@@ -339,9 +374,10 @@ impl Model {
             };
 
             if n_chars_retry < 0 {
-                return Err(MullamaError::TokenizationError(
-                    format!("Failed to convert token to string on retry: {}", n_chars_retry)
-                ));
+                return Err(MullamaError::TokenizationError(format!(
+                    "Failed to convert token to string on retry: {}",
+                    n_chars_retry
+                )));
             }
         }
 
@@ -350,7 +386,7 @@ impl Model {
         let result = String::from_utf8_lossy(result_bytes).to_string();
         Ok(result)
     }
-    
+
     /// Get model training context size
     pub fn n_ctx_train(&self) -> i32 {
         unsafe { sys::llama_model_n_ctx_train(self.inner.model_ptr) as i32 }
@@ -402,7 +438,7 @@ impl Model {
     pub fn rope_type(&self) -> sys::llama_rope_type {
         unsafe { sys::llama_model_rope_type(self.inner.model_ptr) }
     }
-    
+
     /// Get the internal model pointer (for use by other modules)
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_model {
         self.inner.model_ptr
@@ -421,9 +457,12 @@ pub struct Token {
 impl Model {
     /// Get complete token information including attributes
     pub fn get_token_info(&self, token: TokenId) -> Result<Token, MullamaError> {
-        let text_ptr = unsafe { sys::llama_token_get_text(self.inner.model_ptr, token as sys::llama_token) };
+        let text_ptr =
+            unsafe { sys::llama_token_get_text(self.inner.model_ptr, token as sys::llama_token) };
         if text_ptr.is_null() {
-            return Err(MullamaError::TokenizationError("Token not found".to_string()));
+            return Err(MullamaError::TokenizationError(
+                "Token not found".to_string(),
+            ));
         }
 
         let text = unsafe {
@@ -432,10 +471,17 @@ impl Model {
                 .to_string()
         };
 
-        let score = unsafe { sys::llama_token_get_score(self.inner.model_ptr, token as sys::llama_token) };
-        let attr = unsafe { sys::llama_token_get_attr(self.inner.model_ptr, token as sys::llama_token) };
+        let score =
+            unsafe { sys::llama_token_get_score(self.inner.model_ptr, token as sys::llama_token) };
+        let attr =
+            unsafe { sys::llama_token_get_attr(self.inner.model_ptr, token as sys::llama_token) };
 
-        Ok(Token { id: token, text, score, attr })
+        Ok(Token {
+            id: token,
+            text,
+            score,
+            attr,
+        })
     }
 
     /// Check if token is end of generation
@@ -445,7 +491,9 @@ impl Model {
 
     /// Check if token is a control token
     pub fn token_is_control(&self, token: TokenId) -> bool {
-        unsafe { sys::llama_token_is_control(self.inner.model_ptr, token as sys::llama_token) as bool }
+        unsafe {
+            sys::llama_token_is_control(self.inner.model_ptr, token as sys::llama_token) as bool
+        }
     }
 
     /// Get special tokens
@@ -596,20 +644,33 @@ impl Model {
         add_generation_prompt: bool,
     ) -> Result<String, MullamaError> {
         // Build chat messages
-        let chat_messages: Vec<sys::llama_chat_message> = messages
+        let mut owned_messages = Vec::with_capacity(messages.len());
+        for (role, content) in messages {
+            let role_cstr = CString::new(*role)
+                .map_err(|_| MullamaError::InvalidInput("Role contains null byte".to_string()))?;
+            let content_cstr = CString::new(*content).map_err(|_| {
+                MullamaError::InvalidInput("Content contains null byte".to_string())
+            })?;
+            owned_messages.push((role_cstr, content_cstr));
+        }
+
+        let chat_messages: Vec<sys::llama_chat_message> = owned_messages
             .iter()
-            .map(|(role, content)| {
-                let role_cstr = CString::new(*role).unwrap();
-                let content_cstr = CString::new(*content).unwrap();
-                sys::llama_chat_message {
-                    role: role_cstr.into_raw(),
-                    content: content_cstr.into_raw(),
-                }
+            .map(|(role, content)| sys::llama_chat_message {
+                role: role.as_ptr(),
+                content: content.as_ptr(),
             })
             .collect();
 
-        let template_cstr = template.map(|t| CString::new(t).unwrap());
-        let template_ptr = template_cstr.as_ref().map_or(std::ptr::null(), |t| t.as_ptr());
+        let template_cstr = match template {
+            Some(tpl) => Some(CString::new(tpl).map_err(|_| {
+                MullamaError::InvalidInput("Template contains null byte".to_string())
+            })?),
+            None => None,
+        };
+        let template_ptr = template_cstr
+            .as_ref()
+            .map_or(std::ptr::null(), |t| t.as_ptr());
 
         // First call to get required buffer size
         let required = unsafe {
@@ -625,14 +686,9 @@ impl Model {
         };
 
         if required < 0 {
-            // Free the CStrings we allocated
-            for msg in chat_messages {
-                unsafe {
-                    let _ = CString::from_raw(msg.role as *mut c_char);
-                    let _ = CString::from_raw(msg.content as *mut c_char);
-                }
-            }
-            return Err(MullamaError::InvalidInput("Failed to apply chat template".to_string()));
+            return Err(MullamaError::InvalidInput(
+                "Failed to apply chat template".to_string(),
+            ));
         }
 
         // Allocate buffer and apply template
@@ -649,16 +705,10 @@ impl Model {
             )
         };
 
-        // Free the CStrings we allocated
-        for msg in chat_messages {
-            unsafe {
-                let _ = CString::from_raw(msg.role as *mut c_char);
-                let _ = CString::from_raw(msg.content as *mut c_char);
-            }
-        }
-
         if written < 0 {
-            return Err(MullamaError::InvalidInput("Failed to apply chat template".to_string()));
+            return Err(MullamaError::InvalidInput(
+                "Failed to apply chat template".to_string(),
+            ));
         }
 
         buffer.truncate(written as usize);
@@ -790,16 +840,27 @@ impl Model {
             sys::llama_model_save_to_file(self.inner.model_ptr, c_path.as_ptr());
         }
 
+        if !Path::new(path).exists() {
+            return Err(MullamaError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Model save failed: {}", path),
+            )));
+        }
+
         Ok(())
     }
 }
 
 // Helper implementation for KV overrides
 impl Model {
-    fn convert_kv_override(override_: &ModelKvOverride) -> Result<sys::llama_model_kv_override, MullamaError> {
+    fn convert_kv_override(
+        override_: &ModelKvOverride,
+    ) -> Result<sys::llama_model_kv_override, MullamaError> {
         let key_bytes = override_.key.as_bytes();
         if key_bytes.len() >= 128 {
-            return Err(MullamaError::ModelLoadError("KV override key too long".to_string()));
+            return Err(MullamaError::ModelLoadError(
+                "KV override key too long".to_string(),
+            ));
         }
 
         let mut key = [0i8; 128];
@@ -810,33 +871,45 @@ impl Model {
         let (tag, value) = match &override_.value {
             ModelKvOverrideValue::Int(v) => {
                 let mut val = sys::llama_model_kv_override_value { val_i64: *v };
-                (sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_INT, val)
-            },
+                (
+                    sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_INT,
+                    val,
+                )
+            }
             ModelKvOverrideValue::Float(v) => {
                 let mut val = sys::llama_model_kv_override_value { val_f64: *v };
-                (sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_FLOAT, val)
-            },
+                (
+                    sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_FLOAT,
+                    val,
+                )
+            }
             ModelKvOverrideValue::Bool(v) => {
-                let mut val = sys::llama_model_kv_override_value { val_bool: *v as sys::c_bool };
-                (sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_BOOL, val)
-            },
+                let mut val = sys::llama_model_kv_override_value {
+                    val_bool: *v as sys::c_bool,
+                };
+                (
+                    sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_BOOL,
+                    val,
+                )
+            }
             ModelKvOverrideValue::Str(s) => {
                 if s.len() >= 128 {
-                    return Err(MullamaError::ModelLoadError("KV override string value too long".to_string()));
+                    return Err(MullamaError::ModelLoadError(
+                        "KV override string value too long".to_string(),
+                    ));
                 }
                 let mut val_str = [0i8; 128];
                 for (i, &byte) in s.as_bytes().iter().enumerate() {
                     val_str[i] = byte as i8;
                 }
                 let val = sys::llama_model_kv_override_value { val_str };
-                (sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_STR, val)
-            },
+                (
+                    sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_STR,
+                    val,
+                )
+            }
         };
 
-        Ok(sys::llama_model_kv_override {
-            tag,
-            key,
-            value,
-        })
+        Ok(sys::llama_model_kv_override { tag, key, value })
     }
 }

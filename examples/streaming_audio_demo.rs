@@ -18,11 +18,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 use mullama::{
-    StreamingAudioProcessor, AudioStreamConfig, AudioChunk, AudioStream,
-    DevicePreference, StreamingMetrics, MultimodalProcessor, AudioConverter,
-    AudioConverterConfig, ConversionConfig, AudioInput, AudioFormat
+    AudioChunk, AudioConverter, AudioConverterConfig, AudioFormat, AudioInput, AudioStream,
+    AudioStreamConfig, ConversionConfig, DevicePreference, MultimodalProcessor,
+    StreamingAudioProcessor, StreamingMetrics,
 };
 
 #[tokio::main]
@@ -30,7 +34,11 @@ async fn main() -> Result<(), MullamaError> {
     println!("🎵 Streaming Audio Integration Demo");
     println!("===================================");
 
-    #[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+    #[cfg(all(
+        feature = "streaming-audio",
+        feature = "multimodal",
+        feature = "format-conversion"
+    ))]
     {
         // 1. Setup streaming audio configuration
         let audio_config = setup_audio_configuration();
@@ -66,9 +74,15 @@ async fn main() -> Result<(), MullamaError> {
         audio_processor.stop_capture().await?;
     }
 
-    #[cfg(not(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion")))]
+    #[cfg(not(all(
+        feature = "streaming-audio",
+        feature = "multimodal",
+        feature = "format-conversion"
+    )))]
     {
-        println!("❌ This demo requires streaming-audio, multimodal, and format-conversion features");
+        println!(
+            "❌ This demo requires streaming-audio, multimodal, and format-conversion features"
+        );
         println!("Run with: cargo run --example streaming_audio_demo --features \"full,streaming-audio\"");
     }
 
@@ -76,19 +90,23 @@ async fn main() -> Result<(), MullamaError> {
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 fn setup_audio_configuration() -> AudioStreamConfig {
     println!("\n🔧 Setting up Audio Configuration");
     println!("=================================");
 
     let config = AudioStreamConfig::new()
-        .sample_rate(16000)      // Optimal for speech processing
-        .channels(1)             // Mono for efficiency
-        .buffer_size(512)        // Low latency
+        .sample_rate(16000) // Optimal for speech processing
+        .channels(1) // Mono for efficiency
+        .buffer_size(512) // Low latency
         .enable_noise_reduction(true)
         .enable_voice_detection(true)
-        .vad_threshold(0.3)      // Sensitive voice detection
-        .max_latency_ms(50);     // Real-time performance
+        .vad_threshold(0.3) // Sensitive voice detection
+        .max_latency_ms(50); // Real-time performance
 
     println!("✅ Audio configuration:");
     println!("   📊 Sample Rate: {} Hz", config.sample_rate);
@@ -101,8 +119,14 @@ fn setup_audio_configuration() -> AudioStreamConfig {
     config
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
-async fn initialize_audio_processor(config: AudioStreamConfig) -> Result<StreamingAudioProcessor, MullamaError> {
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
+async fn initialize_audio_processor(
+    config: AudioStreamConfig,
+) -> Result<StreamingAudioProcessor, MullamaError> {
     println!("\n🎛️ Initializing Audio Processor");
     println!("===============================");
 
@@ -127,7 +151,11 @@ async fn initialize_audio_processor(config: AudioStreamConfig) -> Result<Streami
     Ok(processor)
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn setup_audio_converter() -> Result<AudioConverter, MullamaError> {
     println!("\n🔄 Setting up Audio Converter");
     println!("=============================");
@@ -146,7 +174,11 @@ async fn setup_audio_converter() -> Result<AudioConverter, MullamaError> {
     Ok(converter)
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn setup_multimodal_processor() -> Result<MultimodalProcessor, MullamaError> {
     println!("\n🎭 Setting up Multimodal Processor");
     println!("==================================");
@@ -163,7 +195,11 @@ async fn setup_multimodal_processor() -> Result<MultimodalProcessor, MullamaErro
     Ok(processor)
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn demonstrate_real_time_streaming(
     audio_processor: &mut StreamingAudioProcessor,
     multimodal_processor: &MultimodalProcessor,
@@ -194,7 +230,8 @@ async fn demonstrate_real_time_streaming(
             // Process the audio chunk
             let processed_chunk = audio_processor.process_chunk(&chunk).await?;
 
-            println!("   📦 Chunk {}: {} samples, voice: {}, level: {:.3}",
+            println!(
+                "   📦 Chunk {}: {} samples, voice: {}, level: {:.3}",
                 chunks_processed,
                 processed_chunk.samples.len(),
                 processed_chunk.voice_detected,
@@ -215,7 +252,9 @@ async fn demonstrate_real_time_streaming(
             }
         }
         Ok::<(), MullamaError>(())
-    }).await {
+    })
+    .await
+    {
         Ok(_) => println!("✅ Real-time streaming demo completed"),
         Err(_) => println!("⏰ Streaming demo timed out (this is normal for the demo)"),
     }
@@ -224,8 +263,14 @@ async fn demonstrate_real_time_streaming(
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
-async fn simulate_audio_stream(multimodal_processor: &MultimodalProcessor) -> Result<(), MullamaError> {
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
+async fn simulate_audio_stream(
+    multimodal_processor: &MultimodalProcessor,
+) -> Result<(), MullamaError> {
     println!("🎭 Simulating audio stream processing...");
 
     for i in 1..=5 {
@@ -236,8 +281,12 @@ async fn simulate_audio_stream(multimodal_processor: &MultimodalProcessor) -> Re
 
         let chunk = AudioChunk::new(samples, 1, 16000);
 
-        println!("   📦 Simulated Chunk {}: {} samples, level: {:.3}",
-            i, chunk.samples.len(), chunk.signal_level);
+        println!(
+            "   📦 Simulated Chunk {}: {} samples, level: {:.3}",
+            i,
+            chunk.samples.len(),
+            chunk.signal_level
+        );
 
         // Simulate processing delay
         sleep(Duration::from_millis(100)).await;
@@ -247,7 +296,11 @@ async fn simulate_audio_stream(multimodal_processor: &MultimodalProcessor) -> Re
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn demonstrate_format_conversion_streaming(
     audio_converter: &AudioConverter,
     audio_processor: &mut StreamingAudioProcessor,
@@ -290,7 +343,11 @@ async fn demonstrate_format_conversion_streaming(
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn demonstrate_voice_activity_detection(
     audio_processor: &mut StreamingAudioProcessor,
 ) -> Result<(), MullamaError> {
@@ -302,25 +359,39 @@ async fn demonstrate_voice_activity_detection(
     // Create test audio with different characteristics
     let test_scenarios = vec![
         ("Silence", vec![0.0; 512]),
-        ("Noise", (0..512).map(|_| rand::random::<f32>() * 0.05 - 0.025).collect()),
-        ("Speech-like", (0..512).map(|x| {
-            if x % 50 < 25 {
-                (x as f32 * 0.1).sin() * 0.3
-            } else {
-                0.0
-            }
-        }).collect()),
-        ("Music", (0..512).map(|x| (x as f32 * 0.05).sin() * 0.2 + (x as f32 * 0.08).cos() * 0.1).collect()),
+        (
+            "Noise",
+            (0..512)
+                .map(|_| rand::random::<f32>() * 0.05 - 0.025)
+                .collect(),
+        ),
+        (
+            "Speech-like",
+            (0..512)
+                .map(|x| {
+                    if x % 50 < 25 {
+                        (x as f32 * 0.1).sin() * 0.3
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        ),
+        (
+            "Music",
+            (0..512)
+                .map(|x| (x as f32 * 0.05).sin() * 0.2 + (x as f32 * 0.08).cos() * 0.1)
+                .collect(),
+        ),
     ];
 
     for (scenario, samples) in test_scenarios {
         let mut chunk = AudioChunk::new(samples, 1, 16000);
         let processed_chunk = audio_processor.process_chunk(&chunk).await?;
 
-        println!("   📊 {}: voice={}, level={:.3}",
-            scenario,
-            processed_chunk.voice_detected,
-            processed_chunk.signal_level
+        println!(
+            "   📊 {}: voice={}, level={:.3}",
+            scenario, processed_chunk.voice_detected, processed_chunk.signal_level
         );
     }
 
@@ -328,7 +399,11 @@ async fn demonstrate_voice_activity_detection(
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn show_performance_metrics(
     audio_processor: &StreamingAudioProcessor,
 ) -> Result<(), MullamaError> {
@@ -341,14 +416,22 @@ async fn show_performance_metrics(
     println!("   📦 Chunks processed: {}", metrics.chunks_processed);
     println!("   🔢 Total samples: {}", metrics.total_samples);
     println!("   ❌ Dropped chunks: {}", metrics.dropped_chunks);
-    println!("   ⏱️ Average latency: {:.1} ms", metrics.average_latency_ms);
+    println!(
+        "   ⏱️ Average latency: {:.1} ms",
+        metrics.average_latency_ms
+    );
     println!("   📈 Max latency: {:.1} ms", metrics.max_latency_ms);
-    println!("   🎙️ Voice activity time: {:.1} s", metrics.voice_activity_time.as_secs_f32());
+    println!(
+        "   🎙️ Voice activity time: {:.1} s",
+        metrics.voice_activity_time.as_secs_f32()
+    );
     println!("   🔊 Noise events: {}", metrics.noise_events);
 
     // Calculate efficiency metrics
     let efficiency = if metrics.chunks_processed > 0 {
-        ((metrics.chunks_processed - metrics.dropped_chunks) as f32 / metrics.chunks_processed as f32) * 100.0
+        ((metrics.chunks_processed - metrics.dropped_chunks) as f32
+            / metrics.chunks_processed as f32)
+            * 100.0
     } else {
         0.0
     };
@@ -358,7 +441,11 @@ async fn show_performance_metrics(
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn demonstrate_websocket_integration() -> Result<(), MullamaError> {
     println!("\n🌐 WebSocket Integration Demo");
     println!("============================");
@@ -375,9 +462,7 @@ async fn demonstrate_websocket_integration() -> Result<(), MullamaError> {
             .enable_audio()
             .enable_compression();
 
-        let server = WebSocketServer::new(ws_config)
-            .build()
-            .await?;
+        let server = WebSocketServer::new(ws_config).build().await?;
 
         println!("✅ WebSocket server configured");
         println!("   📍 Audio streaming endpoint: ws://localhost:8080/ws/audio");
@@ -410,7 +495,11 @@ async fn demonstrate_websocket_integration() -> Result<(), MullamaError> {
     Ok(())
 }
 
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn demonstrate_advanced_streaming_patterns() -> Result<(), MullamaError> {
     println!("\n🎯 Advanced Streaming Patterns");
     println!("==============================");
@@ -425,7 +514,12 @@ async fn demonstrate_advanced_streaming_patterns() -> Result<(), MullamaError> {
 
     // Pattern 2: Adaptive quality streaming
     println!("2️⃣ Adaptive quality streaming...");
-    let quality_levels = vec!["Low (8kHz)", "Medium (16kHz)", "High (44kHz)", "Ultra (96kHz)"];
+    let quality_levels = vec![
+        "Low (8kHz)",
+        "Medium (16kHz)",
+        "High (44kHz)",
+        "Ultra (96kHz)",
+    ];
     for quality in &quality_levels {
         println!("   📊 Switching to {} quality", quality);
         sleep(Duration::from_millis(100)).await;
@@ -462,7 +556,11 @@ async fn demonstrate_advanced_streaming_patterns() -> Result<(), MullamaError> {
 }
 
 // Helper function for error simulation
-#[cfg(all(feature = "streaming-audio", feature = "multimodal", feature = "format-conversion"))]
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
 async fn simulate_error_recovery() -> Result<(), MullamaError> {
     println!("\n🛡️ Error Recovery Simulation");
     println!("============================");

@@ -31,13 +31,13 @@
 //! ```
 
 #[cfg(feature = "async")]
-use tokio::task;
-#[cfg(feature = "async")]
 use futures::future::BoxFuture;
 #[cfg(feature = "async")]
 use std::sync::Arc;
+#[cfg(feature = "async")]
+use tokio::task;
 
-use crate::{Model, Context, ContextParams, SamplerParams, SamplerChain, MullamaError, TokenId};
+use crate::{Context, ContextParams, Model, MullamaError, SamplerChain, SamplerParams, TokenId};
 
 /// Async wrapper for Model with non-blocking operations
 #[cfg(feature = "async")]
@@ -69,9 +69,9 @@ impl AsyncModel {
     /// ```
     pub async fn load(path: impl AsRef<str> + Send + 'static) -> Result<Self, MullamaError> {
         let path = path.as_ref().to_string();
-        let model = task::spawn_blocking(move || {
-            Model::load(&path)
-        }).await.map_err(|e| MullamaError::ModelLoadError(format!("Async task failed: {}", e)))?;
+        let model = task::spawn_blocking(move || Model::load(&path))
+            .await
+            .map_err(|e| MullamaError::ModelLoadError(format!("Async task failed: {}", e)))?;
 
         match model {
             Ok(model) => Ok(AsyncModel {
@@ -92,9 +92,9 @@ impl AsyncModel {
         params: crate::ModelParams,
     ) -> Result<Self, MullamaError> {
         let path = path.as_ref().to_string();
-        let model = task::spawn_blocking(move || {
-            Model::load_with_params(&path, params)
-        }).await.map_err(|e| MullamaError::ModelLoadError(format!("Async task failed: {}", e)))?;
+        let model = task::spawn_blocking(move || Model::load_with_params(&path, params))
+            .await
+            .map_err(|e| MullamaError::ModelLoadError(format!("Async task failed: {}", e)))?;
 
         match model {
             Ok(model) => Ok(AsyncModel {
@@ -109,11 +109,14 @@ impl AsyncModel {
     /// # Arguments
     ///
     /// * `params` - Context parameters
-    pub async fn create_context_async(&self, params: ContextParams) -> Result<AsyncContext, MullamaError> {
+    pub async fn create_context_async(
+        &self,
+        params: ContextParams,
+    ) -> Result<AsyncContext, MullamaError> {
         let model = self.inner.clone();
-        let context = task::spawn_blocking(move || {
-            Context::new(model, params)
-        }).await.map_err(|e| MullamaError::ContextError(format!("Async task failed: {}", e)))?;
+        let context = task::spawn_blocking(move || Context::new(model, params))
+            .await
+            .map_err(|e| MullamaError::ContextError(format!("Async task failed: {}", e)))?;
 
         match context {
             Ok(context) => Ok(AsyncContext {
@@ -147,7 +150,11 @@ impl AsyncModel {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn generate_async(&self, prompt: &str, max_tokens: usize) -> Result<String, MullamaError> {
+    pub async fn generate_async(
+        &self,
+        prompt: &str,
+        max_tokens: usize,
+    ) -> Result<String, MullamaError> {
         let model = self.inner.clone();
         let prompt = prompt.to_string();
 
@@ -160,25 +167,35 @@ impl AsyncModel {
             // Configure sampling
             let mut sampler_params = SamplerParams::default();
             sampler_params.temperature = 0.7;
-            let mut sampler = sampler_params.build_chain(model.clone());
+            let mut sampler = sampler_params.build_chain(model.clone())?;
 
             // Tokenize prompt
             let tokens = model.tokenize(&prompt, true, false)?;
+            if tokens.is_empty() {
+                return Err(MullamaError::InvalidInput(
+                    "Prompt produced no tokens".to_string(),
+                ));
+            }
+            context.decode(&tokens)?;
 
             // Generate
             let mut result = String::new();
+            let eos = model.token_eos();
             for _ in 0..max_tokens {
                 let next_token = sampler.sample(&mut context, 0);
-                if next_token == 0 {
+                if next_token == eos {
                     break;
                 }
 
                 let text = model.token_to_str(next_token, 0, false)?;
                 result.push_str(&text);
+                context.decode(std::slice::from_ref(&next_token))?;
             }
 
             Ok(result)
-        }).await.map_err(|e| MullamaError::GenerationError(format!("Async task failed: {}", e)))?
+        })
+        .await
+        .map_err(|e| MullamaError::GenerationError(format!("Async task failed: {}", e)))?
     }
 
     /// Get the underlying model
@@ -194,7 +211,9 @@ impl AsyncModel {
             n_ctx_train: model.n_ctx_train(),
             n_embd: model.n_embd(),
             n_layer: model.n_layer(),
-        }).await.unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default()
     }
 }
 
@@ -245,19 +264,29 @@ impl AsyncContext {
 
         task::spawn_blocking(move || {
             let mut result = String::new();
+            if tokens.is_empty() {
+                return Err(MullamaError::InvalidInput(
+                    "Cannot generate from empty prompt".to_string(),
+                ));
+            }
+            self.inner.decode(&tokens)?;
+            let eos = model.token_eos();
 
             for _ in 0..max_tokens {
                 let next_token = sampler.sample(&mut self.inner, 0);
-                if next_token == 0 {
+                if next_token == eos {
                     break;
                 }
 
                 let text = model.token_to_str(next_token, 0, false)?;
                 result.push_str(&text);
+                self.inner.decode(std::slice::from_ref(&next_token))?;
             }
 
             Ok(result)
-        }).await.map_err(|e| MullamaError::GenerationError(format!("Async task failed: {}", e)))?
+        })
+        .await
+        .map_err(|e| MullamaError::GenerationError(format!("Async task failed: {}", e)))?
     }
 
     /// Get the underlying context (consumes self)

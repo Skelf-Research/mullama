@@ -6,8 +6,8 @@
 use crate::error::MullamaError;
 use crate::sys;
 use crate::Model;
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Quantization parameters for model compression
 #[derive(Debug, Clone, PartialEq)]
@@ -205,12 +205,8 @@ impl QuantizationEngine {
         // Perform quantization based on type
         let qtype = self.params.quantization_type.clone();
         match qtype {
-            QuantizationType::Custom(scheme) => {
-                self.quantize_custom(&scheme)
-            }
-            _ => {
-                self.quantize_standard()
-            }
+            QuantizationType::Custom(scheme) => self.quantize_custom(&scheme),
+            _ => self.quantize_standard(),
         }
     }
 
@@ -219,7 +215,8 @@ impl QuantizationEngine {
         // We need the source model path - for now we'll return an error
         // In a real implementation, the engine would store the source path
         Err(MullamaError::NotImplemented(
-            "Standard quantization requires source model path. Use quantize_file() instead.".to_string()
+            "Standard quantization requires source model path. Use quantize_file() instead."
+                .to_string(),
         ))
     }
 
@@ -275,7 +272,7 @@ impl QuantizationEngine {
             QuantizationType::MXFP4_MOE => sys::llama_ftype::LLAMA_FTYPE_MOSTLY_Q4_K_M, // Best approximation
             QuantizationType::Custom(_) => {
                 return Err(MullamaError::NotImplemented(
-                    "Custom quantization schemes not yet implemented".to_string()
+                    "Custom quantization schemes not yet implemented".to_string(),
                 ));
             }
         };
@@ -284,11 +281,7 @@ impl QuantizationEngine {
 
         // Perform quantization
         let result = unsafe {
-            sys::llama_model_quantize(
-                c_input.as_ptr(),
-                c_output.as_ptr(),
-                &llama_params,
-            )
+            sys::llama_model_quantize(c_input.as_ptr(), c_output.as_ptr(), &llama_params)
         };
 
         if result != 0 {
@@ -303,7 +296,10 @@ impl QuantizationEngine {
     }
 
     /// Quantize with custom quantization scheme
-    fn quantize_custom(&mut self, scheme: &Box<CustomQuantizationScheme>) -> Result<Model, MullamaError> {
+    fn quantize_custom(
+        &mut self,
+        scheme: &Box<CustomQuantizationScheme>,
+    ) -> Result<Model, MullamaError> {
         match scheme.method {
             QuantizationMethod::Linear => self.quantize_linear(scheme),
             QuantizationMethod::KMeans => self.quantize_kmeans(scheme),
@@ -313,35 +309,47 @@ impl QuantizationEngine {
     }
 
     /// Linear quantization implementation
-    fn quantize_linear(&mut self, _scheme: &Box<CustomQuantizationScheme>) -> Result<Model, MullamaError> {
+    fn quantize_linear(
+        &mut self,
+        _scheme: &Box<CustomQuantizationScheme>,
+    ) -> Result<Model, MullamaError> {
         // This would implement custom linear quantization
         // For now, return an error indicating it's not implemented
         Err(MullamaError::NotImplemented(
-            "Custom linear quantization not yet implemented".to_string()
+            "Custom linear quantization not yet implemented".to_string(),
         ))
     }
 
     /// K-means quantization implementation
-    fn quantize_kmeans(&mut self, _scheme: &Box<CustomQuantizationScheme>) -> Result<Model, MullamaError> {
+    fn quantize_kmeans(
+        &mut self,
+        _scheme: &Box<CustomQuantizationScheme>,
+    ) -> Result<Model, MullamaError> {
         // This would implement K-means based quantization
         Err(MullamaError::NotImplemented(
-            "Custom K-means quantization not yet implemented".to_string()
+            "Custom K-means quantization not yet implemented".to_string(),
         ))
     }
 
     /// Vector quantization implementation
-    fn quantize_vector(&mut self, _scheme: &Box<CustomQuantizationScheme>) -> Result<Model, MullamaError> {
+    fn quantize_vector(
+        &mut self,
+        _scheme: &Box<CustomQuantizationScheme>,
+    ) -> Result<Model, MullamaError> {
         // This would implement vector quantization
         Err(MullamaError::NotImplemented(
-            "Custom vector quantization not yet implemented".to_string()
+            "Custom vector quantization not yet implemented".to_string(),
         ))
     }
 
     /// Learned quantization implementation
-    fn quantize_learned(&mut self, _scheme: &Box<CustomQuantizationScheme>) -> Result<Model, MullamaError> {
+    fn quantize_learned(
+        &mut self,
+        _scheme: &Box<CustomQuantizationScheme>,
+    ) -> Result<Model, MullamaError> {
         // This would implement learned quantization schemes
         Err(MullamaError::NotImplemented(
-            "Custom learned quantization not yet implemented".to_string()
+            "Custom learned quantization not yet implemented".to_string(),
         ))
     }
 
@@ -364,7 +372,8 @@ impl QuantizationEngine {
         let embedding_dim = 768; // Default embedding dimension
         let importance_matrix = vec![1.0; embedding_dim]; // Placeholder
 
-        self.importance_cache.insert("default".to_string(), importance_matrix);
+        self.importance_cache
+            .insert("default".to_string(), importance_matrix);
         Ok(())
     }
 
@@ -381,7 +390,8 @@ impl QuantizationEngine {
             *importance = 1.0 + layer_ratio; // Higher importance for later layers
         }
 
-        self.importance_cache.insert("default".to_string(), importance_matrix);
+        self.importance_cache
+            .insert("default".to_string(), importance_matrix);
         Ok(())
     }
 
@@ -423,13 +433,13 @@ impl QuantizationEngine {
     fn validate_params(&self) -> Result<(), MullamaError> {
         if self.params.quality_threshold < 0.0 || self.params.quality_threshold > 1.0 {
             return Err(MullamaError::InvalidInput(
-                "Quality threshold must be between 0.0 and 1.0".to_string()
+                "Quality threshold must be between 0.0 and 1.0".to_string(),
             ));
         }
 
         if self.params.n_threads <= 0 {
             return Err(MullamaError::InvalidInput(
-                "Number of threads must be positive".to_string()
+                "Number of threads must be positive".to_string(),
             ));
         }
 
@@ -437,7 +447,9 @@ impl QuantizationEngine {
     }
 
     /// Create llama.cpp quantization parameters
-    fn create_llama_quantize_params(&self) -> Result<sys::llama_model_quantize_params, MullamaError> {
+    fn create_llama_quantize_params(
+        &self,
+    ) -> Result<sys::llama_model_quantize_params, MullamaError> {
         // Get default parameters and modify them
         let mut params = unsafe { sys::llama_model_quantize_default_params() };
         params.nthread = self.params.n_threads;
@@ -522,11 +534,14 @@ pub mod utils {
         let n_params = 1000000u64; // Placeholder param count
 
         // Recommend based on model size
-        if size > 20_000_000_000 { // > 20GB
+        if size > 20_000_000_000 {
+            // > 20GB
             QuantizationType::Q4_K_M // Aggressive compression for very large models
-        } else if size > 7_000_000_000 { // > 7GB
+        } else if size > 7_000_000_000 {
+            // > 7GB
             QuantizationType::Q5_K_M // Balanced compression
-        } else if size > 3_000_000_000 { // > 3GB
+        } else if size > 3_000_000_000 {
+            // > 3GB
             QuantizationType::Q8_0 // Light compression
         } else {
             QuantizationType::F16 // Minimal compression for small models
@@ -612,11 +627,14 @@ mod tests {
     #[test]
     fn test_layer_settings() {
         let mut settings = HashMap::new();
-        settings.insert("attention".to_string(), LayerQuantizationSettings {
-            quantization_type: QuantizationType::Q8_0,
-            skip_quantization: false,
-            scale_factor: 1.0,
-        });
+        settings.insert(
+            "attention".to_string(),
+            LayerQuantizationSettings {
+                quantization_type: QuantizationType::Q8_0,
+                skip_quantization: false,
+                scale_factor: 1.0,
+            },
+        );
 
         assert_eq!(settings.len(), 1);
         assert!(matches!(
@@ -628,14 +646,23 @@ mod tests {
     #[test]
     fn test_optimization_presets() {
         let speed_params = utils::speed_optimized_params();
-        assert!(matches!(speed_params.quantization_type, QuantizationType::Q4_0));
+        assert!(matches!(
+            speed_params.quantization_type,
+            QuantizationType::Q4_0
+        ));
 
         let quality_params = utils::quality_optimized_params();
-        assert!(matches!(quality_params.quantization_type, QuantizationType::Q8_0));
+        assert!(matches!(
+            quality_params.quantization_type,
+            QuantizationType::Q8_0
+        ));
         assert_eq!(quality_params.quality_threshold, 0.98);
 
         let size_params = utils::size_optimized_params();
-        assert!(matches!(size_params.quantization_type, QuantizationType::Q2_K));
+        assert!(matches!(
+            size_params.quantization_type,
+            QuantizationType::Q2_K
+        ));
         assert_eq!(size_params.quality_threshold, 0.90);
     }
 }

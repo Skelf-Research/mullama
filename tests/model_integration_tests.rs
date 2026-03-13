@@ -19,12 +19,16 @@ use std::sync::Arc;
 
 /// Helper to get test model path, returns None if not available
 fn get_test_model_path() -> Option<String> {
-    env::var("MULLAMA_TEST_MODEL").ok().filter(|p| Path::new(p).exists())
+    env::var("MULLAMA_TEST_MODEL")
+        .ok()
+        .filter(|p| Path::new(p).exists())
 }
 
 /// Helper to get test LoRA path, returns None if not available
 fn get_test_lora_path() -> Option<String> {
-    env::var("MULLAMA_TEST_LORA").ok().filter(|p| Path::new(p).exists())
+    env::var("MULLAMA_TEST_LORA")
+        .ok()
+        .filter(|p| Path::new(p).exists())
 }
 
 /// Macro to skip test if model not available
@@ -109,7 +113,11 @@ fn test_model_loading_with_params() {
     };
 
     let result = mullama::Model::load_with_params(&model_path, params);
-    assert!(result.is_ok(), "Failed to load model with params: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to load model with params: {:?}",
+        result.err()
+    );
 
     unsafe {
         mullama::sys::llama_backend_free();
@@ -134,7 +142,12 @@ fn test_tokenization() {
     let tokens = tokens.unwrap();
     assert!(!tokens.is_empty(), "Tokenization should produce tokens");
 
-    println!("Tokenized '{}' into {} tokens: {:?}", text, tokens.len(), tokens);
+    println!(
+        "Tokenized '{}' into {} tokens: {:?}",
+        text,
+        tokens.len(),
+        tokens
+    );
 
     // Test detokenization
     for &token in &tokens {
@@ -166,7 +179,11 @@ fn test_context_creation() {
     };
 
     let result = mullama::Context::new(model.clone(), ctx_params);
-    assert!(result.is_ok(), "Context creation failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Context creation failed: {:?}",
+        result.err()
+    );
 
     let context = result.unwrap();
     println!("Context created successfully");
@@ -201,14 +218,19 @@ fn test_builder_pattern() {
         .threads(4)
         .build();
 
-    assert!(context.is_ok(), "ContextBuilder failed: {:?}", context.err());
+    assert!(
+        context.is_ok(),
+        "ContextBuilder failed: {:?}",
+        context.err()
+    );
 
     // Test SamplerBuilder
     let sampler = mullama::builder::SamplerBuilder::new()
         .temperature(0.8)
         .top_k(40)
         .nucleus(0.95)
-        .build(model.clone());
+        .build(model.clone())
+        .expect("Failed to build sampler via builder");
 
     println!("Builder pattern test passed");
 
@@ -242,7 +264,9 @@ fn test_sampling_params() {
         ..Default::default()
     };
 
-    let chain = params.build_chain(model.clone());
+    let chain = params
+        .build_chain(model.clone())
+        .expect("Failed to build sampler chain");
     println!("Sampler chain created with custom params");
 
     unsafe {
@@ -302,7 +326,10 @@ fn test_special_tokens() {
     println!("  EOS: {}", eos);
 
     // At least one should be valid (not -1)
-    assert!(bos != -1 || eos != -1, "Model should have at least BOS or EOS token");
+    assert!(
+        bos != -1 || eos != -1,
+        "Model should have at least BOS or EOS token"
+    );
 
     unsafe {
         mullama::sys::llama_backend_free();
@@ -328,7 +355,8 @@ fn test_batch_operations() {
     assert!(batch.is_empty());
 
     // Tokenize some text
-    let tokens = model.tokenize("Test input", true, false)
+    let tokens = model
+        .tokenize("Test input", true, false)
         .expect("Tokenization failed");
 
     // Add tokens to batch
@@ -357,7 +385,11 @@ fn test_config_with_model() {
 
     // Validate config
     let result = config.validate();
-    assert!(result.is_ok(), "Config validation failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Config validation failed: {:?}",
+        result.err()
+    );
 
     println!("Config with model path validated successfully");
 }

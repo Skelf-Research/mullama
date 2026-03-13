@@ -7,8 +7,8 @@
 use mullama::*;
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
     thread,
+    time::{Duration, Instant},
 };
 
 const BENCHMARK_ITERATIONS: usize = 1000;
@@ -29,11 +29,22 @@ mod parameter_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("ModelParams creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
-        println!("Total for {} iterations: {:.2}ms", BENCHMARK_ITERATIONS, duration.as_secs_f64() * 1000.0);
+        println!(
+            "ModelParams creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
+        println!(
+            "Total for {} iterations: {:.2}ms",
+            BENCHMARK_ITERATIONS,
+            duration.as_secs_f64() * 1000.0
+        );
 
         // Performance assertion - should be very fast
-        assert!(per_op.as_nanos() < 10_000, "ModelParams creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 10_000,
+            "ModelParams creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -47,11 +58,22 @@ mod parameter_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("ContextParams creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
-        println!("Total for {} iterations: {:.2}ms", BENCHMARK_ITERATIONS, duration.as_secs_f64() * 1000.0);
+        println!(
+            "ContextParams creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
+        println!(
+            "Total for {} iterations: {:.2}ms",
+            BENCHMARK_ITERATIONS,
+            duration.as_secs_f64() * 1000.0
+        );
 
         // Performance assertion - should be fast despite thread detection
-        assert!(per_op.as_nanos() < 50_000, "ContextParams creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 50_000,
+            "ContextParams creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -65,11 +87,22 @@ mod parameter_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("SamplerParams creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
-        println!("Total for {} iterations: {:.2}ms", BENCHMARK_ITERATIONS, duration.as_secs_f64() * 1000.0);
+        println!(
+            "SamplerParams creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
+        println!(
+            "Total for {} iterations: {:.2}ms",
+            BENCHMARK_ITERATIONS,
+            duration.as_secs_f64() * 1000.0
+        );
 
         // Performance assertion
-        assert!(per_op.as_nanos() < 10_000, "SamplerParams creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 10_000,
+            "SamplerParams creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -89,10 +122,17 @@ mod parameter_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS * 3) as u32;
 
-        println!("Parameter cloning: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Parameter cloning: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Cloning should be very fast
-        assert!(per_op.as_nanos() < 5_000, "Parameter cloning too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 5_000,
+            "Parameter cloning too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 }
 
@@ -113,10 +153,17 @@ mod structure_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("Small batch creation (5 tokens): {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Small batch creation (5 tokens): {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be fast for small batches
-        assert!(per_op.as_nanos() < 20_000, "Small batch creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 20_000,
+            "Small batch creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -132,10 +179,17 @@ mod structure_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS / 10) as u32;
 
-        println!("Medium batch creation (100 tokens): {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Medium batch creation (100 tokens): {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should still be reasonable for medium batches
-        assert!(per_op.as_nanos() < 100_000, "Medium batch creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 100_000,
+            "Medium batch creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -151,18 +205,37 @@ mod structure_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS / 100) as u32;
 
-        println!("Large batch creation (1000 tokens): {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Large batch creation (1000 tokens): {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be acceptable for large batches
-        assert!(per_op.as_nanos() < 1_000_000, "Large batch creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 1_000_000,
+            "Large batch creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
     fn benchmark_token_data_array_creation() {
         let candidates = vec![
-            TokenData { id: 1, logit: 1.0, p: 0.5 },
-            TokenData { id: 2, logit: 2.0, p: 0.3 },
-            TokenData { id: 3, logit: 0.5, p: 0.2 },
+            TokenData {
+                id: 1,
+                logit: 1.0,
+                p: 0.5,
+            },
+            TokenData {
+                id: 2,
+                logit: 2.0,
+                p: 0.3,
+            },
+            TokenData {
+                id: 3,
+                logit: 0.5,
+                p: 0.2,
+            },
         ];
 
         let start = Instant::now();
@@ -174,10 +247,17 @@ mod structure_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("TokenDataArray creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "TokenDataArray creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be fast
-        assert!(per_op.as_nanos() < 50_000, "TokenDataArray creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 50_000,
+            "TokenDataArray creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -193,10 +273,17 @@ mod structure_creation_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("Embeddings creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Embeddings creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be fast
-        assert!(per_op.as_nanos() < 30_000, "Embeddings creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 30_000,
+            "Embeddings creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 }
 
@@ -209,16 +296,23 @@ mod sampling_benchmarks {
         let start = Instant::now();
 
         for _ in 0..BENCHMARK_ITERATIONS {
-            let _sampler = Sampler::new();
+            let _sampler = Sampler::new().expect("Failed to create sampler");
         }
 
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("Sampler creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Sampler creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be fast
-        assert!(per_op.as_nanos() < 20_000, "Sampler creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 20_000,
+            "Sampler creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -234,16 +328,26 @@ mod sampling_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("SamplerChain creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "SamplerChain creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be reasonably fast
-        assert!(per_op.as_nanos() < 50_000, "SamplerChain creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 50_000,
+            "SamplerChain creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
     fn benchmark_logit_bias_operations() {
         let biases: Vec<LogitBias> = (0..100)
-            .map(|i| LogitBias { token: i, bias: i as f32 * 0.1 })
+            .map(|i| LogitBias {
+                token: i,
+                bias: i as f32 * 0.1,
+            })
             .collect();
 
         let start = Instant::now();
@@ -259,10 +363,17 @@ mod sampling_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS / 10) as u32;
 
-        println!("Logit bias processing (100 biases): {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Logit bias processing (100 biases): {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be very fast
-        assert!(per_op.as_nanos() < 10_000, "Logit bias processing too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 10_000,
+            "Logit bias processing too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 }
 
@@ -281,10 +392,17 @@ mod memory_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("MemoryManager creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "MemoryManager creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be very fast
-        assert!(per_op.as_nanos() < 5_000, "MemoryManager creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 5_000,
+            "MemoryManager creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -298,10 +416,17 @@ mod memory_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / BENCHMARK_ITERATIONS as u32;
 
-        println!("Vocabulary creation: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Vocabulary creation: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be very fast
-        assert!(per_op.as_nanos() < 5_000, "Vocabulary creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 5_000,
+            "Vocabulary creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -317,10 +442,17 @@ mod memory_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS / 10) as u32;
 
-        println!("Session creation (1KB data): {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Session creation (1KB data): {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be reasonable for 1KB sessions
-        assert!(per_op.as_nanos() < 100_000, "Session creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 100_000,
+            "Session creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 }
 
@@ -343,10 +475,17 @@ mod ffi_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS / 100) as u32;
 
-        println!("Backend init/free cycle: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Backend init/free cycle: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should complete within reasonable time
-        assert!(per_op.as_nanos() < 1_000_000, "Backend init/free too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 1_000_000,
+            "Backend init/free too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -366,10 +505,17 @@ mod ffi_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS * 5) as u32;
 
-        println!("System capability query: {:.2}μs per operation", per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "System capability query: {:.2}μs per operation",
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should be very fast
-        assert!(per_op.as_nanos() < 5_000, "System queries too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 5_000,
+            "System queries too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -386,10 +532,17 @@ mod ffi_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS * 4) as u32;
 
-        println!("Constant access: {:.2}ns per operation", per_op.as_nanos() as f64);
+        println!(
+            "Constant access: {:.2}ns per operation",
+            per_op.as_nanos() as f64
+        );
 
         // Should be extremely fast (compile-time constants)
-        assert!(per_op.as_nanos() < 100, "Constant access too slow: {:.2}ns", per_op.as_nanos() as f64);
+        assert!(
+            per_op.as_nanos() < 100,
+            "Constant access too slow: {:.2}ns",
+            per_op.as_nanos() as f64
+        );
     }
 }
 
@@ -429,10 +582,18 @@ mod concurrency_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS * 3) as u32;
 
-        println!("Concurrent parameter creation ({} threads): {:.2}μs per operation", NUM_THREADS, per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Concurrent parameter creation ({} threads): {:.2}μs per operation",
+            NUM_THREADS,
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should scale reasonably with multiple threads
-        assert!(per_op.as_nanos() < 100_000, "Concurrent parameter creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 100_000,
+            "Concurrent parameter creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 
     #[test]
@@ -454,7 +615,9 @@ mod concurrency_benchmarks {
 
                 for _ in 0..ITERATIONS_PER_THREAD {
                     let _batch = Batch::from_tokens(&tokens);
-                    let _session = Session { data: vec![thread_id as u8; 10] };
+                    let _session = Session {
+                        data: vec![thread_id as u8; 10],
+                    };
                     let _embeddings = Embeddings::new(vec![thread_id as f32; 5], 5);
                 }
             });
@@ -468,10 +631,18 @@ mod concurrency_benchmarks {
         let duration = start.elapsed();
         let per_op = duration / (BENCHMARK_ITERATIONS * 3) as u32;
 
-        println!("Concurrent structure creation ({} threads): {:.2}μs per operation", NUM_THREADS, per_op.as_nanos() as f64 / 1000.0);
+        println!(
+            "Concurrent structure creation ({} threads): {:.2}μs per operation",
+            NUM_THREADS,
+            per_op.as_nanos() as f64 / 1000.0
+        );
 
         // Should scale reasonably with multiple threads
-        assert!(per_op.as_nanos() < 200_000, "Concurrent structure creation too slow: {:.2}μs", per_op.as_nanos() as f64 / 1000.0);
+        assert!(
+            per_op.as_nanos() < 200_000,
+            "Concurrent structure creation too slow: {:.2}μs",
+            per_op.as_nanos() as f64 / 1000.0
+        );
     }
 }
 
@@ -494,9 +665,21 @@ mod regression_benchmarks {
         println!("  SamplerParams: {} bytes", sampler_params_size);
 
         // Ensure structures aren't excessively large
-        assert!(model_params_size < 1000, "ModelParams too large: {} bytes", model_params_size);
-        assert!(context_params_size < 500, "ContextParams too large: {} bytes", context_params_size);
-        assert!(sampler_params_size < 300, "SamplerParams too large: {} bytes", sampler_params_size);
+        assert!(
+            model_params_size < 1000,
+            "ModelParams too large: {} bytes",
+            model_params_size
+        );
+        assert!(
+            context_params_size < 500,
+            "ContextParams too large: {} bytes",
+            context_params_size
+        );
+        assert!(
+            sampler_params_size < 300,
+            "SamplerParams too large: {} bytes",
+            sampler_params_size
+        );
     }
 
     #[test]
@@ -515,8 +698,16 @@ mod regression_benchmarks {
 
         // Ensure structures are reasonably sized
         assert!(batch_size < 200, "Batch too large: {} bytes", batch_size);
-        assert!(token_data_size < 50, "TokenData too large: {} bytes", token_data_size);
-        assert!(logit_bias_size < 20, "LogitBias too large: {} bytes", logit_bias_size);
+        assert!(
+            token_data_size < 50,
+            "TokenData too large: {} bytes",
+            token_data_size
+        );
+        assert!(
+            logit_bias_size < 20,
+            "LogitBias too large: {} bytes",
+            logit_bias_size
+        );
     }
 
     #[test]
@@ -536,21 +727,26 @@ mod regression_benchmarks {
                 use_mlock: false,
                 check_tensors: true,
                 use_extra_bufts: false,
-                kv_overrides: vec![
-                    ModelKvOverride {
-                        key: "test".to_string(),
-                        value: ModelKvOverrideValue::Int(42),
-                    }
-                ],
+                kv_overrides: vec![ModelKvOverride {
+                    key: "test".to_string(),
+                    value: ModelKvOverrideValue::Int(42),
+                }],
                 progress_callback: None,
             };
         }
 
         let duration = start.elapsed();
-        println!("Complex parameter creation time: {:.2}ms for 1000 operations", duration.as_secs_f64() * 1000.0);
+        println!(
+            "Complex parameter creation time: {:.2}ms for 1000 operations",
+            duration.as_secs_f64() * 1000.0
+        );
 
         // Should complete quickly, indicating good compilation performance
-        assert!(duration.as_millis() < 100, "Complex parameter creation too slow: {}ms", duration.as_millis());
+        assert!(
+            duration.as_millis() < 100,
+            "Complex parameter creation too slow: {}ms",
+            duration.as_millis()
+        );
     }
 }
 
@@ -585,14 +781,32 @@ mod performance_regression_tests {
         let sampler_duration = start.elapsed();
 
         println!("Performance baseline for {} iterations:", iterations);
-        println!("  ModelParams: {:.2}ms", model_duration.as_secs_f64() * 1000.0);
-        println!("  ContextParams: {:.2}ms", context_duration.as_secs_f64() * 1000.0);
-        println!("  SamplerParams: {:.2}ms", sampler_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ModelParams: {:.2}ms",
+            model_duration.as_secs_f64() * 1000.0
+        );
+        println!(
+            "  ContextParams: {:.2}ms",
+            context_duration.as_secs_f64() * 1000.0
+        );
+        println!(
+            "  SamplerParams: {:.2}ms",
+            sampler_duration.as_secs_f64() * 1000.0
+        );
 
         // Performance regression thresholds
-        assert!(model_duration.as_millis() < 100, "ModelParams performance regression");
-        assert!(context_duration.as_millis() < 500, "ContextParams performance regression"); // Allows for thread detection
-        assert!(sampler_duration.as_millis() < 50, "SamplerParams performance regression");
+        assert!(
+            model_duration.as_millis() < 100,
+            "ModelParams performance regression"
+        );
+        assert!(
+            context_duration.as_millis() < 500,
+            "ContextParams performance regression"
+        ); // Allows for thread detection
+        assert!(
+            sampler_duration.as_millis() < 50,
+            "SamplerParams performance regression"
+        );
     }
 
     #[test]
@@ -609,12 +823,10 @@ mod performance_regression_tests {
             // Create complex structures
             let mut complex_model = model_params;
             complex_model.tensor_split = vec![1.0; 16];
-            complex_model.kv_overrides = vec![
-                ModelKvOverride {
-                    key: "test".to_string(),
-                    value: ModelKvOverrideValue::Str("value".to_string()),
-                }
-            ];
+            complex_model.kv_overrides = vec![ModelKvOverride {
+                key: "test".to_string(),
+                value: ModelKvOverrideValue::Str("value".to_string()),
+            }];
 
             // These should be dropped cleanly
             drop(complex_model);
@@ -623,6 +835,9 @@ mod performance_regression_tests {
         }
 
         // If we reach here without crashing, no obvious memory issues
-        println!("Memory leak test completed successfully for {} iterations", iterations);
+        println!(
+            "Memory leak test completed successfully for {} iterations",
+            iterations
+        );
     }
 }

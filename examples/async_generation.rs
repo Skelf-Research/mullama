@@ -9,7 +9,7 @@ use mullama::prelude::*;
 use std::sync::Arc;
 
 #[cfg(feature = "async")]
-use mullama::{AsyncModel, AsyncContext};
+use mullama::{AsyncContext, AsyncModel};
 
 #[tokio::main]
 async fn main() -> Result<(), MullamaError> {
@@ -22,8 +22,8 @@ async fn main() -> Result<(), MullamaError> {
         println!("📂 Loading model asynchronously...");
 
         // Note: Replace with actual model path
-        let model_path = std::env::var("MODEL_PATH")
-            .unwrap_or_else(|_| "path/to/model.gguf".to_string());
+        let model_path =
+            std::env::var("MODEL_PATH").unwrap_or_else(|_| "path/to/model.gguf".to_string());
 
         // This would load the model in a real scenario:
         // let model = AsyncModel::load(&model_path).await?;
@@ -134,9 +134,21 @@ async fn demonstrate_async_patterns() -> Result<(), MullamaError> {
     // Pattern 2: Concurrent context creation
     println!("2️⃣ Concurrent context creation...");
     let context_configs = vec![
-        ContextParams { n_ctx: 1024, n_batch: 256, ..Default::default() },
-        ContextParams { n_ctx: 2048, n_batch: 512, ..Default::default() },
-        ContextParams { n_ctx: 4096, n_batch: 1024, ..Default::default() },
+        ContextParams {
+            n_ctx: 1024,
+            n_batch: 256,
+            ..Default::default()
+        },
+        ContextParams {
+            n_ctx: 2048,
+            n_batch: 512,
+            ..Default::default()
+        },
+        ContextParams {
+            n_ctx: 4096,
+            n_batch: 1024,
+            ..Default::default()
+        },
     ];
 
     // In real scenario, create multiple contexts concurrently:
@@ -156,10 +168,7 @@ async fn demonstrate_async_patterns() -> Result<(), MullamaError> {
         Ok::<String, MullamaError>("Generated text".to_string())
     };
 
-    match tokio::time::timeout(
-        tokio::time::Duration::from_millis(100),
-        generation_task
-    ).await {
+    match tokio::time::timeout(tokio::time::Duration::from_millis(100), generation_task).await {
         Ok(Ok(result)) => println!("   ✅ Generation completed: {}", result),
         Ok(Err(e)) => println!("   ❌ Generation failed: {}", e),
         Err(_) => println!("   ⏰ Generation timed out"),
@@ -167,9 +176,7 @@ async fn demonstrate_async_patterns() -> Result<(), MullamaError> {
 
     // Pattern 4: Batch processing with async
     println!("4️⃣ Batch processing...");
-    let batch_prompts = vec![
-        "Prompt 1", "Prompt 2", "Prompt 3", "Prompt 4", "Prompt 5"
-    ];
+    let batch_prompts = vec!["Prompt 1", "Prompt 2", "Prompt 3", "Prompt 4", "Prompt 5"];
 
     // Process in batches of 2
     for chunk in batch_prompts.chunks(2) {
@@ -199,7 +206,8 @@ async fn demonstrate_error_handling() -> Result<(), MullamaError> {
         } else {
             Ok("Success".to_string())
         }
-    }.await;
+    }
+    .await;
 
     match result {
         Ok(value) => println!("✅ Operation succeeded: {}", value),

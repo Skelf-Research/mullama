@@ -1,5 +1,5 @@
-use crate::{sys, model::Model, error::MullamaError, token::TokenId, batch::Batch};
-use std::{sync::Arc};
+use crate::{batch::Batch, error::MullamaError, model::Model, sys, token::TokenId};
+use std::sync::Arc;
 
 /// Parameters for creating a context
 #[derive(Debug, Clone)]
@@ -98,49 +98,49 @@ impl Context {
         llama_params.op_offload = params.op_offload;
         llama_params.swa_full = params.swa_full;
         llama_params.kv_unified = params.kv_unified;
-        
+
         // Create the context
-        let ctx_ptr = unsafe {
-            sys::llama_init_from_model(model.as_ptr(), llama_params)
-        };
-        
+        let ctx_ptr = unsafe { sys::llama_init_from_model(model.as_ptr(), llama_params) };
+
         if ctx_ptr.is_null() {
             return Err(MullamaError::ContextError(
-                "Failed to create context".to_string()
+                "Failed to create context".to_string(),
             ));
         }
-        
-        Ok(Context {
-            model,
-            ctx_ptr,
-        })
+
+        Ok(Context { model, ctx_ptr })
     }
-    
+
     /// Process a batch of tokens
     pub fn decode(&mut self, tokens: &[TokenId]) -> Result<(), MullamaError> {
         // Create a simple batch for these tokens
         let mut batch = Batch::from_tokens(tokens);
-        
+
         // Get the llama_batch and call llama_decode
         if let Some(llama_batch) = batch.take_llama_batch() {
-            let result = unsafe {
-                sys::llama_decode(self.ctx_ptr, llama_batch)
-            };
-            
+            let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+
             if result != 0 {
-                return Err(MullamaError::GenerationError(
-                    format!("Decode failed with code: {}", result)
-                ));
+                return Err(MullamaError::GenerationError(format!(
+                    "Decode failed with code: {}",
+                    result
+                )));
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Simple text generation (placeholder - full implementation would use sampling)
-    pub fn generate(&mut self, prompt_tokens: &[TokenId], max_tokens: usize) -> Result<String, MullamaError> {
+    pub fn generate(
+        &mut self,
+        prompt_tokens: &[TokenId],
+        max_tokens: usize,
+    ) -> Result<String, MullamaError> {
         if prompt_tokens.is_empty() {
-            return Err(MullamaError::GenerationError("Empty prompt tokens".to_string()));
+            return Err(MullamaError::GenerationError(
+                "Empty prompt tokens".to_string(),
+            ));
         }
 
         // Create a batch for the prompt tokens
@@ -157,10 +157,11 @@ impl Context {
         // For now, return a meaningful placeholder
         Ok(format!(
             "[Placeholder] Generated {} tokens from prompt of {} tokens",
-            max_tokens, prompt_tokens.len()
+            max_tokens,
+            prompt_tokens.len()
         ))
     }
-    
+
     /// Get logits from the last evaluation
     pub fn logits(&self) -> Result<&[f32], MullamaError> {
         // In a real implementation, this would:
@@ -170,7 +171,7 @@ impl Context {
         // For now, return an empty slice as a placeholder
         Ok(&[])
     }
-    
+
     /// Get embeddings (if enabled)
     pub fn embeddings(&self) -> Result<Option<&[f32]>, MullamaError> {
         // In a real implementation, this would:
@@ -180,12 +181,12 @@ impl Context {
         // For now, return None as a placeholder
         Ok(None)
     }
-    
+
     /// Get the model associated with this context
     pub fn model(&self) -> &Arc<Model> {
         &self.model
     }
-    
+
     /// Get the internal context pointer (for use by other modules)
     pub fn as_ptr(&self) -> *mut sys::llama_context {
         self.ctx_ptr
@@ -441,9 +442,7 @@ impl Context {
 
     /// Get the size of the state in bytes
     pub fn state_size(&self) -> usize {
-        unsafe {
-            sys::llama_state_get_size(self.ctx_ptr)
-        }
+        unsafe { sys::llama_state_get_size(self.ctx_ptr) }
     }
 
     /// Save the context state to a byte vector
@@ -463,11 +462,11 @@ impl Context {
     ///
     /// Returns the number of bytes read.
     pub fn load_state(&mut self, data: &[u8]) -> Result<usize, MullamaError> {
-        let read = unsafe {
-            sys::llama_state_set_data(self.ctx_ptr, data.as_ptr(), data.len())
-        };
+        let read = unsafe { sys::llama_state_set_data(self.ctx_ptr, data.as_ptr(), data.len()) };
         if read == 0 && !data.is_empty() {
-            Err(MullamaError::ContextError("Failed to load state".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to load state".to_string(),
+            ))
         } else {
             Ok(read)
         }
@@ -479,18 +478,15 @@ impl Context {
             .map_err(|_| MullamaError::InvalidInput("Invalid path".to_string()))?;
 
         let result = unsafe {
-            sys::llama_state_save_file(
-                self.ctx_ptr,
-                c_path.as_ptr(),
-                tokens.as_ptr(),
-                tokens.len(),
-            )
+            sys::llama_state_save_file(self.ctx_ptr, c_path.as_ptr(), tokens.as_ptr(), tokens.len())
         };
 
         if result {
             Ok(())
         } else {
-            Err(MullamaError::ContextError("Failed to save state file".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to save state file".to_string(),
+            ))
         }
     }
 
@@ -520,7 +516,9 @@ impl Context {
             tokens.truncate(n_tokens);
             Ok(tokens)
         } else {
-            Err(MullamaError::ContextError("Failed to load state file".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to load state file".to_string(),
+            ))
         }
     }
 
@@ -624,12 +622,8 @@ impl Context {
         let size = self.state_seq_size(seq_id);
         let mut buffer = vec![0u8; size];
         unsafe {
-            let written = sys::llama_state_seq_get_data(
-                self.ctx_ptr,
-                buffer.as_mut_ptr(),
-                size,
-                seq_id,
-            );
+            let written =
+                sys::llama_state_seq_get_data(self.ctx_ptr, buffer.as_mut_ptr(), size, seq_id);
             buffer.truncate(written);
         }
         buffer
@@ -638,15 +632,12 @@ impl Context {
     /// Load state for a specific sequence
     pub fn load_state_seq(&mut self, seq_id: i32, data: &[u8]) -> Result<usize, MullamaError> {
         let read = unsafe {
-            sys::llama_state_seq_set_data(
-                self.ctx_ptr,
-                data.as_ptr(),
-                data.len(),
-                seq_id,
-            )
+            sys::llama_state_seq_set_data(self.ctx_ptr, data.as_ptr(), data.len(), seq_id)
         };
         if read == 0 && !data.is_empty() {
-            Err(MullamaError::ContextError("Failed to load sequence state".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to load sequence state".to_string(),
+            ))
         } else {
             Ok(read)
         }
@@ -670,12 +661,18 @@ impl Context {
         if result > 0 {
             Ok(())
         } else {
-            Err(MullamaError::ContextError("Failed to save sequence state file".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to save sequence state file".to_string(),
+            ))
         }
     }
 
     /// Load sequence state from file
-    pub fn load_state_seq_file(&mut self, path: &str, dest_seq_id: i32) -> Result<(), MullamaError> {
+    pub fn load_state_seq_file(
+        &mut self,
+        path: &str,
+        dest_seq_id: i32,
+    ) -> Result<(), MullamaError> {
         let c_path = std::ffi::CString::new(path)
             .map_err(|_| MullamaError::InvalidInput("Invalid path".to_string()))?;
 
@@ -694,7 +691,9 @@ impl Context {
         if result > 0 {
             Ok(())
         } else {
-            Err(MullamaError::ContextError("Failed to load sequence state file".to_string()))
+            Err(MullamaError::ContextError(
+                "Failed to load sequence state file".to_string(),
+            ))
         }
     }
 
@@ -703,14 +702,13 @@ impl Context {
     /// Encode a batch (for encoder-decoder models)
     pub fn encode(&mut self, batch: &mut Batch) -> Result<(), MullamaError> {
         if let Some(llama_batch) = batch.take_llama_batch() {
-            let result = unsafe {
-                sys::llama_encode(self.ctx_ptr, llama_batch)
-            };
+            let result = unsafe { sys::llama_encode(self.ctx_ptr, llama_batch) };
 
             if result != 0 {
-                return Err(MullamaError::ContextError(
-                    format!("Encode failed with code: {}", result)
-                ));
+                return Err(MullamaError::ContextError(format!(
+                    "Encode failed with code: {}",
+                    result
+                )));
             }
         }
         Ok(())

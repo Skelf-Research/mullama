@@ -57,7 +57,7 @@
 //! sampler_params.top_k = 40;
 //! sampler_params.top_p = 0.9;
 //!
-//! let mut sampler = sampler_params.build_chain(model.clone());
+//! let mut sampler = sampler_params.build_chain(model.clone())?;
 //!
 //! // Tokenize input text
 //! let prompt = "The future of artificial intelligence is";
@@ -80,47 +80,47 @@
 //! # }
 //! ```
 
-pub mod sys;
-pub mod model;
-pub mod context;
-pub mod token;
-pub mod session;
-pub mod error;
 pub mod batch;
-pub mod sampling;
+pub mod context;
 pub mod embedding;
+pub mod error;
 pub mod memory;
+pub mod model;
+pub mod sampling;
+pub mod session;
+pub mod sys;
+pub mod token;
 pub mod vocab;
 
 // Integration features
 #[cfg(feature = "async")]
 pub mod async_support;
-#[cfg(feature = "streaming")]
-pub mod streaming;
-pub mod config;
 pub mod builder;
-#[cfg(feature = "web")]
-pub mod web;
-#[cfg(feature = "tokio-runtime")]
-pub mod tokio_integration;
-#[cfg(feature = "parallel")]
-pub mod parallel;
-#[cfg(feature = "websockets")]
-pub mod websockets;
-#[cfg(feature = "streaming-audio")]
-pub mod streaming_audio;
+pub mod config;
 #[cfg(feature = "format-conversion")]
 pub mod format_conversion;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
+#[cfg(feature = "parallel")]
+pub mod parallel;
+#[cfg(feature = "streaming")]
+pub mod streaming;
+#[cfg(feature = "streaming-audio")]
+pub mod streaming_audio;
+#[cfg(feature = "tokio-runtime")]
+pub mod tokio_integration;
+#[cfg(feature = "web")]
+pub mod web;
+#[cfg(feature = "websockets")]
+pub mod websockets;
 
 // Advanced features
-pub mod lora;
 pub mod grammar;
 pub mod huggingface;
+pub mod lora;
 
 // Export Hugging Face types at crate root for convenience
-pub use huggingface::{HFClient, HFModelInfo, GGUFFile, QuantizationType, ModelSearchFilters};
+pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
 
 // ==================== System-level Functions ====================
 
@@ -183,9 +183,7 @@ pub fn print_system_info() -> String {
         if ptr.is_null() {
             String::new()
         } else {
-            std::ffi::CStr::from_ptr(ptr)
-                .to_string_lossy()
-                .to_string()
+            std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string()
         }
     }
 }
@@ -223,7 +221,11 @@ pub struct SystemInfo {
 // ==================== Logging ====================
 
 /// Log callback function type
-pub type LogCallback = extern "C" fn(level: i32, text: *const std::os::raw::c_char, user_data: *mut std::os::raw::c_void);
+pub type LogCallback = extern "C" fn(
+    level: i32,
+    text: *const std::os::raw::c_char,
+    user_data: *mut std::os::raw::c_void,
+);
 
 /// Set custom log callback
 ///
@@ -241,21 +243,14 @@ pub fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
 ///
 /// This is a convenience function for simple use cases.
 pub fn batch_get_one(tokens: &[i32]) -> sys::llama_batch {
-    unsafe {
-        sys::llama_batch_get_one(
-            tokens.as_ptr() as *mut i32,
-            tokens.len() as i32,
-        )
-    }
+    unsafe { sys::llama_batch_get_one(tokens.as_ptr() as *mut i32, tokens.len() as i32) }
 }
 
 // ==================== Chat Templates ====================
 
 /// Get the number of built-in chat templates
 pub fn chat_builtin_template_count() -> i32 {
-    unsafe {
-        sys::llama_chat_builtin_templates(std::ptr::null_mut(), 0)
-    }
+    unsafe { sys::llama_chat_builtin_templates(std::ptr::null_mut(), 0) }
 }
 
 // ==================== Vocab Helper Functions ====================
@@ -297,11 +292,7 @@ impl Model {
         if ptr.is_null() {
             None
         } else {
-            Some(unsafe {
-                std::ffi::CStr::from_ptr(ptr)
-                    .to_string_lossy()
-                    .to_string()
-            })
+            Some(unsafe { std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string() })
         }
     }
 
@@ -329,66 +320,64 @@ impl Model {
         unsafe { sys::llama_vocab_is_eog(vocab_ptr, token) }
     }
 }
-pub mod quantization;
 pub mod control_vector;
+pub mod quantization;
 
 // Re-export the public API
-pub use model::{Model, ModelParams, ModelKvOverride, ModelKvOverrideValue, Token};
-pub use context::{Context, ContextParams};
-pub use token::{Token as TokenStruct, TokenId};
-pub use session::Session;
-pub use error::MullamaError;
 pub use batch::Batch;
-pub use sampling::{
-    Sampler, SamplerParams, SamplerChain, SamplerChainParams,
-    LogitBias, TokenData, TokenDataArray, SamplerPerfData
-};
-pub use embedding::{Embeddings, EmbeddingUtil};
+pub use context::{Context, ContextParams};
+pub use embedding::{EmbeddingUtil, Embeddings};
+pub use error::MullamaError;
 pub use memory::MemoryManager;
+pub use model::{Model, ModelKvOverride, ModelKvOverrideValue, ModelParams, Token};
+pub use sampling::{
+    LogitBias, Sampler, SamplerChain, SamplerChainParams, SamplerParams, SamplerPerfData,
+    TokenData, TokenDataArray,
+};
+pub use session::Session;
+pub use token::{Token as TokenStruct, TokenId};
 pub use vocab::Vocabulary;
 
 // Re-export integration features
 #[cfg(feature = "async")]
-pub use async_support::{AsyncModel, AsyncContext, ModelInfo, AsyncConfig};
-#[cfg(feature = "streaming")]
-pub use streaming::{TokenStream, StreamConfig, TokenData};
+pub use async_support::{AsyncConfig, AsyncContext, AsyncModel, ModelInfo};
+pub use builder::{ContextBuilder, ModelBuilder, SamplerBuilder};
 pub use config::{
-    MullamaConfig, ModelConfig, ContextConfig, SamplingConfig,
-    PerformanceConfig, LoggingConfig, CpuOptimizations, GpuOptimizations
-};
-pub use builder::{ModelBuilder, ContextBuilder, SamplerBuilder};
-#[cfg(feature = "web")]
-pub use web::{
-    AppState, GenerateRequest, GenerateResponse, TokenizeRequest, TokenizeResponse,
-    create_router, ApiMetrics, AppError
-};
-#[cfg(feature = "tokio-runtime")]
-pub use tokio_integration::{
-    MullamaRuntime, MullamaRuntimeBuilder, TaskManager, ModelPool, RuntimeMetrics
-};
-#[cfg(feature = "parallel")]
-pub use parallel::{
-    ParallelProcessor, BatchGenerationConfig, GenerationResult, ThreadPoolConfig
-};
-#[cfg(feature = "websockets")]
-pub use websockets::{
-    WebSocketServer, WebSocketConfig, WSMessage, AudioProcessor as WSAudioProcessor,
-    ConnectionManager, ServerStats
-};
-#[cfg(feature = "streaming-audio")]
-pub use streaming_audio::{
-    StreamingAudioProcessor, AudioStreamConfig, AudioChunk, AudioStream,
-    DevicePreference, StreamingMetrics
+    ContextConfig, CpuOptimizations, GpuOptimizations, LoggingConfig, ModelConfig, MullamaConfig,
+    PerformanceConfig, SamplingConfig,
 };
 #[cfg(feature = "format-conversion")]
 pub use format_conversion::{
-    AudioConverter, ImageConverter, AudioConverterConfig, ImageConverterConfig,
-    ConversionConfig, AudioConversionResult, ImageConversionResult
+    AudioConversionResult, AudioConverter, AudioConverterConfig, ConversionConfig,
+    ImageConversionResult, ImageConverter, ImageConverterConfig,
 };
 #[cfg(feature = "multimodal")]
 pub use multimodal::{
-    MultimodalProcessor, MultimodalInput, MultimodalOutput, ImageInput, AudioInput,
-    VideoInput, AudioFormat, AudioFeatures
+    AudioFeatures, AudioFormat, AudioInput, ImageInput, MultimodalInput, MultimodalOutput,
+    MultimodalProcessor, VideoInput,
+};
+#[cfg(feature = "parallel")]
+pub use parallel::{BatchGenerationConfig, GenerationResult, ParallelProcessor, ThreadPoolConfig};
+#[cfg(feature = "streaming")]
+pub use streaming::{StreamConfig, TokenData, TokenStream};
+#[cfg(feature = "streaming-audio")]
+pub use streaming_audio::{
+    AudioChunk, AudioStream, AudioStreamConfig, DevicePreference, StreamingAudioProcessor,
+    StreamingMetrics,
+};
+#[cfg(feature = "tokio-runtime")]
+pub use tokio_integration::{
+    ModelPool, MullamaRuntime, MullamaRuntimeBuilder, RuntimeMetrics, TaskManager,
+};
+#[cfg(feature = "web")]
+pub use web::{
+    create_router, ApiMetrics, AppError, AppState, GenerateRequest, GenerateResponse,
+    TokenizeRequest, TokenizeResponse,
+};
+#[cfg(feature = "websockets")]
+pub use websockets::{
+    AudioProcessor as WSAudioProcessor, ConnectionManager, ServerStats, WSMessage, WebSocketConfig,
+    WebSocketServer,
 };
 
 // Re-export advanced features (commented out for now)
@@ -402,47 +391,45 @@ pub use multimodal::{
 
 // Re-export sys types for advanced users
 pub use sys::{
-    llama_vocab_type, llama_rope_type, llama_token_type, llama_token_attr,
-    llama_ftype, llama_rope_scaling_type, llama_pooling_type, llama_attention_type,
-    llama_split_mode, llama_model_kv_override_type, ggml_type, ggml_numa_strategy,
-    llama_token, llama_pos, llama_seq_id, llama_memory_t,
-    LLAMA_DEFAULT_SEED, LLAMA_TOKEN_NULL,
+    ggml_numa_strategy, ggml_type, llama_attention_type, llama_ftype, llama_memory_t,
+    llama_model_kv_override_type, llama_pooling_type, llama_pos, llama_rope_scaling_type,
+    llama_rope_type, llama_seq_id, llama_split_mode, llama_token, llama_token_attr,
+    llama_token_type, llama_vocab_type, LLAMA_DEFAULT_SEED, LLAMA_TOKEN_NULL,
 };
 
 /// Convenience prelude for common imports
 pub mod prelude {
     pub use crate::{
-        Model, ModelParams, Context, ContextParams,
-        MullamaError, Batch, SamplerParams, SamplerChain,
-        MullamaConfig, ModelBuilder, ContextBuilder, SamplerBuilder,
+        Batch, Context, ContextBuilder, ContextParams, Model, ModelBuilder, ModelParams,
+        MullamaConfig, MullamaError, SamplerBuilder, SamplerChain, SamplerParams,
     };
 
     #[cfg(feature = "async")]
-    pub use crate::{AsyncModel, AsyncContext};
+    pub use crate::{AsyncContext, AsyncModel};
 
     #[cfg(feature = "streaming")]
-    pub use crate::{TokenStream, StreamConfig, TokenData};
+    pub use crate::{StreamConfig, TokenData, TokenStream};
 
     #[cfg(feature = "web")]
-    pub use crate::{AppState, create_router, GenerateRequest, GenerateResponse};
+    pub use crate::{create_router, AppState, GenerateRequest, GenerateResponse};
 
     #[cfg(feature = "tokio-runtime")]
-    pub use crate::{MullamaRuntime, TaskManager, ModelPool};
+    pub use crate::{ModelPool, MullamaRuntime, TaskManager};
 
     #[cfg(feature = "parallel")]
-    pub use crate::{ParallelProcessor, BatchGenerationConfig};
+    pub use crate::{BatchGenerationConfig, ParallelProcessor};
 
     #[cfg(feature = "websockets")]
-    pub use crate::{WebSocketServer, WSMessage};
+    pub use crate::{WSMessage, WebSocketServer};
 
     #[cfg(feature = "streaming-audio")]
-    pub use crate::{StreamingAudioProcessor, AudioStreamConfig, AudioChunk};
+    pub use crate::{AudioChunk, AudioStreamConfig, StreamingAudioProcessor};
 
     #[cfg(feature = "format-conversion")]
     pub use crate::{AudioConverter, ImageConverter};
 
     #[cfg(feature = "multimodal")]
-    pub use crate::{MultimodalProcessor, MultimodalInput, ImageInput, AudioInput};
+    pub use crate::{AudioInput, ImageInput, MultimodalInput, MultimodalProcessor};
 }
 
 #[cfg(test)]
@@ -459,7 +446,7 @@ mod tests {
         }
         assert_eq!(2 + 2, 4);
     }
-    
+
     #[test]
     fn test_model_params_default() {
         // Test that ModelParams has sensible defaults
@@ -478,7 +465,7 @@ mod tests {
         assert!(params.n_batch > 0);
         assert!(params.n_threads > 0);
     }
-    
+
     #[test]
     fn test_token_structure() {
         // Test that we can create token structs
@@ -491,33 +478,31 @@ mod tests {
         assert_eq!(token.text, "test");
         assert_eq!(token.score, 0.5);
     }
-    
+
     #[test]
     fn test_batch_structure() {
         // Test that we can create batch structs
         let batch = batch::Batch::default();
         assert!(batch.is_empty());
     }
-    
+
     #[test]
     fn test_session_structure() {
         // Test that we can create session structs
-        let session = session::Session {
-            data: vec![],
-        };
+        let session = session::Session { data: vec![] };
         assert!(session.data.is_empty());
     }
-    
+
     #[test]
     fn test_sampling_structure() {
         // Test that we can create sampler structs
-        let sampler = sampling::Sampler::new();
+        let _sampler = sampling::Sampler::new().expect("Failed to create sampler");
         let params = sampling::SamplerParams::default();
         assert_eq!(params.temperature, 0.8);
         assert_eq!(params.top_p, 0.95);
         assert_eq!(params.top_k, 40);
     }
-    
+
     #[test]
     fn test_embedding_structure() {
         // Test that we can create embedding structs
@@ -525,7 +510,7 @@ mod tests {
         assert_eq!(embeddings.len(), 1);
         assert_eq!(embeddings.dimension, 3);
     }
-    
+
     #[test]
     fn test_memory_manager_structure() {
         // Test that we can create memory manager structs
@@ -533,7 +518,7 @@ mod tests {
         // New manager should not be valid (no context associated)
         assert!(!memory_manager.is_valid());
     }
-    
+
     #[test]
     fn test_vocabulary_structure() {
         // Test that we can create vocabulary structs

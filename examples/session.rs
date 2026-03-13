@@ -5,7 +5,7 @@
 //! 2. Session API usage patterns
 //! 3. State management concepts
 
-use mullama::{Model, ContextParams, Session, MullamaError};
+use mullama::{ContextParams, Model, MullamaError, Session};
 use std::sync::Arc;
 
 fn main() -> Result<(), MullamaError> {
@@ -26,12 +26,15 @@ fn main() -> Result<(), MullamaError> {
 
     println!("Working with session data...");
     println!("   Session data length: {}", session.data.len());
-    println!("   First few bytes: {:?}", &session.data[..std::cmp::min(4, session.data.len())]);
+    println!(
+        "   First few bytes: {:?}",
+        &session.data[..std::cmp::min(4, session.data.len())]
+    );
 
     // Example of context parameters for session management
     println!("Creating context parameters for session management...");
     let mut ctx_params = ContextParams::default();
-    ctx_params.n_ctx = 4096;  // Set context size for state management
+    ctx_params.n_ctx = 4096; // Set context size for state management
     println!(" Context parameters configured");
     println!("   Context size: {}", ctx_params.n_ctx);
 
@@ -49,7 +52,10 @@ fn main() -> Result<(), MullamaError> {
     let large_session = Session {
         data: large_session_data,
     };
-    println!(" Large session created with {} bytes", large_session.data.len());
+    println!(
+        " Large session created with {} bytes",
+        large_session.data.len()
+    );
 
     println!("Session management example completed successfully!");
 

@@ -315,7 +315,9 @@ fn configure_opencl_linking() {
         if pkg_config::probe_library("OpenCL").is_ok() {
             println!("cargo:rustc-link-lib=OpenCL");
         } else {
-            println!("cargo:warning=OpenCL not found. Install opencl-headers and ocl-icd-opencl-dev");
+            println!(
+                "cargo:warning=OpenCL not found. Install opencl-headers and ocl-icd-opencl-dev"
+            );
         }
     }
 
@@ -340,7 +342,9 @@ fn print_dependency_errors() {
         }
         "macos" => {
             if !command_exists("clang") {
-                println!("cargo:warning=Xcode command line tools not found. Run: xcode-select --install");
+                println!(
+                    "cargo:warning=Xcode command line tools not found. Run: xcode-select --install"
+                );
             }
             if !command_exists("cmake") {
                 println!("cargo:warning=CMake not found. Install with: brew install cmake");
@@ -373,7 +377,7 @@ fn command_exists(command: &str) -> bool {
 fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
     let include_path = llama_cpp_path.join("include");
     let ggml_include_path = llama_cpp_path.join("ggml").join("include");
-    
+
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_path.display()))
@@ -393,7 +397,7 @@ fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
         .allowlist_type("ggml_.*")
         .generate()
         .expect("Unable to generate bindings");
-    
+
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .write_to_file(out_path.join("bindings.rs"))

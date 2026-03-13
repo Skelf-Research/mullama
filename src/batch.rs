@@ -12,13 +12,7 @@ pub struct Batch {
 impl Batch {
     /// Create a new batch with allocated memory
     pub fn new(max_tokens: usize, embd: i32, max_seq: usize) -> Self {
-        let inner = unsafe {
-            sys::llama_batch_init(
-                max_tokens as i32,
-                embd,
-                max_seq as i32,
-            )
-        };
+        let inner = unsafe { sys::llama_batch_init(max_tokens as i32, embd, max_seq as i32) };
 
         Self {
             inner: Some(inner),
@@ -42,10 +36,7 @@ impl Batch {
         let mut tokens_storage = tokens.to_vec();
 
         let inner = unsafe {
-            sys::llama_batch_get_one(
-                tokens_storage.as_mut_ptr(),
-                tokens_storage.len() as i32,
-            )
+            sys::llama_batch_get_one(tokens_storage.as_mut_ptr(), tokens_storage.len() as i32)
         };
 
         Self {
@@ -54,7 +45,7 @@ impl Batch {
             needs_free: false, // llama_batch_get_one doesn't allocate memory that needs freeing
         }
     }
-    
+
     /// Get the internal llama_batch struct
     pub(crate) fn as_llama_batch(&self) -> Option<&sys::llama_batch> {
         self.inner.as_ref()
@@ -64,20 +55,24 @@ impl Batch {
     pub fn get_llama_batch(&self) -> Option<&sys::llama_batch> {
         self.inner.as_ref()
     }
-    
+
     /// Take the internal llama_batch struct (consuming the Batch)
     pub(crate) fn take_llama_batch(&mut self) -> Option<sys::llama_batch> {
         self.inner.take()
     }
-    
+
     /// Get the number of tokens in the batch
     pub fn len(&self) -> usize {
-        self.inner.as_ref().map_or(0, |batch| batch.n_tokens as usize)
+        self.inner
+            .as_ref()
+            .map_or(0, |batch| batch.n_tokens as usize)
     }
-    
+
     /// Check if the batch is empty
     pub fn is_empty(&self) -> bool {
-        self.inner.as_ref().map_or(true, |batch| batch.n_tokens == 0)
+        self.inner
+            .as_ref()
+            .map_or(true, |batch| batch.n_tokens == 0)
     }
 }
 

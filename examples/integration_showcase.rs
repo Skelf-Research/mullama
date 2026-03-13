@@ -9,14 +9,14 @@
 //!
 //! Run with: cargo run --example integration_showcase --features full
 
-use mullama::prelude::*;
 use mullama::config::presets;
+use mullama::prelude::*;
 use std::sync::Arc;
 
 #[cfg(feature = "async")]
-use mullama::{AsyncModel, TokenStream, StreamConfig, AppState, create_router};
-#[cfg(feature = "async")]
 use futures::StreamExt;
+#[cfg(feature = "async")]
+use mullama::{create_router, AppState, AsyncModel, StreamConfig, TokenStream};
 #[cfg(feature = "async")]
 use tokio::net::TcpListener;
 
@@ -76,14 +76,16 @@ async fn showcase_configuration() -> Result<(), MullamaError> {
 
     // Use preset configurations
     let creative_config = presets::creative_writing();
-    println!("🎨 Creative writing preset: temp={}, top_k={}",
-             creative_config.sampling.temperature,
-             creative_config.sampling.top_k);
+    println!(
+        "🎨 Creative writing preset: temp={}, top_k={}",
+        creative_config.sampling.temperature, creative_config.sampling.top_k
+    );
 
     let code_config = presets::code_generation();
-    println!("💻 Code generation preset: temp={}, top_k={}",
-             code_config.sampling.temperature,
-             code_config.sampling.top_k);
+    println!(
+        "💻 Code generation preset: temp={}, top_k={}",
+        code_config.sampling.temperature, code_config.sampling.top_k
+    );
 
     // Validate configuration
     match config.validate() {
@@ -126,11 +128,7 @@ async fn showcase_builder_patterns() -> Result<(), MullamaError> {
             .temperature(0.8)
             .top_k(50)
             .nucleus(0.95)
-            .penalties(|p| p
-                .repetition(1.1)
-                .frequency(0.1)
-                .presence(0.1)
-            )
+            .penalties(|p| p.repetition(1.1).frequency(0.1).presence(0.1))
             .preset(mullama::builder::presets::creative_sampling);
 
         println!("🏗️  Sampler builder configured with creative sampling");
@@ -176,8 +174,10 @@ async fn showcase_streaming() -> Result<(), MullamaError> {
         .temperature(0.8)
         .include_probabilities(true);
 
-    println!("📡 Stream config: max_tokens={}, temp={}",
-             config.max_tokens, config.sampler_params.temperature);
+    println!(
+        "📡 Stream config: max_tokens={}, temp={}",
+        config.max_tokens, config.sampler_params.temperature
+    );
 
     // Create token stream (placeholder)
     // let mut stream = TokenStream::new(model, "Once upon a time", config).await?;

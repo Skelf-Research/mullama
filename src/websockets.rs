@@ -61,15 +61,15 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "websockets")]
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    net::SocketAddr,
 };
 
 #[cfg(all(feature = "websockets", feature = "async"))]
-use crate::{AsyncModel, TokenStream, StreamConfig, MullamaError};
+use crate::{AsyncModel, MullamaError, StreamConfig, TokenStream};
 
 /// WebSocket server for real-time communication
 #[cfg(feature = "websockets")]
@@ -109,12 +109,14 @@ impl WebSocketServer {
         let app = self.create_router();
         let addr = SocketAddr::from(([0, 0, 0, 0], self.config.port));
 
-        let listener = tokio::net::TcpListener::bind(addr).await
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
             .map_err(|e| MullamaError::ConfigError(format!("Failed to bind: {}", e)))?;
 
         println!("✅ WebSocket server listening on {}", addr);
 
-        axum::serve(listener, app).await
+        axum::serve(listener, app)
+            .await
             .map_err(|e| MullamaError::ConfigError(format!("Server error: {}", e)))?;
 
         Ok(())
@@ -160,7 +162,10 @@ impl WebSocketServerBuilder {
 
         // Initialize audio processor if audio is enabled
         let audio_processor = if self.config.enable_audio {
-            Some(self.audio_processor.unwrap_or_else(|| Arc::new(AudioProcessor::new())))
+            Some(
+                self.audio_processor
+                    .unwrap_or_else(|| Arc::new(AudioProcessor::new())),
+            )
         } else {
             self.audio_processor
         };
@@ -277,11 +282,15 @@ impl ConnectionManager {
         let mut connections = self.connections.write().await;
 
         if connections.len() >= self.max_connections {
-            return Err(MullamaError::ConfigError("Max connections reached".to_string()));
+            return Err(MullamaError::ConfigError(
+                "Max connections reached".to_string(),
+            ));
         }
 
         connections.insert(connection.id.clone(), connection);
-        self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .active_connections
+            .fetch_add(1, Ordering::Relaxed);
         self.stats.total_connections.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
@@ -291,14 +300,22 @@ impl ConnectionManager {
     pub async fn remove_connection(&self, connection_id: &str) {
         let mut connections = self.connections.write().await;
         if connections.remove(connection_id).is_some() {
-            self.stats.active_connections.fetch_sub(1, Ordering::Relaxed);
+            self.stats
+                .active_connections
+                .fetch_sub(1, Ordering::Relaxed);
         }
     }
 
     /// Join a room
-    pub async fn join_room(&self, connection_id: String, room_id: String) -> Result<(), MullamaError> {
+    pub async fn join_room(
+        &self,
+        connection_id: String,
+        room_id: String,
+    ) -> Result<(), MullamaError> {
         let mut rooms = self.rooms.write().await;
-        let room = rooms.entry(room_id.clone()).or_insert_with(|| Room::new(room_id));
+        let room = rooms
+            .entry(room_id.clone())
+            .or_insert_with(|| Room::new(room_id));
         room.add_member(connection_id);
         Ok(())
     }
@@ -315,7 +332,11 @@ impl ConnectionManager {
     }
 
     /// Broadcast message to room
-    pub async fn broadcast_to_room(&self, room_id: &str, message: &WSMessage) -> Result<(), MullamaError> {
+    pub async fn broadcast_to_room(
+        &self,
+        room_id: &str,
+        message: &WSMessage,
+    ) -> Result<(), MullamaError> {
         let rooms = self.rooms.read().await;
         if let Some(room) = rooms.get(room_id) {
             let connections = self.connections.read().await;
@@ -404,26 +425,51 @@ impl Room {
 #[serde(tag = "type", content = "data")]
 pub enum WSMessage {
     /// Text message
-    Text { content: String },
+    Text {
+        content: String,
+    },
     /// Generation request
-    Generate { prompt: String, config: Option<GenerationConfig> },
+    Generate {
+        prompt: String,
+        config: Option<GenerationConfig>,
+    },
     /// Streaming token
-    Token { text: String, is_final: bool },
+    Token {
+        text: String,
+        is_final: bool,
+    },
     /// Audio data
-    Audio { data: Vec<u8>, format: AudioFormat },
+    Audio {
+        data: Vec<u8>,
+        format: AudioFormat,
+    },
     /// System message
-    System { message: String },
+    System {
+        message: String,
+    },
     /// Error message
-    Error { error: String },
+    Error {
+        error: String,
+    },
     /// Ping/Pong for keepalive
     Ping,
     Pong,
     /// Room management
-    JoinRoom { room_id: String },
-    LeaveRoom { room_id: String },
+    JoinRoom {
+        room_id: String,
+    },
+    LeaveRoom {
+        room_id: String,
+    },
     /// User joined/left notifications
-    UserJoined { user_id: String, room_id: String },
-    UserLeft { user_id: String, room_id: String },
+    UserJoined {
+        user_id: String,
+        room_id: String,
+    },
+    UserLeft {
+        user_id: String,
+        room_id: String,
+    },
 }
 
 /// Generation configuration for WebSocket requests
@@ -466,7 +512,11 @@ impl AudioProcessor {
     }
 
     /// Process incoming audio data
-    pub async fn process_audio(&self, data: &[u8], format: &AudioFormat) -> Result<Vec<u8>, MullamaError> {
+    pub async fn process_audio(
+        &self,
+        data: &[u8],
+        format: &AudioFormat,
+    ) -> Result<Vec<u8>, MullamaError> {
         // Placeholder for audio processing
         // In real implementation, this would:
         // 1. Convert audio format if needed
@@ -474,8 +524,12 @@ impl AudioProcessor {
         // 3. Apply noise reduction
         // 4. Normalize audio levels
 
-        println!("🎵 Processing audio: {} bytes, {}Hz, {} channels",
-                data.len(), format.sample_rate, format.channels);
+        println!(
+            "🎵 Processing audio: {} bytes, {}Hz, {} channels",
+            data.len(),
+            format.sample_rate,
+            format.channels
+        );
 
         Ok(data.to_vec())
     }
@@ -530,10 +584,7 @@ pub struct ServerStats {
 
 // WebSocket handler functions
 #[cfg(feature = "websockets")]
-async fn websocket_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| handle_websocket(socket, state, ConnectionType::General))
 }
 
@@ -547,10 +598,7 @@ async fn chat_websocket_handler(
 }
 
 #[cfg(feature = "websockets")]
-async fn audio_websocket_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn audio_websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| handle_websocket(socket, state, ConnectionType::Audio))
 }
 
@@ -607,7 +655,8 @@ async fn handle_websocket(socket: WebSocket, state: AppState, connection_type: C
                             format: "pcm".to_string(),
                         };
 
-                        if let Ok(_processed) = audio_processor.process_audio(&data, &format).await {
+                        if let Ok(_processed) = audio_processor.process_audio(&data, &format).await
+                        {
                             // Process audio data
                         }
                     }
@@ -624,7 +673,9 @@ async fn handle_websocket(socket: WebSocket, state: AppState, connection_type: C
             }
         }
 
-        connections_clone.remove_connection(&connection_id_clone).await;
+        connections_clone
+            .remove_connection(&connection_id_clone)
+            .await;
     });
 
     // Keep connection alive and handle cleanup
@@ -650,7 +701,11 @@ async fn handle_chat_websocket(socket: WebSocket, state: AppState, room_id: Stri
     let connection_id = uuid::Uuid::new_v4().to_string();
 
     // Join the specified room
-    if let Err(e) = state.connections.join_room(connection_id.clone(), room_id.clone()).await {
+    if let Err(e) = state
+        .connections
+        .join_room(connection_id.clone(), room_id.clone())
+        .await
+    {
         eprintln!("❌ Failed to join room: {}", e);
         return;
     }
@@ -663,7 +718,10 @@ async fn handle_chat_websocket(socket: WebSocket, state: AppState, room_id: Stri
         room_id: room_id.clone(),
     };
 
-    let _ = state.connections.broadcast_to_room(&room_id, &join_message).await;
+    let _ = state
+        .connections
+        .broadcast_to_room(&room_id, &join_message)
+        .await;
 
     // Handle the WebSocket connection (similar to general handler)
     handle_websocket(socket, state, ConnectionType::Chat).await;
@@ -696,7 +754,11 @@ async fn handle_message(message: WSMessage, state: &AppState, connection_id: &st
         }
         WSMessage::Audio { data, format } => {
             if let Some(audio_processor) = &state.audio_processor {
-                println!("🎵 Audio message from {}: {} bytes", connection_id, data.len());
+                println!(
+                    "🎵 Audio message from {}: {} bytes",
+                    connection_id,
+                    data.len()
+                );
 
                 // Process audio and potentially convert to text
                 if let Ok(text) = audio_processor.speech_to_text(&data).await {
@@ -705,7 +767,10 @@ async fn handle_message(message: WSMessage, state: &AppState, connection_id: &st
             }
         }
         WSMessage::JoinRoom { room_id } => {
-            let _ = state.connections.join_room(connection_id.to_string(), room_id).await;
+            let _ = state
+                .connections
+                .join_room(connection_id.to_string(), room_id)
+                .await;
         }
         WSMessage::LeaveRoom { room_id } => {
             state.connections.leave_room(connection_id, &room_id).await;
@@ -745,8 +810,11 @@ pub mod utils {
 
     /// Convert HTTP upgrade to WebSocket
     pub fn upgrade_connection(headers: &HashMap<String, String>) -> bool {
-        headers.get("upgrade").map(|v| v.to_lowercase()) == Some("websocket".to_string()) &&
-        headers.get("connection").map(|v| v.to_lowercase().contains("upgrade")) == Some(true)
+        headers.get("upgrade").map(|v| v.to_lowercase()) == Some("websocket".to_string())
+            && headers
+                .get("connection")
+                .map(|v| v.to_lowercase().contains("upgrade"))
+                == Some(true)
     }
 }
 

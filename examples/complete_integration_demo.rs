@@ -12,10 +12,15 @@
 use mullama::prelude::*;
 use std::sync::Arc;
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 use mullama::{
-    MullamaRuntime, TaskManager, ParallelProcessor, WebSocketServer, WebSocketConfig,
-    MultimodalProcessor, ImageInput, AudioInput, AudioFeatures
+    AudioFeatures, AudioInput, ImageInput, MullamaRuntime, MultimodalProcessor, ParallelProcessor,
+    TaskManager, WebSocketConfig, WebSocketServer,
 };
 
 #[tokio::main]
@@ -23,7 +28,12 @@ async fn main() -> Result<(), MullamaError> {
     println!("🚀 Complete Mullama Integration Demo");
     println!("===================================");
 
-    #[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+    #[cfg(all(
+        feature = "tokio-runtime",
+        feature = "parallel",
+        feature = "websockets",
+        feature = "multimodal"
+    ))]
     {
         // 1. Setup Tokio Runtime with Task Management
         let runtime = setup_runtime().await?;
@@ -35,11 +45,7 @@ async fn main() -> Result<(), MullamaError> {
         let multimodal_processor = setup_multimodal_processing().await?;
 
         // 4. Demonstrate Complete Workflow
-        demonstrate_complete_workflow(
-            &runtime,
-            &parallel_processor,
-            &multimodal_processor,
-        ).await?;
+        demonstrate_complete_workflow(&runtime, &parallel_processor, &multimodal_processor).await?;
 
         // 5. Setup WebSocket Server (would run in background)
         setup_websocket_server().await?;
@@ -51,7 +57,12 @@ async fn main() -> Result<(), MullamaError> {
         runtime.shutdown().await;
     }
 
-    #[cfg(not(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal")))]
+    #[cfg(not(all(
+        feature = "tokio-runtime",
+        feature = "parallel",
+        feature = "websockets",
+        feature = "multimodal"
+    )))]
     {
         println!("❌ This demo requires all integration features to be enabled");
         println!("Run with: cargo run --example complete_integration_demo --features full");
@@ -61,7 +72,12 @@ async fn main() -> Result<(), MullamaError> {
     Ok(())
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn setup_runtime() -> Result<Arc<MullamaRuntime>, MullamaError> {
     println!("\n🔧 Setting up Tokio Runtime");
     println!("===========================");
@@ -86,7 +102,12 @@ async fn setup_runtime() -> Result<Arc<MullamaRuntime>, MullamaError> {
     Ok(Arc::new(runtime))
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn setup_parallel_processing() -> Result<Arc<ParallelProcessor>, MullamaError> {
     println!("\n⚡ Setting up Parallel Processing");
     println!("=================================");
@@ -112,10 +133,17 @@ async fn setup_parallel_processing() -> Result<Arc<ParallelProcessor>, MullamaEr
     println!("✅ Parallel processing demo completed");
 
     // Return placeholder
-    Ok(Arc::new(ParallelProcessor::new(Arc::new(Model { model_ptr: std::ptr::null_mut() }))))
+    Ok(Arc::new(ParallelProcessor::new(Arc::new(Model {
+        model_ptr: std::ptr::null_mut(),
+    }))))
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn setup_multimodal_processing() -> Result<Arc<MultimodalProcessor>, MullamaError> {
     println!("\n🎭 Setting up Multimodal Processing");
     println!("===================================");
@@ -152,7 +180,12 @@ async fn setup_multimodal_processing() -> Result<Arc<MultimodalProcessor>, Mulla
     Ok(Arc::new(processor))
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn setup_websocket_server() -> Result<(), MullamaError> {
     println!("\n🌐 Setting up WebSocket Server");
     println!("==============================");
@@ -163,9 +196,7 @@ async fn setup_websocket_server() -> Result<(), MullamaError> {
         .enable_audio()
         .enable_compression();
 
-    let server = WebSocketServer::new(config)
-        .build()
-        .await?;
+    let server = WebSocketServer::new(config).build().await?;
 
     println!("🚀 WebSocket server configured on port 8080");
     println!("📍 Available endpoints:");
@@ -184,7 +215,12 @@ async fn setup_websocket_server() -> Result<(), MullamaError> {
     Ok(())
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn demonstrate_complete_workflow(
     runtime: &Arc<MullamaRuntime>,
     parallel_processor: &Arc<ParallelProcessor>,
@@ -233,8 +269,14 @@ async fn demonstrate_complete_workflow(
     let metrics = runtime.metrics().summary().await;
     println!("   📊 Runtime metrics:");
     println!("      - Tasks spawned: {}", metrics.tasks_spawned);
-    println!("      - Generation requests: {}", metrics.generation_requests);
-    println!("      - Average generation time: {:?}", metrics.average_generation_time);
+    println!(
+        "      - Generation requests: {}",
+        metrics.generation_requests
+    );
+    println!(
+        "      - Average generation time: {:?}",
+        metrics.average_generation_time
+    );
 
     println!("   ✅ Runtime coordination completed");
 
@@ -259,7 +301,12 @@ async fn demonstrate_complete_workflow(
     Ok(())
 }
 
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
     println!("\n🎯 Advanced Integration Patterns");
     println!("================================");
@@ -296,7 +343,8 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
         println!("   🎭 {}: {}", modality, feature);
     }
 
-    let combined_analysis = "Professional meeting setting with confident discussion of business metrics";
+    let combined_analysis =
+        "Professional meeting setting with confident discussion of business metrics";
     println!("   🎯 Combined analysis: {}", combined_analysis);
 
     println!("   ✅ Cross-modal analysis completed");
@@ -319,15 +367,13 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
     println!("4️⃣ Adaptive processing pattern...");
 
     // Simulate adaptive resource allocation
-    let processing_loads = vec![
-        ("Light", 2),
-        ("Medium", 4),
-        ("Heavy", 8),
-        ("Peak", 12),
-    ];
+    let processing_loads = vec![("Light", 2), ("Medium", 4), ("Heavy", 8), ("Peak", 12)];
 
     for (load_type, threads) in processing_loads {
-        println!("   📊 {} load detected, allocating {} threads", load_type, threads);
+        println!(
+            "   📊 {} load detected, allocating {} threads",
+            load_type, threads
+        );
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
@@ -337,7 +383,12 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
 }
 
 // Demo configuration utilities
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 fn demonstrate_configuration_integration() {
     println!("\n⚙️ Configuration Integration");
     println!("============================");
@@ -377,8 +428,14 @@ fn demonstrate_configuration_integration() {
     };
 
     println!("🔧 Created comprehensive configuration:");
-    println!("   - Model: {} with {} GPU layers", config.model.path, config.model.gpu_layers);
-    println!("   - Context: {} tokens, {} batch size", config.context.n_ctx, config.context.n_batch);
+    println!(
+        "   - Model: {} with {} GPU layers",
+        config.model.path, config.model.gpu_layers
+    );
+    println!(
+        "   - Context: {} tokens, {} batch size",
+        config.context.n_ctx, config.context.n_batch
+    );
     println!("   - Performance: monitoring enabled, memory optimized");
 
     // 2. Builder pattern integration
@@ -397,7 +454,12 @@ fn demonstrate_configuration_integration() {
 }
 
 // Performance monitoring utilities
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn demonstrate_performance_monitoring() {
     println!("\n📊 Performance Monitoring");
     println!("=========================");
@@ -426,7 +488,12 @@ async fn demonstrate_performance_monitoring() {
 }
 
 // Error handling demonstration
-#[cfg(all(feature = "tokio-runtime", feature = "parallel", feature = "websockets", feature = "multimodal"))]
+#[cfg(all(
+    feature = "tokio-runtime",
+    feature = "parallel",
+    feature = "websockets",
+    feature = "multimodal"
+))]
 async fn demonstrate_error_handling() {
     println!("\n🛡️ Error Handling");
     println!("==================");

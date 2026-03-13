@@ -46,31 +46,31 @@
 //! }
 //! ```
 
-use crate::{MullamaError, AudioInput, AudioFormat, AudioFeatures};
+use crate::{AudioFeatures, AudioFormat, AudioInput, MullamaError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Interval};
 use tokio_stream::{Stream, StreamExt};
-use serde::{Serialize, Deserialize};
 
 #[cfg(feature = "streaming-audio")]
 use {
     cpal::{
-        Device, Host, Stream, StreamConfig, SupportedStreamConfig,
-        SampleFormat, SampleRate, ChannelCount, BufferSize,
-        traits::{DeviceTrait, HostTrait, StreamTrait}
+        traits::{DeviceTrait, HostTrait, StreamTrait},
+        BufferSize, ChannelCount, Device, Host, SampleFormat, SampleRate, Stream, StreamConfig,
+        SupportedStreamConfig,
     },
-    ringbuf::{HeapRb, HeapProducer, HeapConsumer},
     dasp::{
-        signal::{self, Signal},
-        ring_buffer::Fixed,
         interpolate::linear::Linear,
+        ring_buffer::Fixed,
+        signal::{self, Signal},
         Frame, Sample,
     },
+    ringbuf::{HeapConsumer, HeapProducer, HeapRb},
 };
 
 /// Configuration for real-time audio streaming
@@ -116,9 +116,9 @@ pub struct AudioStreamConfig {
 impl Default for AudioStreamConfig {
     fn default() -> Self {
         Self {
-            sample_rate: 16000,  // Good for speech processing
-            channels: 1,         // Mono for efficiency
-            buffer_size: 512,    // Balance between latency and stability
+            sample_rate: 16000, // Good for speech processing
+            channels: 1,        // Mono for efficiency
+            buffer_size: 512,   // Balance between latency and stability
             format: AudioFormat::WAV,
             enable_noise_reduction: true,
             enable_voice_detection: true,
@@ -216,7 +216,8 @@ pub struct AudioChunk {
 
 impl AudioChunk {
     pub fn new(samples: Vec<f32>, channels: u16, sample_rate: u32) -> Self {
-        let duration = Duration::from_secs_f32(samples.len() as f32 / (sample_rate * channels as u32) as f32);
+        let duration =
+            Duration::from_secs_f32(samples.len() as f32 / (sample_rate * channels as u32) as f32);
         let signal_level = calculate_rms(&samples);
 
         Self {
@@ -334,7 +335,9 @@ impl StreamingAudioProcessor {
 
         #[cfg(not(feature = "streaming-audio"))]
         {
-            Err(MullamaError::FeatureNotAvailable("streaming-audio feature not enabled".to_string()))
+            Err(MullamaError::FeatureNotAvailable(
+                "streaming-audio feature not enabled".to_string(),
+            ))
         }
     }
 
@@ -360,7 +363,9 @@ impl StreamingAudioProcessor {
 
     #[cfg(not(feature = "streaming-audio"))]
     pub async fn initialize(&mut self) -> Result<(), MullamaError> {
-        Err(MullamaError::FeatureNotAvailable("streaming-audio feature not enabled".to_string()))
+        Err(MullamaError::FeatureNotAvailable(
+            "streaming-audio feature not enabled".to_string(),
+        ))
     }
 
     /// Start real-time audio capture
@@ -378,33 +383,40 @@ impl StreamingAudioProcessor {
             let stream_config = self.build_stream_config()?;
 
             // Create audio processing callback
-            let producer = self.audio_producer.take()
-                .ok_or_else(|| MullamaError::StreamingError("Ring buffer not initialized".to_string()))?;
+            let producer = self.audio_producer.take().ok_or_else(|| {
+                MullamaError::StreamingError("Ring buffer not initialized".to_string())
+            })?;
 
             let config = self.config.clone();
             let metrics = self.metrics.clone();
             let is_recording = self.is_recording.clone();
 
-            let stream = self.input_device.as_ref().unwrap()
-                .build_input_stream(
-                    &stream_config,
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let _guard = tokio::runtime::Handle::try_current();
-                        if let Ok(guard) = _guard {
-                            guard.spawn(async move {
-                                if let Ok(recording) = is_recording.read().await {
-                                    if *recording {
-                                        Self::process_audio_callback(data, &producer, &config, &chunk_sender, &metrics).await;
-                                    }
+            let stream = self.input_device.as_ref().unwrap().build_input_stream(
+                &stream_config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let _guard = tokio::runtime::Handle::try_current();
+                    if let Ok(guard) = _guard {
+                        guard.spawn(async move {
+                            if let Ok(recording) = is_recording.read().await {
+                                if *recording {
+                                    Self::process_audio_callback(
+                                        data,
+                                        &producer,
+                                        &config,
+                                        &chunk_sender,
+                                        &metrics,
+                                    )
+                                    .await;
                                 }
-                            });
-                        }
-                    },
-                    move |err| {
-                        eprintln!("Audio stream error: {}", err);
-                    },
-                    None
-                )?;
+                            }
+                        });
+                    }
+                },
+                move |err| {
+                    eprintln!("Audio stream error: {}", err);
+                },
+                None,
+            )?;
 
             stream.play()?;
             self.stream = Some(stream);
@@ -416,7 +428,9 @@ impl StreamingAudioProcessor {
 
         #[cfg(not(feature = "streaming-audio"))]
         {
-            Err(MullamaError::FeatureNotAvailable("streaming-audio feature not enabled".to_string()))
+            Err(MullamaError::FeatureNotAvailable(
+                "streaming-audio feature not enabled".to_string(),
+            ))
         }
     }
 
@@ -468,7 +482,8 @@ impl StreamingAudioProcessor {
     /// Get available audio input devices
     #[cfg(feature = "streaming-audio")]
     pub fn list_input_devices(&self) -> Result<Vec<String>, MullamaError> {
-        let devices: Result<Vec<String>, _> = self.host
+        let devices: Result<Vec<String>, _> = self
+            .host
             .input_devices()?
             .map(|device| device.name().map_err(MullamaError::from))
             .collect();
@@ -478,22 +493,25 @@ impl StreamingAudioProcessor {
 
     #[cfg(not(feature = "streaming-audio"))]
     pub fn list_input_devices(&self) -> Result<Vec<String>, MullamaError> {
-        Err(MullamaError::FeatureNotAvailable("streaming-audio feature not enabled".to_string()))
+        Err(MullamaError::FeatureNotAvailable(
+            "streaming-audio feature not enabled".to_string(),
+        ))
     }
 
     // Private helper methods
     #[cfg(feature = "streaming-audio")]
     fn select_input_device(&self) -> Result<Device, MullamaError> {
         match &self.config.device_preference {
-            DevicePreference::Default => {
-                self.host.default_input_device()
-                    .ok_or_else(|| MullamaError::AudioError("No default input device available".to_string()))
-            }
-            DevicePreference::ByName(name) => {
-                self.host.input_devices()?
-                    .find(|device| device.name().map(|n| n == *name).unwrap_or(false))
-                    .ok_or_else(|| MullamaError::AudioError(format!("Input device '{}' not found", name)))
-            }
+            DevicePreference::Default => self.host.default_input_device().ok_or_else(|| {
+                MullamaError::AudioError("No default input device available".to_string())
+            }),
+            DevicePreference::ByName(name) => self
+                .host
+                .input_devices()?
+                .find(|device| device.name().map(|n| n == *name).unwrap_or(false))
+                .ok_or_else(|| {
+                    MullamaError::AudioError(format!("Input device '{}' not found", name))
+                }),
             DevicePreference::LowestLatency => {
                 // For now, return default device
                 // In a real implementation, you'd measure latency for each device
@@ -509,8 +527,9 @@ impl StreamingAudioProcessor {
 
     #[cfg(feature = "streaming-audio")]
     fn select_output_device(&self) -> Result<Device, MullamaError> {
-        self.host.default_output_device()
-            .ok_or_else(|| MullamaError::AudioError("No default output device available".to_string()))
+        self.host.default_output_device().ok_or_else(|| {
+            MullamaError::AudioError("No default output device available".to_string())
+        })
     }
 
     #[cfg(feature = "streaming-audio")]
@@ -522,10 +541,12 @@ impl StreamingAudioProcessor {
         let config = supported_configs
             .filter(|config| config.channels() == self.config.channels)
             .find(|config| {
-                config.min_sample_rate() <= SampleRate(self.config.sample_rate) &&
-                config.max_sample_rate() >= SampleRate(self.config.sample_rate)
+                config.min_sample_rate() <= SampleRate(self.config.sample_rate)
+                    && config.max_sample_rate() >= SampleRate(self.config.sample_rate)
             })
-            .ok_or_else(|| MullamaError::AudioError("No compatible audio configuration found".to_string()))?;
+            .ok_or_else(|| {
+                MullamaError::AudioError("No compatible audio configuration found".to_string())
+            })?;
 
         Ok(StreamConfig {
             channels: self.config.channels,
@@ -554,11 +575,7 @@ impl StreamingAudioProcessor {
 
         // Create audio chunk if we have enough samples
         if data.len() >= config.buffer_size {
-            let chunk = AudioChunk::new(
-                data.to_vec(),
-                config.channels,
-                config.sample_rate,
-            );
+            let chunk = AudioChunk::new(data.to_vec(), config.channels, config.sample_rate);
 
             let _ = sender.send(chunk);
         }
@@ -572,7 +589,10 @@ pub struct AudioStream {
 }
 
 impl AudioStream {
-    fn new(receiver: mpsc::UnboundedReceiver<AudioChunk>, metrics: Arc<RwLock<StreamingMetrics>>) -> Self {
+    fn new(
+        receiver: mpsc::UnboundedReceiver<AudioChunk>,
+        metrics: Arc<RwLock<StreamingMetrics>>,
+    ) -> Self {
         Self { receiver, metrics }
     }
 

@@ -8,9 +8,9 @@
 use mullama::prelude::*;
 
 #[cfg(all(feature = "streaming", feature = "async"))]
-use mullama::{AsyncModel, TokenStream, StreamConfig, TokenData};
-#[cfg(all(feature = "streaming", feature = "async"))]
 use futures::StreamExt;
+#[cfg(all(feature = "streaming", feature = "async"))]
+use mullama::{AsyncModel, StreamConfig, TokenData, TokenStream};
 #[cfg(all(feature = "streaming", feature = "async"))]
 use std::time::Instant;
 
@@ -25,8 +25,8 @@ async fn main() -> Result<(), MullamaError> {
         println!("📂 Loading model for streaming...");
 
         // Note: Replace with actual model path
-        let model_path = std::env::var("MODEL_PATH")
-            .unwrap_or_else(|_| "path/to/model.gguf".to_string());
+        let model_path =
+            std::env::var("MODEL_PATH").unwrap_or_else(|_| "path/to/model.gguf".to_string());
 
         // In real scenario:
         // let model = AsyncModel::load(&model_path).await?;
@@ -64,7 +64,10 @@ async fn demonstrate_basic_streaming() -> Result<(), MullamaError> {
 
     let prompt = "The future of artificial intelligence";
     println!("📝 Prompt: \"{}\"", prompt);
-    println!("⚙️  Config: {} tokens, temp={}", config.max_tokens, config.sampler_params.temperature);
+    println!(
+        "⚙️  Config: {} tokens, temp={}",
+        config.max_tokens, config.sampler_params.temperature
+    );
 
     // Create token stream (placeholder implementation)
     // let mut stream = TokenStream::new(model, prompt, config).await?;
@@ -73,7 +76,17 @@ async fn demonstrate_basic_streaming() -> Result<(), MullamaError> {
     print!("   ");
 
     // Simulate streaming
-    let tokens = vec!["is", " to", " enhance", " human", " capabilities", " and", " solve", " complex", " problems"];
+    let tokens = vec![
+        "is",
+        " to",
+        " enhance",
+        " human",
+        " capabilities",
+        " and",
+        " solve",
+        " complex",
+        " problems",
+    ];
     for (i, token_text) in tokens.iter().enumerate() {
         // Simulate token arrival
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -105,9 +118,27 @@ async fn demonstrate_configured_streaming() -> Result<(), MullamaError> {
 
     // Configure streaming with specific parameters
     let configs = vec![
-        ("Creative", StreamConfig::default().temperature(0.9).top_k(60).max_tokens(30)),
-        ("Precise", StreamConfig::default().temperature(0.2).top_k(10).max_tokens(30)),
-        ("Balanced", StreamConfig::default().temperature(0.7).top_k(40).max_tokens(30)),
+        (
+            "Creative",
+            StreamConfig::default()
+                .temperature(0.9)
+                .top_k(60)
+                .max_tokens(30),
+        ),
+        (
+            "Precise",
+            StreamConfig::default()
+                .temperature(0.2)
+                .top_k(10)
+                .max_tokens(30),
+        ),
+        (
+            "Balanced",
+            StreamConfig::default()
+                .temperature(0.7)
+                .top_k(40)
+                .max_tokens(30),
+        ),
     ];
 
     let prompt = "Once upon a time in a land far away";
@@ -160,8 +191,22 @@ async fn demonstrate_word_streaming() -> Result<(), MullamaError> {
 
     // Simulate word streaming
     let words = vec![
-        "Machine", "learning", "is", "a", "subset", "of", "artificial", "intelligence",
-        "that", "enables", "computers", "to", "learn", "and", "improve", "automatically"
+        "Machine",
+        "learning",
+        "is",
+        "a",
+        "subset",
+        "of",
+        "artificial",
+        "intelligence",
+        "that",
+        "enables",
+        "computers",
+        "to",
+        "learn",
+        "and",
+        "improve",
+        "automatically",
     ];
 
     for word in words {
@@ -193,8 +238,19 @@ async fn demonstrate_text_only_streaming() -> Result<(), MullamaError> {
 
     // Simulate text streaming
     let text_parts = vec![
-        "reduced", " carbon", " emissions,", " energy", " independence,", " job",
-        " creation,", " and", " long-term", " cost", " savings", " for", " consumers."
+        "reduced",
+        " carbon",
+        " emissions,",
+        " energy",
+        " independence,",
+        " job",
+        " creation,",
+        " and",
+        " long-term",
+        " cost",
+        " savings",
+        " for",
+        " consumers.",
     ];
 
     for part in text_parts {
@@ -237,7 +293,10 @@ async fn demonstrate_streaming_utilities() -> Result<(), MullamaError> {
 
     println!("   Text: \"{}\"", generation_result.text);
     println!("   Token count: {}", generation_result.token_count);
-    println!("   First 5 tokens: {:?}", &generation_result.tokens[..5.min(generation_result.tokens.len())]);
+    println!(
+        "   First 5 tokens: {:?}",
+        &generation_result.tokens[..5.min(generation_result.tokens.len())]
+    );
 
     // 3. Performance monitoring
     println!("\n3️⃣ Performance monitoring:");
@@ -286,7 +345,10 @@ async fn demonstrate_error_handling() -> Result<(), MullamaError> {
     println!("\n📊 Error handling summary:");
     println!("   Successful tokens: {}", successful_tokens);
     println!("   Errors encountered: {}", error_count);
-    println!("   Success rate: {:.1}%", (successful_tokens as f64 / 10.0) * 100.0);
+    println!(
+        "   Success rate: {:.1}%",
+        (successful_tokens as f64 / 10.0) * 100.0
+    );
 
     Ok(())
 }

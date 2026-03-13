@@ -9,9 +9,9 @@
 use crate::error::MullamaError;
 use crate::Model;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs::{self, File};
-use std::io::{Write, BufWriter, Read};
+use std::io::{BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 
 /// Hugging Face Hub API base URL
 const HF_API_BASE: &str = "https://huggingface.co/api";
@@ -74,31 +74,81 @@ impl QuantizationType {
 
         // Check for specific quantization patterns
         // Note: bf16 must be checked before f16 since "bf16" contains "f16"
-        if lower.contains("f32") { return Self::F32; }
-        if lower.contains("bf16") { return Self::BF16; }
-        if lower.contains("f16") { return Self::F16; }
-        if lower.contains("q8_0") { return Self::Q8_0; }
-        if lower.contains("q6_k") { return Self::Q6_K; }
-        if lower.contains("q5_k_m") { return Self::Q5_K_M; }
-        if lower.contains("q5_k_s") { return Self::Q5_K_S; }
-        if lower.contains("q5_0") { return Self::Q5_0; }
-        if lower.contains("q5_1") { return Self::Q5_1; }
-        if lower.contains("q4_k_m") { return Self::Q4_K_M; }
-        if lower.contains("q4_k_s") { return Self::Q4_K_S; }
-        if lower.contains("q4_0") { return Self::Q4_0; }
-        if lower.contains("q4_1") { return Self::Q4_1; }
-        if lower.contains("q3_k_m") { return Self::Q3_K_M; }
-        if lower.contains("q3_k_s") { return Self::Q3_K_S; }
-        if lower.contains("q3_k_l") { return Self::Q3_K_L; }
-        if lower.contains("q2_k") { return Self::Q2_K; }
-        if lower.contains("iq2_xxs") { return Self::IQ2_XXS; }
-        if lower.contains("iq2_xs") { return Self::IQ2_XS; }
-        if lower.contains("iq2_s") { return Self::IQ2_S; }
-        if lower.contains("iq3_xxs") { return Self::IQ3_XXS; }
-        if lower.contains("iq3_xs") { return Self::IQ3_XS; }
-        if lower.contains("iq3_s") { return Self::IQ3_S; }
-        if lower.contains("iq4_xs") { return Self::IQ4_XS; }
-        if lower.contains("iq4_nl") { return Self::IQ4_NL; }
+        if lower.contains("f32") {
+            return Self::F32;
+        }
+        if lower.contains("bf16") {
+            return Self::BF16;
+        }
+        if lower.contains("f16") {
+            return Self::F16;
+        }
+        if lower.contains("q8_0") {
+            return Self::Q8_0;
+        }
+        if lower.contains("q6_k") {
+            return Self::Q6_K;
+        }
+        if lower.contains("q5_k_m") {
+            return Self::Q5_K_M;
+        }
+        if lower.contains("q5_k_s") {
+            return Self::Q5_K_S;
+        }
+        if lower.contains("q5_0") {
+            return Self::Q5_0;
+        }
+        if lower.contains("q5_1") {
+            return Self::Q5_1;
+        }
+        if lower.contains("q4_k_m") {
+            return Self::Q4_K_M;
+        }
+        if lower.contains("q4_k_s") {
+            return Self::Q4_K_S;
+        }
+        if lower.contains("q4_0") {
+            return Self::Q4_0;
+        }
+        if lower.contains("q4_1") {
+            return Self::Q4_1;
+        }
+        if lower.contains("q3_k_m") {
+            return Self::Q3_K_M;
+        }
+        if lower.contains("q3_k_s") {
+            return Self::Q3_K_S;
+        }
+        if lower.contains("q3_k_l") {
+            return Self::Q3_K_L;
+        }
+        if lower.contains("q2_k") {
+            return Self::Q2_K;
+        }
+        if lower.contains("iq2_xxs") {
+            return Self::IQ2_XXS;
+        }
+        if lower.contains("iq2_xs") {
+            return Self::IQ2_XS;
+        }
+        if lower.contains("iq2_s") {
+            return Self::IQ2_S;
+        }
+        if lower.contains("iq3_xxs") {
+            return Self::IQ3_XXS;
+        }
+        if lower.contains("iq3_xs") {
+            return Self::IQ3_XS;
+        }
+        if lower.contains("iq3_s") {
+            return Self::IQ3_S;
+        }
+        if lower.contains("iq4_xs") {
+            return Self::IQ4_XS;
+        }
+        if lower.contains("iq4_nl") {
+            return Self::IQ4_NL;
+        }
 
         Self::Other(filename.to_string())
     }
@@ -251,21 +301,23 @@ impl HFModelInfo {
 
     /// Check if this is a GGUF model repository
     pub fn is_gguf(&self) -> bool {
-        self.tags.iter().any(|t| t.to_lowercase() == "gguf") ||
-        self.model_id.to_lowercase().contains("gguf") ||
-        !self.gguf_files.is_empty()
+        self.tags.iter().any(|t| t.to_lowercase() == "gguf")
+            || self.model_id.to_lowercase().contains("gguf")
+            || !self.gguf_files.is_empty()
     }
 
     /// Get the best quantization for a given VRAM budget (in MB)
     pub fn best_quantization_for_vram(&self, vram_mb: u64) -> Option<&GGUFFile> {
-        let mut suitable: Vec<&GGUFFile> = self.gguf_files
+        let mut suitable: Vec<&GGUFFile> = self
+            .gguf_files
             .iter()
             .filter(|f| f.estimated_vram_mb() <= vram_mb)
             .collect();
 
         // Sort by quality rating (descending)
         suitable.sort_by(|a, b| {
-            b.quantization.quality_rating()
+            b.quantization
+                .quality_rating()
                 .cmp(&a.quantization.quality_rating())
         });
 
@@ -279,7 +331,8 @@ impl HFModelInfo {
 
     /// Get the highest quality quantization
     pub fn highest_quality(&self) -> Option<&GGUFFile> {
-        self.gguf_files.iter()
+        self.gguf_files
+            .iter()
             .max_by_key(|f| f.quantization.quality_rating())
     }
 }
@@ -395,7 +448,11 @@ impl DownloadProgress {
     /// Get human-readable ETA
     pub fn eta_human(&self) -> String {
         if self.eta_seconds >= 3600 {
-            format!("{}h {}m", self.eta_seconds / 3600, (self.eta_seconds % 3600) / 60)
+            format!(
+                "{}h {}m",
+                self.eta_seconds / 3600,
+                (self.eta_seconds % 3600) / 60
+            )
         } else if self.eta_seconds >= 60 {
             format!("{}m {}s", self.eta_seconds / 60, self.eta_seconds % 60)
         } else {
@@ -480,7 +537,10 @@ impl HFClient {
     }
 
     /// Search for models on Hugging Face Hub
-    pub fn search_models(&self, filters: &ModelSearchFilters) -> Result<Vec<HFModelInfo>, MullamaError> {
+    pub fn search_models(
+        &self,
+        filters: &ModelSearchFilters,
+    ) -> Result<Vec<HFModelInfo>, MullamaError> {
         let mut url = format!("{}/models", HF_API_BASE);
         let mut params = Vec::new();
 
@@ -519,8 +579,9 @@ impl HFClient {
         let response = self.http_get(&url)?;
 
         // Parse response
-        let models: Vec<serde_json::Value> = serde_json::from_str(&response)
-            .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to parse response: {}", e)))?;
+        let models: Vec<serde_json::Value> = serde_json::from_str(&response).map_err(|e| {
+            MullamaError::HuggingFaceError(format!("Failed to parse response: {}", e))
+        })?;
 
         let mut results = Vec::new();
         for model_json in models {
@@ -543,11 +604,13 @@ impl HFClient {
         let url = format!("{}/models/{}", HF_API_BASE, model_id);
         let response = self.http_get(&url)?;
 
-        let model_json: serde_json::Value = serde_json::from_str(&response)
-            .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to parse model info: {}", e)))?;
+        let model_json: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+            MullamaError::HuggingFaceError(format!("Failed to parse model info: {}", e))
+        })?;
 
-        self.parse_model_info(&model_json)
-            .ok_or_else(|| MullamaError::HuggingFaceError(format!("Invalid model data for {}", model_id)))
+        self.parse_model_info(&model_json).ok_or_else(|| {
+            MullamaError::HuggingFaceError(format!("Invalid model data for {}", model_id))
+        })
     }
 
     /// List GGUF files available for a model
@@ -555,8 +618,9 @@ impl HFClient {
         let url = format!("{}/models/{}/tree/main", HF_API_BASE, model_id);
         let response = self.http_get(&url)?;
 
-        let files: Vec<serde_json::Value> = serde_json::from_str(&response)
-            .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to parse file list: {}", e)))?;
+        let files: Vec<serde_json::Value> = serde_json::from_str(&response).map_err(|e| {
+            MullamaError::HuggingFaceError(format!("Failed to parse file list: {}", e))
+        })?;
 
         let mut gguf_files = Vec::new();
 
@@ -564,7 +628,10 @@ impl HFClient {
             if let Some(filename) = file.get("path").and_then(|p| p.as_str()) {
                 if filename.to_lowercase().ends_with(".gguf") {
                     let size = file.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                    let sha256 = file.get("oid").and_then(|o| o.as_str()).map(|s| s.to_string());
+                    let sha256 = file
+                        .get("oid")
+                        .and_then(|o| o.as_str())
+                        .map(|s| s.to_string());
 
                     gguf_files.push(GGUFFile {
                         filename: filename.to_string(),
@@ -572,9 +639,7 @@ impl HFClient {
                         quantization: QuantizationType::from_filename(filename),
                         download_url: format!(
                             "{}/{}/resolve/main/{}",
-                            HF_MODELS_BASE,
-                            model_id,
-                            filename
+                            HF_MODELS_BASE, model_id, filename
                         ),
                         sha256,
                     });
@@ -597,8 +662,7 @@ impl HFClient {
     ) -> Result<PathBuf, MullamaError> {
         // Create download directory
         let model_dir = self.download_dir.join(model_id.replace('/', "_"));
-        fs::create_dir_all(&model_dir)
-            .map_err(|e| MullamaError::IoError(e))?;
+        fs::create_dir_all(&model_dir).map_err(|e| MullamaError::IoError(e))?;
 
         let dest_path = model_dir.join(&gguf_file.filename);
 
@@ -612,7 +676,13 @@ impl HFClient {
         }
 
         // Download the file
-        self.download_file(&gguf_file.download_url, &dest_path, gguf_file.size, &gguf_file.filename, progress_callback)?;
+        self.download_file(
+            &gguf_file.download_url,
+            &dest_path,
+            gguf_file.size,
+            &gguf_file.filename,
+            progress_callback,
+        )?;
 
         Ok(dest_path)
     }
@@ -644,15 +714,19 @@ impl HFClient {
 
         // Find the target file
         let target_file = if let Some(fname) = filename {
-            gguf_files.iter()
+            gguf_files
+                .iter()
                 .find(|f| f.filename == fname || f.filename.to_lowercase() == fname.to_lowercase())
-                .ok_or_else(|| MullamaError::HuggingFaceError(format!(
-                    "LoRA file '{}' not found in {}",
-                    fname, model_id
-                )))?
+                .ok_or_else(|| {
+                    MullamaError::HuggingFaceError(format!(
+                        "LoRA file '{}' not found in {}",
+                        fname, model_id
+                    ))
+                })?
         } else {
             // Find files with "lora" or "adapter" in the name, prefer smallest
-            let lora_files: Vec<_> = gguf_files.iter()
+            let lora_files: Vec<_> = gguf_files
+                .iter()
                 .filter(|f| {
                     let lower = f.filename.to_lowercase();
                     lower.contains("lora") || lower.contains("adapter")
@@ -692,17 +766,20 @@ impl HFClient {
 
             let mut cmd = Command::new("curl");
             cmd.arg("-L") // Follow redirects
-               .arg("-o").arg(&temp_path)
-               .arg("--progress-bar");
+                .arg("-o")
+                .arg(&temp_path)
+                .arg("--progress-bar");
 
             if let Some(ref token) = self.token {
-                cmd.arg("-H").arg(format!("Authorization: Bearer {}", token));
+                cmd.arg("-H")
+                    .arg(format!("Authorization: Bearer {}", token));
             }
 
             cmd.arg(url);
 
-            let output = cmd.output()
-                .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e)))?;
+            let output = cmd.output().map_err(|e| {
+                MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e))
+            })?;
 
             if !output.status.success() {
                 return Err(MullamaError::HuggingFaceError(format!(
@@ -712,8 +789,7 @@ impl HFClient {
             }
 
             // Move temp file to final destination
-            fs::rename(&temp_path, dest)
-                .map_err(|e| MullamaError::IoError(e))?;
+            fs::rename(&temp_path, dest).map_err(|e| MullamaError::IoError(e))?;
 
             // Call progress callback with completion
             if let Some(callback) = progress_callback {
@@ -732,7 +808,8 @@ impl HFClient {
         #[cfg(not(unix))]
         {
             Err(MullamaError::HuggingFaceError(
-                "Direct download not implemented for this platform. Please download manually.".to_string()
+                "Direct download not implemented for this platform. Please download manually."
+                    .to_string(),
             ))
         }
     }
@@ -826,17 +903,20 @@ impl HFClient {
 
             let mut cmd = Command::new("curl");
             cmd.arg("-s") // Silent
-               .arg("-L") // Follow redirects
-               .arg("-H").arg(format!("User-Agent: {}", self.user_agent));
+                .arg("-L") // Follow redirects
+                .arg("-H")
+                .arg(format!("User-Agent: {}", self.user_agent));
 
             if let Some(ref token) = self.token {
-                cmd.arg("-H").arg(format!("Authorization: Bearer {}", token));
+                cmd.arg("-H")
+                    .arg(format!("Authorization: Bearer {}", token));
             }
 
             cmd.arg(url);
 
-            let output = cmd.output()
-                .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e)))?;
+            let output = cmd.output().map_err(|e| {
+                MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e))
+            })?;
 
             if !output.status.success() {
                 return Err(MullamaError::HuggingFaceError(format!(
@@ -851,14 +931,15 @@ impl HFClient {
         #[cfg(not(unix))]
         {
             Err(MullamaError::HuggingFaceError(
-                "HTTP requests not implemented for this platform".to_string()
+                "HTTP requests not implemented for this platform".to_string(),
             ))
         }
     }
 
     /// Parse model info from JSON
     fn parse_model_info(&self, json: &serde_json::Value) -> Option<HFModelInfo> {
-        let model_id = json.get("modelId")
+        let model_id = json
+            .get("modelId")
             .or_else(|| json.get("id"))
             .and_then(|v| v.as_str())?
             .to_string();
@@ -870,23 +951,40 @@ impl HFClient {
             ("".to_string(), model_id.clone())
         };
 
-        let tags: Vec<String> = json.get("tags")
+        let tags: Vec<String> = json
+            .get("tags")
             .and_then(|t| t.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Some(HFModelInfo {
             model_id,
             author,
             name,
-            description: json.get("description").and_then(|v| v.as_str()).map(String::from),
+            description: json
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             downloads: json.get("downloads").and_then(|v| v.as_u64()).unwrap_or(0),
             likes: json.get("likes").and_then(|v| v.as_u64()).unwrap_or(0),
             tags,
-            last_modified: json.get("lastModified").and_then(|v| v.as_str()).map(String::from),
+            last_modified: json
+                .get("lastModified")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             gguf_files: Vec::new(), // Populated separately via list_gguf_files
-            pipeline_tag: json.get("pipeline_tag").and_then(|v| v.as_str()).map(String::from),
-            license: json.get("license").and_then(|v| v.as_str()).map(String::from),
+            pipeline_tag: json
+                .get("pipeline_tag")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            license: json
+                .get("license")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         })
     }
 
@@ -903,9 +1001,7 @@ impl HFClient {
             return Ok(models);
         }
 
-        for entry in fs::read_dir(&self.download_dir)
-            .map_err(|e| MullamaError::IoError(e))?
-        {
+        for entry in fs::read_dir(&self.download_dir).map_err(|e| MullamaError::IoError(e))? {
             let entry = entry.map_err(|e| MullamaError::IoError(e))?;
             let path = entry.path();
 
@@ -985,9 +1081,12 @@ pub mod quick {
             .iter()
             .filter(|f| f.estimated_vram_mb() <= vram_mb)
             .max_by_key(|f| f.quantization.quality_rating())
-            .ok_or_else(|| MullamaError::HuggingFaceError(
-                format!("No suitable quantization found for {} MB VRAM", vram_mb)
-            ))?;
+            .ok_or_else(|| {
+                MullamaError::HuggingFaceError(format!(
+                    "No suitable quantization found for {} MB VRAM",
+                    vram_mb
+                ))
+            })?;
 
         client.download_gguf(model_id, best_file, None)
     }
@@ -1008,9 +1107,7 @@ pub mod quick {
         let smallest = gguf_files
             .iter()
             .min_by_key(|f| f.size)
-            .ok_or_else(|| MullamaError::HuggingFaceError(
-                "No GGUF files found".to_string()
-            ))?;
+            .ok_or_else(|| MullamaError::HuggingFaceError("No GGUF files found".to_string()))?;
 
         client.download_gguf(model_id, smallest, None)
     }
@@ -1052,13 +1149,17 @@ pub mod quick {
             gguf_files
                 .iter()
                 .find(|f| matches!(f.quantization, QuantizationType::Q4_K_M))
-                .or_else(|| gguf_files.iter().find(|f| matches!(f.quantization, QuantizationType::Q4_0)))
+                .or_else(|| {
+                    gguf_files
+                        .iter()
+                        .find(|f| matches!(f.quantization, QuantizationType::Q4_0))
+                })
                 .or_else(|| gguf_files.first())
         };
 
-        let file = file.ok_or_else(|| MullamaError::HuggingFaceError(
-            "No suitable GGUF file found".to_string()
-        ))?;
+        let file = file.ok_or_else(|| {
+            MullamaError::HuggingFaceError("No suitable GGUF file found".to_string())
+        })?;
 
         let path = client.download_gguf(model_id, file, None)?;
         let test_result = client.test_model(&path)?;
@@ -1090,7 +1191,9 @@ mod tests {
     #[test]
     fn test_quantization_quality() {
         assert!(QuantizationType::F16.quality_rating() > QuantizationType::Q4_K_M.quality_rating());
-        assert!(QuantizationType::Q4_K_M.quality_rating() > QuantizationType::Q2_K.quality_rating());
+        assert!(
+            QuantizationType::Q4_K_M.quality_rating() > QuantizationType::Q2_K.quality_rating()
+        );
     }
 
     #[test]
@@ -1175,14 +1278,16 @@ mod integration_tests {
                 // Try alternative model if SmolLM2 not found
                 println!("SmolLM2 not found, trying TinyLlama...");
                 let alt_model = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF";
-                client.list_gguf_files(alt_model)
+                client
+                    .list_gguf_files(alt_model)
                     .expect("Failed to list GGUF files for alternative model")
             }
         };
 
         println!("\nFound {} GGUF files:", gguf_files.len());
         for file in &gguf_files {
-            println!("  - {} ({}) [{}]",
+            println!(
+                "  - {} ({}) [{}]",
                 file.filename,
                 file.size_human(),
                 file.quantization
@@ -1190,28 +1295,33 @@ mod integration_tests {
         }
 
         // Step 2: Find and download the smallest file
-        let smallest = gguf_files.iter()
+        let smallest = gguf_files
+            .iter()
             .min_by_key(|f| f.size)
             .expect("No GGUF files found");
 
-        println!("\nStep 2: Downloading smallest file: {} ({})",
+        println!(
+            "\nStep 2: Downloading smallest file: {} ({})",
             smallest.filename,
             smallest.size_human()
         );
 
         let download_start = std::time::Instant::now();
-        let model_path = client.download_gguf(
-            model_id,
-            smallest,
-            Some(Box::new(|progress| {
-                print!("\r  Progress: {:.1}% ({}) - ETA: {}     ",
-                    progress.percentage(),
-                    progress.speed_human(),
-                    progress.eta_human()
-                );
-                std::io::Write::flush(&mut std::io::stdout()).ok();
-            })),
-        ).expect("Failed to download model");
+        let model_path = client
+            .download_gguf(
+                model_id,
+                smallest,
+                Some(Box::new(|progress| {
+                    print!(
+                        "\r  Progress: {:.1}% ({}) - ETA: {}     ",
+                        progress.percentage(),
+                        progress.speed_human(),
+                        progress.eta_human()
+                    );
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                })),
+            )
+            .expect("Failed to download model");
 
         let download_time = download_start.elapsed();
         println!("\n  Downloaded to: {:?}", model_path);
@@ -1227,7 +1337,8 @@ mod integration_tests {
 
         // Step 3: Test the model
         println!("\nStep 3: Testing the model...");
-        let test_result = client.test_model(&model_path)
+        let test_result = client
+            .test_model(&model_path)
             .expect("Failed to test model");
 
         println!("\n=== Test Results ===");
@@ -1271,7 +1382,8 @@ mod integration_tests {
             .sort_by_downloads()
             .with_limit(5);
 
-        let models = client.search_models(&filters)
+        let models = client
+            .search_models(&filters)
             .expect("Failed to search models");
 
         println!("Found {} models:\n", models.len());
@@ -1293,12 +1405,14 @@ mod integration_tests {
         println!("\n=== Popular GGUF Models ===\n");
 
         let client = HFClient::new();
-        let models = client.get_popular_gguf_models(10)
+        let models = client
+            .get_popular_gguf_models(10)
             .expect("Failed to get popular models");
 
         println!("Top {} GGUF models by downloads:\n", models.len());
         for (i, model) in models.iter().enumerate() {
-            println!("  {}. {} - {} downloads",
+            println!(
+                "  {}. {} - {} downloads",
                 i + 1,
                 model.model_id,
                 model.downloads

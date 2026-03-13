@@ -5,8 +5,8 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use std::ffi::CString;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fmt;
 
 /// Grammar definition for constrained generation
@@ -106,8 +106,9 @@ impl Grammar {
 
     /// Create a grammar from a file
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, MullamaError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| MullamaError::GrammarError(format!("Failed to read grammar file: {}", e)))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            MullamaError::GrammarError(format!("Failed to read grammar file: {}", e))
+        })?;
         Self::from_gbnf(&content)
     }
 
@@ -199,7 +200,11 @@ impl Grammar {
 
         // Start with root rule
         if let Some(root_rule) = self.rules.get(&self.root_rule) {
-            result.push_str(&format!("{} ::= {}\n", self.root_rule, self.rule_to_gbnf(root_rule)));
+            result.push_str(&format!(
+                "{} ::= {}\n",
+                self.root_rule,
+                self.rule_to_gbnf(root_rule)
+            ));
         }
 
         // Add other rules
@@ -308,19 +313,19 @@ impl Grammar {
                             '?' => {
                                 chars.next();
                                 elements.push(GrammarElement::Optional(Box::new(
-                                    GrammarElement::NonTerminal(name)
+                                    GrammarElement::NonTerminal(name),
                                 )));
                             }
                             '*' => {
                                 chars.next();
                                 elements.push(GrammarElement::ZeroOrMore(Box::new(
-                                    GrammarElement::NonTerminal(name)
+                                    GrammarElement::NonTerminal(name),
                                 )));
                             }
                             '+' => {
                                 chars.next();
                                 elements.push(GrammarElement::OneOrMore(Box::new(
-                                    GrammarElement::NonTerminal(name)
+                                    GrammarElement::NonTerminal(name),
                                 )));
                             }
                             _ => {
@@ -338,7 +343,10 @@ impl Grammar {
     }
 
     /// Parse character class [a-z], [A-Z], etc.
-    fn parse_char_class(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<CharClass, MullamaError> {
+    fn parse_char_class(
+        &self,
+        chars: &mut std::iter::Peekable<std::str::Chars>,
+    ) -> Result<CharClass, MullamaError> {
         let mut ranges = Vec::new();
         let mut single_chars = Vec::new();
         let mut negated = false;
@@ -389,7 +397,8 @@ impl Grammar {
 
     /// Convert sequence to GBNF format
     fn sequence_to_gbnf(&self, sequence: &GrammarSequence) -> String {
-        sequence.elements
+        sequence
+            .elements
             .iter()
             .map(|elem| self.element_to_gbnf(elem))
             .collect::<Vec<_>>()
@@ -437,7 +446,11 @@ impl Grammar {
     }
 
     /// Validate a grammar element
-    fn validate_element(&self, element: &GrammarElement, context: &str) -> Result<(), MullamaError> {
+    fn validate_element(
+        &self,
+        element: &GrammarElement,
+        context: &str,
+    ) -> Result<(), MullamaError> {
         match element {
             GrammarElement::NonTerminal(name) => {
                 if !self.rules.contains_key(name) {
@@ -447,11 +460,11 @@ impl Grammar {
                     )));
                 }
             }
-            GrammarElement::Optional(elem) |
-            GrammarElement::ZeroOrMore(elem) |
-            GrammarElement::OneOrMore(elem) |
-            GrammarElement::Repeat(elem, _) |
-            GrammarElement::RepeatRange(elem, _, _) => {
+            GrammarElement::Optional(elem)
+            | GrammarElement::ZeroOrMore(elem)
+            | GrammarElement::OneOrMore(elem)
+            | GrammarElement::Repeat(elem, _)
+            | GrammarElement::RepeatRange(elem, _, _) => {
                 self.validate_element(elem, context)?;
             }
             _ => {} // Terminals and char classes are always valid
@@ -514,11 +527,11 @@ impl Grammar {
     fn get_referenced_rule(&self, element: &GrammarElement) -> Option<String> {
         match element {
             GrammarElement::NonTerminal(name) => Some(name.clone()),
-            GrammarElement::Optional(elem) |
-            GrammarElement::ZeroOrMore(elem) |
-            GrammarElement::OneOrMore(elem) |
-            GrammarElement::Repeat(elem, _) |
-            GrammarElement::RepeatRange(elem, _, _) => self.get_referenced_rule(elem),
+            GrammarElement::Optional(elem)
+            | GrammarElement::ZeroOrMore(elem)
+            | GrammarElement::OneOrMore(elem)
+            | GrammarElement::Repeat(elem, _)
+            | GrammarElement::RepeatRange(elem, _, _) => self.get_referenced_rule(elem),
             _ => None,
         }
     }
@@ -583,10 +596,8 @@ impl CompiledGrammar {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| MullamaError::GrammarError("Invalid trigger word".to_string()))?;
 
-        let c_trigger_ptrs: Vec<*const std::os::raw::c_char> = c_trigger_words
-            .iter()
-            .map(|s| s.as_ptr())
-            .collect();
+        let c_trigger_ptrs: Vec<*const std::os::raw::c_char> =
+            c_trigger_words.iter().map(|s| s.as_ptr()).collect();
 
         let sampler = unsafe {
             sys::llama_sampler_init_grammar_lazy(
@@ -628,13 +639,8 @@ impl GrammarSampler {
         let c_root = CString::new(root)
             .map_err(|_| MullamaError::GrammarError("Invalid root rule".to_string()))?;
 
-        let sampler_ptr = unsafe {
-            sys::llama_sampler_init_grammar(
-                vocab,
-                c_grammar.as_ptr(),
-                c_root.as_ptr(),
-            )
-        };
+        let sampler_ptr =
+            unsafe { sys::llama_sampler_init_grammar(vocab, c_grammar.as_ptr(), c_root.as_ptr()) };
 
         Ok(Self { sampler_ptr })
     }
@@ -675,7 +681,8 @@ pub mod presets {
 
     /// JSON grammar
     pub fn json() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r#"
+        Grammar::from_gbnf(
+            r#"
             root ::= object
             value ::= object | array | string | number | boolean | null
             object ::= "{" "}"
@@ -684,12 +691,14 @@ pub mod presets {
             number ::= [0-9]
             boolean ::= "true" | "false"
             null ::= "null"
-        "#)
+        "#,
+        )
     }
 
     /// XML grammar
     pub fn xml() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r#"
+        Grammar::from_gbnf(
+            r#"
             root ::= element
             element ::= "<" name attributes? ">" content? "</" name ">" | "<" name attributes? "/>"
             name ::= [a-zA-Z_] [a-zA-Z0-9_-]*
@@ -697,12 +706,14 @@ pub mod presets {
             attribute ::= name "=" "\"" [^"]* "\""
             content ::= (element | text)*
             text ::= [^<]+
-        "#)
+        "#,
+        )
     }
 
     /// Simple programming language grammar
     pub fn simple_code() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r#"
+        Grammar::from_gbnf(
+            r#"
             root ::= program
             program ::= (statement "\n")*
             statement ::= assignment | if_stmt | while_stmt | expression
@@ -714,22 +725,26 @@ pub mod presets {
             factor ::= number | identifier | "(" expression ")"
             identifier ::= [a-zA-Z] [a-zA-Z0-9]*
             number ::= [0-9]+
-        "#)
+        "#,
+        )
     }
 
     /// Email address grammar
     pub fn email() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r#"
+        Grammar::from_gbnf(
+            r#"
             root ::= local "@" domain
             local ::= [a-zA-Z0-9._-]+
             domain ::= subdomain ("." subdomain)*
             subdomain ::= [a-zA-Z0-9-]+
-        "#)
+        "#,
+        )
     }
 
     /// URL grammar
     pub fn url() -> Result<Grammar, MullamaError> {
-        Grammar::from_gbnf(r##"
+        Grammar::from_gbnf(
+            r##"
             root ::= scheme "://" authority path? query? fragment?
             scheme ::= "http" "s"?
             authority ::= host (":" port)?
@@ -738,7 +753,8 @@ pub mod presets {
             path ::= ("/" [a-zA-Z0-9._-]*)*
             query ::= "?" [a-zA-Z0-9=&_-]*
             fragment ::= "#" [a-zA-Z0-9_-]*
-        "##)
+        "##,
+        )
     }
 }
 
@@ -755,10 +771,13 @@ mod tests {
 
     #[test]
     fn test_simple_gbnf() {
-        let grammar = Grammar::from_gbnf(r#"
+        let grammar = Grammar::from_gbnf(
+            r#"
             root ::= "Hello" " " name
             name ::= [A-Z] [a-z]+
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(grammar.rules.len(), 2);
         assert!(grammar.rules.contains_key("root"));
@@ -778,11 +797,9 @@ mod tests {
         // Add a rule that references a non-existent rule
         let rule = GrammarRule {
             name: "test".to_string(),
-            alternatives: vec![
-                GrammarSequence {
-                    elements: vec![GrammarElement::NonTerminal("nonexistent".to_string())],
-                }
-            ],
+            alternatives: vec![GrammarSequence {
+                elements: vec![GrammarElement::NonTerminal("nonexistent".to_string())],
+            }],
         };
 
         grammar.add_rule("test".to_string(), rule);
@@ -794,9 +811,12 @@ mod tests {
 
     #[test]
     fn test_char_class() {
-        let grammar = Grammar::from_gbnf(r#"
+        let grammar = Grammar::from_gbnf(
+            r#"
             root ::= [a-zA-Z0-9]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         if let Some(rule) = grammar.get_rule("root") {
             if let Some(alt) = rule.alternatives.first() {

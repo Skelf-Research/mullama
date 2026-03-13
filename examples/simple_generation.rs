@@ -3,7 +3,9 @@
 //! This is the most basic example of using Mullama for text generation.
 //! Perfect for getting started and understanding the core concepts.
 
-use mullama::{Model, Context, ContextParams, SamplerParams, SamplerChain, SamplerChainParams, MullamaError};
+use mullama::{
+    Context, ContextParams, Model, MullamaError, SamplerChain, SamplerChainParams, SamplerParams,
+};
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -12,12 +14,16 @@ fn main() -> Result<(), MullamaError> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: {} <model_path> [prompt]", args[0]);
-        eprintln!("Example: {} path/to/model.gguf \"The future of AI is\"", args[0]);
+        eprintln!(
+            "Example: {} path/to/model.gguf \"The future of AI is\"",
+            args[0]
+        );
         return Ok(());
     }
 
     let model_path = &args[1];
-    let prompt = args.get(2)
+    let prompt = args
+        .get(2)
         .map(|s| s.as_str())
         .unwrap_or("The future of artificial intelligence is");
 
@@ -47,7 +53,7 @@ fn main() -> Result<(), MullamaError> {
     sampler_params.top_k = 40;
     sampler_params.top_p = 0.9;
 
-    let mut sampler = sampler_params.build_chain(model.clone());
+    let mut sampler = sampler_params.build_chain(model.clone())?;
 
     // Tokenize prompt
     println!("Tokenizing prompt...");
@@ -73,7 +79,8 @@ fn main() -> Result<(), MullamaError> {
         let next_token = sampler.sample(&mut context, 0);
 
         // Check for end of generation (placeholder)
-        if next_token == 0 { // Placeholder for EOS token check
+        if next_token == 0 {
+            // Placeholder for EOS token check
             println!("\n\nGeneration completed (end token reached)");
             break;
         }

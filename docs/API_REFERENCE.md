@@ -102,7 +102,7 @@ let sampler = SamplerBuilder::new()
     .temperature(0.7)
     .top_k(50)
     .top_p(0.9)
-    .build(model.clone());
+    .build(model.clone())?;
 ```
 
 ---

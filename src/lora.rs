@@ -5,8 +5,8 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use crate::Model;
 use crate::Context;
+use crate::Model;
 use std::ffi::CString;
 use std::path::Path;
 use std::ptr;
@@ -50,9 +50,7 @@ impl LoRAAdapter {
         let c_path = CString::new(path_str.clone())
             .map_err(|_| MullamaError::InvalidInput("Invalid path".to_string()))?;
 
-        let adapter_ptr = unsafe {
-            sys::llama_adapter_lora_init(model.as_ptr(), c_path.as_ptr())
-        };
+        let adapter_ptr = unsafe { sys::llama_adapter_lora_init(model.as_ptr(), c_path.as_ptr()) };
 
         if adapter_ptr.is_null() {
             return Err(MullamaError::LoRAError(format!(
@@ -76,13 +74,12 @@ impl LoRAAdapter {
     /// # Returns
     /// Result indicating success or failure
     pub fn apply(&self, ctx: &mut Context) -> Result<(), MullamaError> {
-        let result = unsafe {
-            sys::llama_set_adapter_lora(ctx.as_ptr(), self.adapter_ptr, self.scale)
-        };
+        let result =
+            unsafe { sys::llama_set_adapter_lora(ctx.as_ptr(), self.adapter_ptr, self.scale) };
 
         if result != 0 {
             return Err(MullamaError::LoRAError(
-                "Failed to apply LoRA adapter to context".to_string()
+                "Failed to apply LoRA adapter to context".to_string(),
             ));
         }
 
@@ -94,13 +91,11 @@ impl LoRAAdapter {
     /// # Arguments
     /// * `ctx` - The context to remove the adapter from
     pub fn remove(&self, ctx: &mut Context) -> Result<(), MullamaError> {
-        let result = unsafe {
-            sys::llama_rm_adapter_lora(ctx.as_ptr(), self.adapter_ptr)
-        };
+        let result = unsafe { sys::llama_rm_adapter_lora(ctx.as_ptr(), self.adapter_ptr) };
 
         if result != 0 {
             return Err(MullamaError::LoRAError(
-                "Failed to remove LoRA adapter from context".to_string()
+                "Failed to remove LoRA adapter from context".to_string(),
             ));
         }
 
@@ -222,7 +217,11 @@ impl LoRAManager {
     /// # Arguments
     /// * `adapter_index` - Index of the adapter to activate
     /// * `scale` - Scale factor to apply (overrides adapter's default scale)
-    pub fn activate_adapter(&mut self, adapter_index: usize, scale: f32) -> Result<(), MullamaError> {
+    pub fn activate_adapter(
+        &mut self,
+        adapter_index: usize,
+        scale: f32,
+    ) -> Result<(), MullamaError> {
         if adapter_index >= self.adapters.len() {
             return Err(MullamaError::InvalidInput(format!(
                 "Adapter index {} out of range",
@@ -231,7 +230,8 @@ impl LoRAManager {
         }
 
         // Remove if already active
-        self.active_adapters.retain(|(idx, _)| *idx != adapter_index);
+        self.active_adapters
+            .retain(|(idx, _)| *idx != adapter_index);
 
         // Add with new scale
         self.active_adapters.push((adapter_index, scale));
@@ -241,7 +241,8 @@ impl LoRAManager {
 
     /// Deactivate an adapter
     pub fn deactivate_adapter(&mut self, adapter_index: usize) {
-        self.active_adapters.retain(|(idx, _)| *idx != adapter_index);
+        self.active_adapters
+            .retain(|(idx, _)| *idx != adapter_index);
     }
 
     /// Get list of active adapters
@@ -355,17 +356,23 @@ impl LoRAComposition {
     /// Apply the composition to calculate effective scales
     pub fn calculate_effective_scales(&self) -> Vec<f32> {
         match self.composition_mode {
-            CompositionMode::Additive => {
-                self.adapters.iter().map(|(adapter, weight)| adapter.scale() * weight).collect()
-            }
+            CompositionMode::Additive => self
+                .adapters
+                .iter()
+                .map(|(adapter, weight)| adapter.scale() * weight)
+                .collect(),
             CompositionMode::Multiplicative => {
-                let product: f32 = self.adapters.iter()
+                let product: f32 = self
+                    .adapters
+                    .iter()
                     .map(|(adapter, weight)| adapter.scale() * weight)
                     .product();
                 vec![product; self.adapters.len()]
             }
             CompositionMode::Average => {
-                let sum: f32 = self.adapters.iter()
+                let sum: f32 = self
+                    .adapters
+                    .iter()
                     .map(|(adapter, weight)| adapter.scale() * weight)
                     .sum();
                 let avg = sum / self.adapters.len() as f32;
@@ -420,7 +427,7 @@ pub mod training {
         pub fn train(&self, _training_data: &[String]) -> Result<LoRAAdapter, MullamaError> {
             // This would be implemented with actual training logic
             Err(MullamaError::NotImplemented(
-                "LoRA training not yet implemented".to_string()
+                "LoRA training not yet implemented".to_string(),
             ))
         }
     }

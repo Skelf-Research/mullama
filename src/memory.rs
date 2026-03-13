@@ -96,7 +96,9 @@ impl MemoryManager {
     /// * `clear_data` - If true, also clear the underlying data buffers
     pub fn clear(&mut self, clear_data: bool) -> Result<(), MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
         unsafe {
@@ -127,12 +129,13 @@ impl MemoryManager {
         pos_end: i32,
     ) -> Result<bool, MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
-        let result = unsafe {
-            sys::llama_memory_seq_rm(self.memory_ptr, seq_id, pos_start, pos_end)
-        };
+        let result =
+            unsafe { sys::llama_memory_seq_rm(self.memory_ptr, seq_id, pos_start, pos_end) };
 
         self.stats.seq_removals += 1;
         Ok(result)
@@ -155,7 +158,9 @@ impl MemoryManager {
         pos_end: i32,
     ) -> Result<(), MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
         unsafe {
@@ -172,7 +177,9 @@ impl MemoryManager {
     /// * `seq_id` - The sequence ID to keep
     pub fn keep_sequence(&mut self, seq_id: i32) -> Result<(), MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
         unsafe {
@@ -201,7 +208,9 @@ impl MemoryManager {
         delta: i32,
     ) -> Result<(), MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
         unsafe {
@@ -230,12 +239,14 @@ impl MemoryManager {
         divisor: i32,
     ) -> Result<(), MullamaError> {
         if self.memory_ptr.is_null() {
-            return Err(MullamaError::MemoryError("Invalid memory handle".to_string()));
+            return Err(MullamaError::MemoryError(
+                "Invalid memory handle".to_string(),
+            ));
         }
 
         if divisor <= 1 {
             return Err(MullamaError::InvalidInput(
-                "Divisor must be greater than 1".to_string()
+                "Divisor must be greater than 1".to_string(),
             ));
         }
 
@@ -356,14 +367,19 @@ impl MemoryManager {
     ///
     /// # Returns
     /// Information about the new sequence
-    pub fn fork_sequence(&mut self, src_seq_id: i32, dst_seq_id: i32) -> Result<SequenceInfo, MullamaError> {
+    pub fn fork_sequence(
+        &mut self,
+        src_seq_id: i32,
+        dst_seq_id: i32,
+    ) -> Result<SequenceInfo, MullamaError> {
         let pos_min = self.get_min_position(src_seq_id);
         let pos_max = self.get_max_position(src_seq_id);
 
         if pos_min < 0 || pos_max < 0 {
-            return Err(MullamaError::MemoryError(
-                format!("Source sequence {} is empty", src_seq_id)
-            ));
+            return Err(MullamaError::MemoryError(format!(
+                "Source sequence {} is empty",
+                src_seq_id
+            )));
         }
 
         // Copy the entire sequence

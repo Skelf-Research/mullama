@@ -6,8 +6,8 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use crate::Model;
 use crate::Context;
+use crate::Model;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -54,12 +54,7 @@ pub struct ControlVectorMetadata {
 
 impl ControlVector {
     /// Create a new control vector
-    pub fn new(
-        name: String,
-        description: String,
-        embedding_dim: usize,
-        num_layers: usize,
-    ) -> Self {
+    pub fn new(name: String, description: String, embedding_dim: usize, num_layers: usize) -> Self {
         let layers = (0..num_layers)
             .map(|i| LayerVector {
                 layer_index: i,
@@ -93,9 +88,7 @@ impl ControlVector {
     /// - `.safetensors` - SafeTensors format
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, MullamaError> {
         let path = path.as_ref();
-        let extension = path.extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
         match extension.to_lowercase().as_str() {
             "json" => Self::load_json(path),
@@ -111,7 +104,8 @@ impl ControlVector {
     /// Save control vector to file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), MullamaError> {
         let path = path.as_ref();
-        let extension = path.extension()
+        let extension = path
+            .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("json");
 
@@ -134,7 +128,7 @@ impl ControlVector {
     ) -> Result<Self, MullamaError> {
         if positive_activations.is_empty() || negative_activations.is_empty() {
             return Err(MullamaError::InvalidInput(
-                "Need at least one positive and negative example".to_string()
+                "Need at least one positive and negative example".to_string(),
             ));
         }
 
@@ -142,16 +136,19 @@ impl ControlVector {
         let embedding_dim = positive_activations[0][0].len();
 
         // Validate dimensions
-        for activations in positive_activations.iter().chain(negative_activations.iter()) {
+        for activations in positive_activations
+            .iter()
+            .chain(negative_activations.iter())
+        {
             if activations.len() != num_layers {
                 return Err(MullamaError::InvalidInput(
-                    "Inconsistent number of layers in activations".to_string()
+                    "Inconsistent number of layers in activations".to_string(),
                 ));
             }
             for layer_activations in activations {
                 if layer_activations.len() != embedding_dim {
                     return Err(MullamaError::InvalidInput(
-                        "Inconsistent embedding dimensions in activations".to_string()
+                        "Inconsistent embedding dimensions in activations".to_string(),
                     ));
                 }
             }
@@ -256,18 +253,19 @@ impl ControlVector {
     pub fn combine_with(&mut self, other: &ControlVector, weight: f32) -> Result<(), MullamaError> {
         if self.layers.len() != other.layers.len() {
             return Err(MullamaError::InvalidInput(
-                "Control vectors have different numbers of layers".to_string()
+                "Control vectors have different numbers of layers".to_string(),
             ));
         }
 
         for (self_layer, other_layer) in self.layers.iter_mut().zip(other.layers.iter()) {
             if self_layer.values.len() != other_layer.values.len() {
                 return Err(MullamaError::InvalidInput(
-                    "Control vectors have different embedding dimensions".to_string()
+                    "Control vectors have different embedding dimensions".to_string(),
                 ));
             }
 
-            for (self_val, other_val) in self_layer.values.iter_mut().zip(other_layer.values.iter()) {
+            for (self_val, other_val) in self_layer.values.iter_mut().zip(other_layer.values.iter())
+            {
                 *self_val += other_val * weight;
             }
         }
@@ -278,7 +276,9 @@ impl ControlVector {
     /// Get the effective vector values for a layer (applying strength and layer scale)
     pub fn get_effective_values(&self, layer_index: usize) -> Option<Vec<f32>> {
         self.layers.get(layer_index).map(|layer| {
-            layer.values.iter()
+            layer
+                .values
+                .iter()
                 .map(|&val| val * self.strength * layer.layer_scale)
                 .collect()
         })
@@ -300,8 +300,7 @@ impl ControlVector {
         if self.metadata.embedding_dim != model_embd {
             return Err(MullamaError::InvalidInput(format!(
                 "Control vector has embedding dimension {}, but model has {}",
-                self.metadata.embedding_dim,
-                model_embd
+                self.metadata.embedding_dim, model_embd
             )));
         }
 
@@ -358,41 +357,50 @@ impl ControlVector {
         let content = std::fs::read_to_string(path)
             .map_err(|e| MullamaError::ControlVectorError(format!("Failed to read file: {}", e)))?;
 
-        let json_data: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to parse JSON: {}", e)))?;
+        let json_data: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to parse JSON: {}", e))
+        })?;
 
         // Parse metadata
-        let metadata_json = json_data.get("metadata")
-            .ok_or_else(|| MullamaError::InvalidInput("Missing metadata in control vector file".to_string()))?;
+        let metadata_json = json_data.get("metadata").ok_or_else(|| {
+            MullamaError::InvalidInput("Missing metadata in control vector file".to_string())
+        })?;
 
         let metadata = ControlVectorMetadata {
-            name: metadata_json.get("name")
+            name: metadata_json
+                .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unnamed")
                 .to_string(),
-            description: metadata_json.get("description")
+            description: metadata_json
+                .get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
             recommended_strength: (
-                metadata_json.get("recommended_strength")
+                metadata_json
+                    .get("recommended_strength")
                     .and_then(|v| v.as_array())
                     .and_then(|arr| arr.get(0))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.1) as f32,
-                metadata_json.get("recommended_strength")
+                metadata_json
+                    .get("recommended_strength")
                     .and_then(|v| v.as_array())
                     .and_then(|arr| arr.get(1))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(2.0) as f32,
             ),
-            embedding_dim: metadata_json.get("embedding_dim")
+            embedding_dim: metadata_json
+                .get("embedding_dim")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
-            num_layers: metadata_json.get("num_layers")
+            num_layers: metadata_json
+                .get("num_layers")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
-            version: metadata_json.get("version")
+            version: metadata_json
+                .get("version")
                 .and_then(|v| v.as_str())
                 .unwrap_or("1.0")
                 .to_string(),
@@ -400,28 +408,46 @@ impl ControlVector {
         };
 
         // Parse layers
-        let layers_json = json_data.get("layers")
+        let layers_json = json_data
+            .get("layers")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| MullamaError::InvalidInput("Missing or invalid layers data".to_string()))?;
+            .ok_or_else(|| {
+                MullamaError::InvalidInput("Missing or invalid layers data".to_string())
+            })?;
 
-        let layers: Result<Vec<LayerVector>, MullamaError> = layers_json.iter().enumerate().map(|(i, layer_json)| {
-            let values: Result<Vec<f32>, MullamaError> = layer_json.get("values")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| MullamaError::InvalidInput(format!("Missing values for layer {}", i)))?
-                .iter()
-                .map(|v| v.as_f64().ok_or_else(|| MullamaError::InvalidInput(format!("Invalid value in layer {}", i))).map(|f| f as f32))
-                .collect();
+        let layers: Result<Vec<LayerVector>, MullamaError> = layers_json
+            .iter()
+            .enumerate()
+            .map(|(i, layer_json)| {
+                let values: Result<Vec<f32>, MullamaError> = layer_json
+                    .get("values")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        MullamaError::InvalidInput(format!("Missing values for layer {}", i))
+                    })?
+                    .iter()
+                    .map(|v| {
+                        v.as_f64()
+                            .ok_or_else(|| {
+                                MullamaError::InvalidInput(format!("Invalid value in layer {}", i))
+                            })
+                            .map(|f| f as f32)
+                    })
+                    .collect();
 
-            Ok(LayerVector {
-                layer_index: i,
-                values: values?,
-                layer_scale: layer_json.get("layer_scale")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(1.0) as f32,
+                Ok(LayerVector {
+                    layer_index: i,
+                    values: values?,
+                    layer_scale: layer_json
+                        .get("layer_scale")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32,
+                })
             })
-        }).collect();
+            .collect();
 
-        let strength = json_data.get("strength")
+        let strength = json_data
+            .get("strength")
             .and_then(|v| v.as_f64())
             .unwrap_or(1.0) as f32;
 
@@ -452,11 +478,13 @@ impl ControlVector {
             })).collect::<Vec<_>>()
         });
 
-        let content = serde_json::to_string_pretty(&json_data)
-            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to serialize JSON: {}", e)))?;
+        let content = serde_json::to_string_pretty(&json_data).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to serialize JSON: {}", e))
+        })?;
 
-        std::fs::write(path, content)
-            .map_err(|e| MullamaError::ControlVectorError(format!("Failed to write file: {}", e)))?;
+        std::fs::write(path, content).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to write file: {}", e))
+        })?;
 
         Ok(())
     }
@@ -464,28 +492,28 @@ impl ControlVector {
     /// Load from NPZ format (placeholder)
     fn load_npz<P: AsRef<Path>>(_path: P) -> Result<Self, MullamaError> {
         Err(MullamaError::NotImplemented(
-            "NPZ format loading not yet implemented".to_string()
+            "NPZ format loading not yet implemented".to_string(),
         ))
     }
 
     /// Save to NPZ format (placeholder)
     fn save_npz<P: AsRef<Path>>(&self, _path: P) -> Result<(), MullamaError> {
         Err(MullamaError::NotImplemented(
-            "NPZ format saving not yet implemented".to_string()
+            "NPZ format saving not yet implemented".to_string(),
         ))
     }
 
     /// Load from SafeTensors format (placeholder)
     fn load_safetensors<P: AsRef<Path>>(_path: P) -> Result<Self, MullamaError> {
         Err(MullamaError::NotImplemented(
-            "SafeTensors format loading not yet implemented".to_string()
+            "SafeTensors format loading not yet implemented".to_string(),
         ))
     }
 
     /// Save to SafeTensors format (placeholder)
     fn save_safetensors<P: AsRef<Path>>(&self, _path: P) -> Result<(), MullamaError> {
         Err(MullamaError::NotImplemented(
-            "SafeTensors format saving not yet implemented".to_string()
+            "SafeTensors format saving not yet implemented".to_string(),
         ))
     }
 }
@@ -512,7 +540,11 @@ impl ControlVectorManager {
     }
 
     /// Load and add a control vector from file
-    pub fn load_vector<P: AsRef<Path>>(&mut self, name: String, path: P) -> Result<(), MullamaError> {
+    pub fn load_vector<P: AsRef<Path>>(
+        &mut self,
+        name: String,
+        path: P,
+    ) -> Result<(), MullamaError> {
         let vector = ControlVector::load(path)?;
         self.vectors.insert(name, vector);
         Ok(())
@@ -585,9 +617,9 @@ impl ControlVectorManager {
     /// Validate all vectors against a model
     pub fn validate_compatibility(&self, model: &Model) -> Result<(), MullamaError> {
         for (name, vector) in &self.vectors {
-            vector.validate_compatibility(model).map_err(|e| {
-                MullamaError::InvalidInput(format!("Vector '{}': {}", name, e))
-            })?;
+            vector
+                .validate_compatibility(model)
+                .map_err(|e| MullamaError::InvalidInput(format!("Vector '{}': {}", name, e)))?;
         }
         Ok(())
     }
@@ -632,7 +664,8 @@ pub mod utils {
         // For now, we'll create a simple pattern
         for layer in &mut vector.layers {
             for (i, value) in layer.values.iter_mut().enumerate() {
-                *value = (intensity * ((i as f32).sin() + (layer.layer_index as f32).cos())) / 100.0;
+                *value =
+                    (intensity * ((i as f32).sin() + (layer.layer_index as f32).cos())) / 100.0;
             }
         }
 
@@ -647,7 +680,8 @@ pub mod utils {
         num_layers: usize,
         intensity: f32,
     ) -> ControlVector {
-        let mut vector = create_behavior_vector(behavior_description, embedding_dim, num_layers, intensity);
+        let mut vector =
+            create_behavior_vector(behavior_description, embedding_dim, num_layers, intensity);
         vector.scale(-1.0); // Invert to discourage behavior
         vector.metadata.name = format!("anti_behavior_{}", behavior_description.replace(' ', "_"));
         vector.metadata.description = format!("Discourages {}", behavior_description);
@@ -675,7 +709,12 @@ pub mod presets {
 
     /// Create a helpfulness control vector
     pub fn helpful_assistant(embedding_dim: usize, num_layers: usize) -> ControlVector {
-        utils::create_behavior_vector("helpful and informative responses", embedding_dim, num_layers, 1.0)
+        utils::create_behavior_vector(
+            "helpful and informative responses",
+            embedding_dim,
+            num_layers,
+            1.0,
+        )
     }
 
     /// Create a creative writing control vector
@@ -685,17 +724,32 @@ pub mod presets {
 
     /// Create a technical accuracy control vector
     pub fn technical_accuracy(embedding_dim: usize, num_layers: usize) -> ControlVector {
-        utils::create_behavior_vector("technical accuracy and precision", embedding_dim, num_layers, 1.2)
+        utils::create_behavior_vector(
+            "technical accuracy and precision",
+            embedding_dim,
+            num_layers,
+            1.2,
+        )
     }
 
     /// Create an anti-harmful content control vector
     pub fn safety_filter(embedding_dim: usize, num_layers: usize) -> ControlVector {
-        utils::create_anti_behavior_vector("harmful or inappropriate content", embedding_dim, num_layers, 2.0)
+        utils::create_anti_behavior_vector(
+            "harmful or inappropriate content",
+            embedding_dim,
+            num_layers,
+            2.0,
+        )
     }
 
     /// Create a conciseness control vector
     pub fn concise_responses(embedding_dim: usize, num_layers: usize) -> ControlVector {
-        utils::create_behavior_vector("concise and direct communication", embedding_dim, num_layers, 0.8)
+        utils::create_behavior_vector(
+            "concise and direct communication",
+            embedding_dim,
+            num_layers,
+            0.8,
+        )
     }
 }
 
@@ -705,12 +759,7 @@ mod tests {
 
     #[test]
     fn test_control_vector_creation() {
-        let vector = ControlVector::new(
-            "test".to_string(),
-            "Test vector".to_string(),
-            128,
-            24,
-        );
+        let vector = ControlVector::new("test".to_string(), "Test vector".to_string(), 128, 24);
 
         assert_eq!(vector.metadata.name, "test");
         assert_eq!(vector.metadata.embedding_dim, 128);
@@ -722,12 +771,7 @@ mod tests {
     fn test_control_vector_manager() {
         let mut manager = ControlVectorManager::new();
 
-        let vector = ControlVector::new(
-            "test".to_string(),
-            "Test vector".to_string(),
-            128,
-            24,
-        );
+        let vector = ControlVector::new("test".to_string(), "Test vector".to_string(), 128, 24);
 
         manager.add_vector("test".to_string(), vector);
         assert_eq!(manager.vector_names().len(), 1);
@@ -739,19 +783,10 @@ mod tests {
 
     #[test]
     fn test_vector_combination() {
-        let mut vector1 = ControlVector::new(
-            "test1".to_string(),
-            "Test vector 1".to_string(),
-            4,
-            2,
-        );
+        let mut vector1 =
+            ControlVector::new("test1".to_string(), "Test vector 1".to_string(), 4, 2);
 
-        let vector2 = ControlVector::new(
-            "test2".to_string(),
-            "Test vector 2".to_string(),
-            4,
-            2,
-        );
+        let vector2 = ControlVector::new("test2".to_string(), "Test vector 2".to_string(), 4, 2);
 
         // Set some test values
         vector1.layers[0].values = vec![1.0, 0.0, 0.0, 0.0];
