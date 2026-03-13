@@ -14,8 +14,8 @@ use mullama::{
 use std::{sync::Arc, time::Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Mullama Performance Benchmarks");
-    println!("📊 Measuring the fastest Rust llama.cpp wrapper\n");
+    println!(" Mullama Performance Benchmarks");
+    println!(" Measuring the fastest Rust llama.cpp wrapper\n");
 
     // System capabilities
     println!("🖥️  System Information:");
@@ -70,7 +70,7 @@ fn simulate_benchmarks() {
         println!("   {}: {:.2}ms - {}", name, duration.as_secs_f64() * 1000.0, desc);
     }
 
-    println!("\n🧠 Memory Usage Optimization:");
+    println!("\n Memory Usage Optimization:");
     println!("   Model loading: Memory-mapped for efficiency");
     println!("   KV Cache: Dynamic allocation with defragmentation");
     println!("   Batch processing: Zero-copy where possible");
@@ -81,7 +81,7 @@ fn simulate_benchmarks() {
     println!("   Batch processing: ~500-1000 tokens/sec");
     println!("   Multi-sequence: Up to {}x parallel", unsafe { sys::llama_max_parallel_sequences() });
 
-    println!("\n🎯 Quality Metrics:");
+    println!("\n Quality Metrics:");
     println!("   API Coverage: 100% (213+ functions)");
     println!("   Memory Safety: Zero unsafe in public API");
     println!("   Performance: Native C++ speed");

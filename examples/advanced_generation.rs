@@ -1,2 +1,122 @@
 //! Advanced text generation example showcasing the full API
-//!\n//! This example demonstrates:\n//! - Loading models with advanced parameters\n//! - Creating contexts with full configuration\n//! - Using the complete sampling system\n//! - KV cache management\n//! - State saving/loading\n//! - Performance monitoring\n\nuse mullama::{\n    Model, ModelParams, Context, ContextParams, \n    sampling::{SamplerParams, SamplerChain, Sampler},\n    batch::Batch, error::MullamaError, sys,\n};\nuse std::sync::Arc;\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    println!(\"🚀 Mullama Advanced Generation Example\");\n    println!(\"🎯 Showcasing 100% llama.cpp API coverage\\n\");\n    \n    // Check system capabilities\n    println!(\"📊 System Information:\");\n    println!(\"   - Max devices: {}\", unsafe { sys::llama_max_devices() });\n    println!(\"   - Max parallel sequences: {}\", unsafe { sys::llama_max_parallel_sequences() });\n    println!(\"   - GPU offload supported: {}\", unsafe { sys::llama_supports_gpu_offload() });\n    println!(\"   - Memory mapping supported: {}\", unsafe { sys::llama_supports_mmap() });\n    println!(\"   - Memory locking supported: {}\\n\", unsafe { sys::llama_supports_mlock() });\n    \n    // Advanced model parameters\n    let model_params = ModelParams {\n        n_gpu_layers: 32,  // Offload layers to GPU if available\n        use_mmap: true,    // Enable memory mapping\n        use_mlock: false,  // Disable memory locking\n        check_tensors: true, // Validate tensors\n        vocab_only: false, // Load full model\n        ..Default::default()\n    };\n    \n    // Load model (this would fail without an actual model file)\n    println!(\"🔄 Loading model with advanced parameters...\");\n    // In a real example, you'd have: let model_path = \"path/to/model.gguf\";\n    let model_path = \"./test_model.gguf\"; // Placeholder\n    \n    match Model::load_with_params(model_path, model_params) {\n        Ok(model) => {\n            let model = Arc::new(model);\n            demonstrate_full_api(model)?\n        },\n        Err(e) => {\n            println!(\"❌ Model loading failed: {}\", e);\n            println!(\"   This is expected if no model file is present.\");\n            println!(\"   The example demonstrates the API structure.\");\n            demonstrate_api_structure()?\n        }\n    }\n    \n    Ok(())\n}\n\nfn demonstrate_full_api(model: Arc<Model>) -> Result<(), MullamaError> {\n    println!(\"✅ Model loaded successfully!\");\n    \n    // Display model information\n    println!(\"\\n📈 Model Information:\");\n    println!(\"   - Context size: {}\", model.n_ctx_train());\n    println!(\"   - Embedding dimension: {}\", model.n_embd());\n    println!(\"   - Layers: {}\", model.n_layer());\n    println!(\"   - Attention heads: {}\", model.n_head());\n    println!(\"   - KV heads: {}\", model.n_head_kv());\n    println!(\"   - Vocabulary size: {}\", model.vocab_size());\n    println!(\"   - Vocabulary type: {:?}\", model.vocab_type());\n    println!(\"   - RoPE type: {:?}\", model.rope_type());\n    \n    // Advanced context parameters\n    let ctx_params = ContextParams {\n        n_ctx: 4096,\n        n_batch: 512,\n        n_ubatch: 256,\n        n_seq_max: 4,  // Support multiple sequences\n        n_threads: 8,\n        n_threads_batch: 8,\n        embeddings: true,  // Enable embeddings\n        flash_attn: true,  // Use flash attention\n        offload_kqv: true, // Offload KV operations to GPU\n        ..Default::default()\n    };\n    \n    println!(\"\\n🔄 Creating context with advanced parameters...\");\n    let mut context = Context::new(model.clone(), ctx_params)?;\n    \n    println!(\"✅ Context created successfully!\");\n    println!(\"   - Context size: {}\", context.n_ctx());\n    println!(\"   - Batch size: {}\", context.n_batch());\n    println!(\"   - Physical batch size: {}\", context.n_ubatch());\n    println!(\"   - Max sequences: {}\", context.n_seq_max());\n    \n    // Demonstrate tokenization\n    let prompt = \"The future of artificial intelligence is\";\n    println!(\"\\n🔤 Tokenizing prompt: '{}'\", prompt);\n    let tokens = model.tokenize(prompt, true, false)?;\n    println!(\"   - Token count: {}\", tokens.len());\n    println!(\"   - Tokens: {:?}\", &tokens[..std::cmp::min(10, tokens.len())]);\n    \n    // Create advanced sampling chain\n    let sampler_params = SamplerParams {\n        temperature: 0.7,\n        top_k: 40,\n        top_p: 0.9,\n        min_p: 0.1,\n        penalty_repeat: 1.05,\n        penalty_freq: 0.1,\n        penalty_present: 0.1,\n        penalty_last_n: 128,\n        ..Default::default()\n    };\n    \n    println!(\"\\n🎯 Creating advanced sampling chain...\");\n    let mut sampler_chain = sampler_params.build_chain(model.clone());\n    println!(\"   - Sampler chain length: {}\", sampler_chain.len());\n    \n    // Demonstrate batch processing\n    let batch = Batch::from_tokens(&tokens);\n    println!(\"\\n📦 Processing batch...\");\n    context.decode(&batch)?;\n    println!(\"   - Batch processed successfully\");\n    \n    // Get logits and embeddings\n    if let Ok(logits) = context.logits() {\n        println!(\"   - Logits available: {} values\", logits.len());\n    }\n    \n    if let Ok(Some(embeddings)) = context.embeddings() {\n        println!(\"   - Embeddings available: {} dimensions\", embeddings.len());\n    }\n    \n    // Demonstrate KV cache operations\n    println!(\"\\n🧠 KV Cache Management:\");\n    println!(\"   - Max position in sequence 0: {}\", context.kv_cache_seq_pos_max(0));\n    println!(\"   - Can shift cache: {}\", context.kv_cache_can_shift());\n    \n    // Demonstrate state management\n    println!(\"\\n💾 State Management:\");\n    let state_size = context.state_get_size();\n    println!(\"   - State size: {} bytes\", state_size);\n    \n    // Generate a few tokens\n    println!(\"\\n🎲 Generating tokens...\");\n    for i in 0..5 {\n        let token = sampler_chain.sample(&mut context, -1);\n        let token_text = model.token_to_str(token, 0, false)?;\n        println!(\"   - Token {}: {} ('{}')\", i + 1, token, token_text.trim());\n        sampler_chain.accept(token);\n    }\n    \n    println!(\"\\n✅ Advanced generation completed successfully!\");\n    Ok(())\n}\n\nfn demonstrate_api_structure() -> Result<(), MullamaError> {\n    println!(\"\\n📚 API Structure Demonstration:\");\n    \n    println!(\"\\n🔧 Available Sampler Types:\");\n    println!(\"   - Greedy: Always picks highest probability\");\n    println!(\"   - Top-k: Limits to k most likely tokens\");\n    println!(\"   - Top-p (Nucleus): Cumulative probability threshold\");\n    println!(\"   - Min-p: Minimum probability threshold\");\n    println!(\"   - Temperature: Controls randomness\");\n    println!(\"   - Mirostat v1/v2: Perplexity control\");\n    println!(\"   - Tail-free: Removes low-probability tail\");\n    println!(\"   - Typical: Entropy-based sampling\");\n    println!(\"   - Grammar: Constrained generation\");\n    println!(\"   - Penalties: Repetition control\");\n    println!(\"   - Logit bias: Token preference control\");\n    \n    println!(\"\\n⚙️ Context Features:\");\n    println!(\"   - Multi-sequence support (up to {} sequences)\", unsafe { sys::llama_max_parallel_sequences() });\n    println!(\"   - KV cache management (clear, copy, shift, defrag)\");\n    println!(\"   - State save/load (memory and file)\");\n    println!(\"   - Thread configuration (generation + batch)\");\n    println!(\"   - Flash attention support\");\n    println!(\"   - GPU offloading\");\n    println!(\"   - RoPE scaling (linear, YaRN, etc.)\");\n    println!(\"   - Multiple pooling types\");\n    \n    println!(\"\\n🎯 Advanced Model Features:\");\n    println!(\"   - GPU layer offloading\");\n    println!(\"   - Memory mapping and locking\");\n    println!(\"   - Tensor validation\");\n    println!(\"   - KV overrides\");\n    println!(\"   - Progress callbacks\");\n    println!(\"   - Split loading\");\n    println!(\"   - Quantization support\");\n    \n    println!(\"\\n📊 Performance Monitoring:\");\n    println!(\"   - Context performance tracking\");\n    println!(\"   - Sampler performance tracking\");\n    println!(\"   - YAML performance dumps\");\n    println!(\"   - Detailed timing information\");\n    \n    println!(\"\\n🔗 Token Operations:\");\n    println!(\"   - Advanced tokenization (BOS, special tokens)\");\n    println!(\"   - Detokenization with options\");\n    println!(\"   - Token attributes and metadata\");\n    println!(\"   - Special token access (BOS, EOS, PAD, etc.)\");\n    println!(\"   - Token type detection\");\n    \n    println!(\"\\n✨ This demonstrates the complete API surface!\");\n    println!(\"   Total FFI functions: 100+\");\n    println!(\"   Complete parameter structures: ✅\");\n    println!(\"   All enum types: ✅\");\n    println!(\"   Memory safety: ✅\");\n    \n    Ok(())\n}\n
+//!
+//! This example demonstrates:
+//! - Advanced model parameters
+//! - Context configuration options
+//! - Sampling chain composition
+//! - Performance monitoring concepts
+
+use mullama::{
+    Model, ModelParams, Context, ContextParams,
+    SamplerParams, SamplerChain, SamplerChainParams,
+    Batch, MullamaError
+};
+use std::sync::Arc;
+
+fn main() -> Result<(), MullamaError> {
+    println!("Mullama Advanced Generation Example");
+    println!("Showcasing comprehensive API usage\n");
+
+    // Advanced model parameters demonstration
+    println!("Advanced Model Parameters:");
+    let model_params = ModelParams {
+        n_gpu_layers: 32,    // Offload layers to GPU if available
+        use_mmap: true,      // Enable memory mapping
+        use_mlock: false,    // Disable memory locking
+        check_tensors: true, // Validate tensors
+        vocab_only: false,   // Load full model
+        ..Default::default()
+    };
+
+    println!("   - GPU layers: {}", model_params.n_gpu_layers);
+    println!("   - Memory mapping: {}", model_params.use_mmap);
+    println!("   - Memory locking: {}", model_params.use_mlock);
+    println!("   - Tensor validation: {}", model_params.check_tensors);
+
+    // Advanced context parameters
+    println!("\nAdvanced Context Parameters:");
+    let ctx_params = ContextParams {
+        n_ctx: 4096,         // Large context size
+        n_batch: 512,        // Batch size
+        n_ubatch: 256,       // Physical batch size
+        n_seq_max: 4,        // Support multiple sequences
+        n_threads: 8,        // Generation threads
+        n_threads_batch: 8,  // Batch processing threads
+        embeddings: true,    // Enable embeddings
+        flash_attn: true,    // Use flash attention
+        offload_kqv: true,   // Offload KV operations to GPU
+        ..Default::default()
+    };
+
+    println!("   - Context size: {}", ctx_params.n_ctx);
+    println!("   - Batch size: {}", ctx_params.n_batch);
+    println!("   - Physical batch size: {}", ctx_params.n_ubatch);
+    println!("   - Max sequences: {}", ctx_params.n_seq_max);
+    println!("   - Generation threads: {}", ctx_params.n_threads);
+    println!("   - Batch threads: {}", ctx_params.n_threads_batch);
+    println!("   - Embeddings enabled: {}", ctx_params.embeddings);
+    println!("   - Flash attention: {}", ctx_params.flash_attn);
+
+    // Advanced sampling parameters
+    println!("\nAdvanced Sampling Parameters:");
+    let sampler_params = SamplerParams {
+        temperature: 0.7,      // Controlled randomness
+        top_k: 40,             // Top-k sampling
+        top_p: 0.9,            // Nucleus sampling
+        min_p: 0.1,            // Minimum probability
+        penalty_repeat: 1.05,  // Repetition penalty
+        penalty_freq: 0.1,     // Frequency penalty
+        penalty_present: 0.1,  // Presence penalty
+        penalty_last_n: 128,   // Penalty lookback
+        ..Default::default()
+    };
+
+    println!("   - Temperature: {}", sampler_params.temperature);
+    println!("   - Top-k: {}", sampler_params.top_k);
+    println!("   - Top-p: {}", sampler_params.top_p);
+    println!("   - Min-p: {}", sampler_params.min_p);
+    println!("   - Repetition penalty: {}", sampler_params.penalty_repeat);
+    println!("   - Frequency penalty: {}", sampler_params.penalty_freq);
+    println!("   - Presence penalty: {}", sampler_params.penalty_present);
+    println!("   - Penalty lookback: {}", sampler_params.penalty_last_n);
+
+    // Demonstrate API patterns without requiring actual model
+    println!("\nAPI Usage Patterns:");
+    demonstrate_api_patterns()?;
+
+    println!("\nAdvanced generation concepts demonstrated!");
+    Ok(())
+}
+
+fn demonstrate_api_patterns() -> Result<(), MullamaError> {
+    println!("   Loading Models:");
+    println!("     - Model::load(path) - Simple loading");
+    println!("     - Model::load_with_params(path, params) - Advanced loading");
+
+    println!("   Context Creation:");
+    println!("     - Context::new(model, params) - Create context");
+    println!("     - Configure threads, batch size, sequences");
+
+    println!("   Tokenization:");
+    println!("     - model.tokenize(text, add_bos, special) - Convert text to tokens");
+    println!("     - model.token_to_str(token, lstrip, special) - Convert token to text");
+
+    println!("   Sampling Chains:");
+    println!("     - SamplerParams::build_chain(model) - Create sampler chain");
+    println!("     - Multiple sampler types: top-k, top-p, temperature, penalties");
+
+    println!("   Batch Processing:");
+    println!("     - Batch::new(max_tokens, embd, max_seq) - Create batch");
+    println!("     - Batch::from_tokens(tokens) - Batch from token array");
+    println!("     - context.decode(batch) - Process batch");
+
+    println!("   Advanced Features:");
+    println!("     - KV cache management");
+    println!("     - Multi-sequence support");
+    println!("     - State save/restore");
+    println!("     - Performance monitoring");
+    println!("     - GPU acceleration");
+    println!("     - Memory optimization");
+
+    Ok(())
+}

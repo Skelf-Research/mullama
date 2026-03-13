@@ -1,54 +1,57 @@
 //! Session management example showing how to save and restore model states
 //!
 //! This example demonstrates:
-//! 1. Loading a model
-//! 2. Creating a context
-//! 3. Processing some tokens
-//! 4. Saving the session state
-//! 5. Loading the session state in a new context
+//! 1. Session creation and management
+//! 2. Session API usage patterns
+//! 3. State management concepts
 
-use mullama::{Model, ContextParams, Session};
+use mullama::{Model, ContextParams, Session, MullamaError};
 use std::sync::Arc;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), MullamaError> {
     println!("Mullama session management example");
-    
+
     // In a real implementation, you would load an actual GGUF model file:
     // let model = Model::load("path/to/model.gguf")?;
-    
-    // For this example, we'll just create a placeholder model
-    println!("Creating model placeholder...");
-    let model = create_placeholder_model();
-    
-    println!("Creating context...");
-    let mut ctx = model.create_context(ContextParams::default())?;
-    
-    println!("Processing some tokens...");
-    let tokens = model.tokenize("The quick brown fox jumps over the lazy dog", true, false)?;
-    ctx.decode(&tokens)?;
-    
-    println!("Saving session...");
-    let session = Session::from_context(&ctx)?;
-    session.save_to_file("session.bin")?;
-    
-    println!("Creating new context...");
-    let mut new_ctx = model.create_context(ContextParams::default())?;
-    
-    println!("Restoring session...");
-    let loaded_session = Session::load_from_file("session.bin")?;
-    new_ctx.restore_to_context(&loaded_session)?;
-    
-    println!("Session restored successfully!");
-    
-    Ok(())
-}
 
-/// Create a placeholder model for demonstration purposes
-/// In a real implementation, you would load an actual GGUF model file
-fn create_placeholder_model() -> Model {
-    // This creates a model with a null pointer
-    // In a real implementation, this would load an actual model
-    Model {
-        model_ptr: std::ptr::null_mut(),
-    }
+    // For this example, we'll demonstrate the session API
+    println!("Demonstrating session API...");
+
+    println!("Creating session with data...");
+    let session_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    let session = Session {
+        data: session_data.clone(),
+    };
+    println!(" Session created with {} bytes of data", session.data.len());
+
+    println!("Working with session data...");
+    println!("   Session data length: {}", session.data.len());
+    println!("   First few bytes: {:?}", &session.data[..std::cmp::min(4, session.data.len())]);
+
+    // Example of context parameters for session management
+    println!("Creating context parameters for session management...");
+    let mut ctx_params = ContextParams::default();
+    ctx_params.n_ctx = 4096;  // Set context size for state management
+    println!(" Context parameters configured");
+    println!("   Context size: {}", ctx_params.n_ctx);
+
+    // Example of what real session management would look like
+    println!("Session management concepts:");
+    println!("  1. Create sessions to store model state");
+    println!("  2. Sessions contain binary data representing the model state");
+    println!("  3. Save sessions for later restoration of conversation state");
+    println!("  4. Restore sessions to continue from a previous point");
+    println!("  5. Use Session::from_context() to capture current state (when implemented)");
+    println!("  6. Use Session::save_to_file() and Session::load_from_file() for persistence");
+
+    println!("Creating a larger session example...");
+    let large_session_data = vec![0u8; 1024]; // 1KB of data
+    let large_session = Session {
+        data: large_session_data,
+    };
+    println!(" Large session created with {} bytes", large_session.data.len());
+
+    println!("Session management example completed successfully!");
+
+    Ok(())
 }

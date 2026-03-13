@@ -3,7 +3,7 @@ use crate::{sys, error::MullamaError, context::Context};
 /// Represents the complete state of a context that can be saved and restored
 #[derive(Debug)]
 pub struct Session {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl Session {

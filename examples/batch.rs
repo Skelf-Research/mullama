@@ -1,49 +1,51 @@
 //! Batch processing example showing how to process multiple sequences efficiently
 //!
 //! This example demonstrates:
-//! 1. Loading a model
-//! 2. Creating a context
-//! 3. Creating batches of tokens
-//! 4. Processing batches efficiently
+//! 1. Creating batches of tokens
+//! 2. Batch API usage patterns
+//! 3. Efficient processing concepts
 
-use mullama::{Model, ContextParams, Batch};
+use mullama::{Model, ContextParams, Batch, MullamaError};
 use std::sync::Arc;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), MullamaError> {
     println!("Mullama batch processing example");
-    
+
     // In a real implementation, you would load an actual GGUF model file:
     // let model = Model::load("path/to/model.gguf")?;
-    
-    // For this example, we'll just create a placeholder model
-    println!("Creating model placeholder...");
-    let model = create_placeholder_model();
-    
-    println!("Creating context...");
-    let mut ctx = model.create_context(ContextParams::default())?;
-    
-    println!("Creating batch...");
-    let mut batch = Batch::new(1024, 0, 4); // Max 1024 tokens, 0 embedding size, 4 sequences
-    
-    println!("Adding tokens to batch...");
-    // In a real implementation, you would add actual tokens to the batch
-    // For this example, we'll just show the API usage
-    
-    println!("Processing batch...");
-    // In a real implementation:
-    // ctx.decode_batch(&batch)?;
-    
-    println!("Batch processed successfully!");
-    
-    Ok(())
-}
 
-/// Create a placeholder model for demonstration purposes
-/// In a real implementation, you would load an actual GGUF model file
-fn create_placeholder_model() -> Model {
-    // This creates a model with a null pointer
-    // In a real implementation, this would load an actual model
-    Model {
-        model_ptr: std::ptr::null_mut(),
-    }
+    // For this example, we'll demonstrate the batch API
+    println!("Demonstrating batch API...");
+
+    println!("Creating batch...");
+    let batch = Batch::new(1024, 0, 4); // Max 1024 tokens, 0 embedding size, 4 sequences
+    println!(" Batch created with capacity for {} tokens", 1024);
+
+    println!("Creating batch from tokens...");
+    let tokens = vec![1, 2, 3, 4, 5];
+    let token_batch = Batch::from_tokens(&tokens);
+    println!(" Batch created from {} tokens", tokens.len());
+    println!("   Batch is empty: {}", token_batch.is_empty());
+    println!("   Batch length: {}", token_batch.len());
+
+    // Example of context parameters for batch processing
+    println!("Creating context parameters for batch processing...");
+    let mut ctx_params = ContextParams::default();
+    ctx_params.n_batch = 512; // Set batch size
+    ctx_params.n_ctx = 2048;  // Set context size
+    println!(" Context parameters configured");
+    println!("   Batch size: {}", ctx_params.n_batch);
+    println!("   Context size: {}", ctx_params.n_ctx);
+
+    // Example of what real batch processing would look like
+    println!("Batch processing concepts:");
+    println!("  1. Create batches of tokens for efficient processing");
+    println!("  2. Use Batch::new(max_tokens, embd, max_seq) for custom batches");
+    println!("  3. Use Batch::from_tokens(tokens) for simple token sequences");
+    println!("  4. Configure context with appropriate batch size");
+    println!("  5. Process batches with context.decode_batch() (when implemented)");
+
+    println!("Batch example completed successfully!");
+
+    Ok(())
 }
