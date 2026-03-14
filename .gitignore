@@ -22,8 +22,6 @@ models/
 *.ggml
 *.bin
 
-# Generated documentation
-documentation/
 
 # IDE and editor files
 .idea/
