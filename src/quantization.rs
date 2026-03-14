@@ -36,6 +36,7 @@ pub struct QuantizationParams {
 
 /// Supported quantization types
 #[derive(Debug, Clone, PartialEq)]
+#[allow(non_camel_case_types)]
 pub enum QuantizationType {
     /// 32-bit floating point (no quantization)
     F32,
@@ -158,6 +159,7 @@ pub struct LayerMetrics {
 
 /// Runtime quantization engine
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct QuantizationEngine {
     /// Source model to quantize
     model: Model,
@@ -298,7 +300,7 @@ impl QuantizationEngine {
     /// Quantize with custom quantization scheme
     fn quantize_custom(
         &mut self,
-        scheme: &Box<CustomQuantizationScheme>,
+        scheme: &CustomQuantizationScheme,
     ) -> Result<Model, MullamaError> {
         match scheme.method {
             QuantizationMethod::Linear => self.quantize_linear(scheme),
@@ -311,7 +313,7 @@ impl QuantizationEngine {
     /// Linear quantization implementation
     fn quantize_linear(
         &mut self,
-        _scheme: &Box<CustomQuantizationScheme>,
+        _scheme: &CustomQuantizationScheme,
     ) -> Result<Model, MullamaError> {
         // This would implement custom linear quantization
         // For now, return an error indicating it's not implemented
@@ -323,7 +325,7 @@ impl QuantizationEngine {
     /// K-means quantization implementation
     fn quantize_kmeans(
         &mut self,
-        _scheme: &Box<CustomQuantizationScheme>,
+        _scheme: &CustomQuantizationScheme,
     ) -> Result<Model, MullamaError> {
         // This would implement K-means based quantization
         Err(MullamaError::NotImplemented(
@@ -334,7 +336,7 @@ impl QuantizationEngine {
     /// Vector quantization implementation
     fn quantize_vector(
         &mut self,
-        _scheme: &Box<CustomQuantizationScheme>,
+        _scheme: &CustomQuantizationScheme,
     ) -> Result<Model, MullamaError> {
         // This would implement vector quantization
         Err(MullamaError::NotImplemented(
@@ -345,7 +347,7 @@ impl QuantizationEngine {
     /// Learned quantization implementation
     fn quantize_learned(
         &mut self,
-        _scheme: &Box<CustomQuantizationScheme>,
+        _scheme: &CustomQuantizationScheme,
     ) -> Result<Model, MullamaError> {
         // This would implement learned quantization schemes
         Err(MullamaError::NotImplemented(
@@ -396,6 +398,7 @@ impl QuantizationEngine {
     }
 
     /// Calculate quality metrics after quantization
+    #[allow(dead_code)]
     fn calculate_metrics(&mut self, quantized_model: &Model) -> Result<(), MullamaError> {
         let original_size = 1000000000u64; // Placeholder
         let quantized_size = 500000000u64; // Placeholder
@@ -423,6 +426,7 @@ impl QuantizationEngine {
     }
 
     /// Estimate model perplexity (simplified implementation)
+    #[allow(dead_code)]
     fn estimate_perplexity(&self, _model: &Model) -> Result<f32, MullamaError> {
         // This would evaluate the model on a standard dataset
         // For now, return a placeholder value
@@ -447,6 +451,7 @@ impl QuantizationEngine {
     }
 
     /// Create llama.cpp quantization parameters
+    #[allow(dead_code)]
     fn create_llama_quantize_params(
         &self,
     ) -> Result<sys::llama_model_quantize_params, MullamaError> {
@@ -529,9 +534,8 @@ pub mod utils {
     use super::*;
 
     /// Analyze model to recommend optimal quantization settings
-    pub fn recommend_quantization(model: &Model) -> QuantizationType {
+    pub fn recommend_quantization(_model: &Model) -> QuantizationType {
         let size = 1000000000u64; // Placeholder size
-        let n_params = 1000000u64; // Placeholder param count
 
         // Recommend based on model size
         if size > 20_000_000_000 {

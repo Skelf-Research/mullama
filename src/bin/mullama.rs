@@ -38,9 +38,8 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use mullama::daemon::{
-    create_openai_router, Daemon, DaemonBuilder, DaemonClient, TuiApp,
-    HfDownloader, HfModelSpec, HfSearchResult, GgufFileInfo, resolve_model_path,
-    DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
+    create_openai_router, resolve_model_path, Daemon, DaemonBuilder, DaemonClient, GgufFileInfo,
+    HfDownloader, HfModelSpec, HfSearchResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
 };
 
 #[derive(Parser)]
@@ -337,7 +336,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket,
             stats,
         } => {
-            run_prompt(&socket, &prompt, model.as_deref(), max_tokens, temperature, stats)?;
+            run_prompt(
+                &socket,
+                &prompt,
+                model.as_deref(),
+                max_tokens,
+                temperature,
+                stats,
+            )?;
         }
 
         Commands::Models { socket, verbose } => {
@@ -453,7 +459,8 @@ async fn run_server(
                 // Check for Windows drive letter
                 if alias.len() == 1 && path_str.starts_with('\\') {
                     let p = PathBuf::from(spec);
-                    let a = p.file_stem()
+                    let a = p
+                        .file_stem()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| "model".to_string());
                     (a, p)
@@ -462,7 +469,8 @@ async fn run_server(
                 }
             } else {
                 let p = PathBuf::from(spec);
-                let a = p.file_stem()
+                let a = p
+                    .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "model".to_string());
                 (a, p)
@@ -524,7 +532,9 @@ async fn run_server(
         println!("Examples:");
         println!("  mullama serve --model ./model.gguf");
         println!("  mullama serve --model hf:TheBloke/Llama-2-7B-GGUF");
-        println!("  mullama serve --model llama:hf:TheBloke/Llama-2-7B-GGUF:llama-2-7b.Q4_K_M.gguf");
+        println!(
+            "  mullama serve --model llama:hf:TheBloke/Llama-2-7B-GGUF:llama-2-7b.Q4_K_M.gguf"
+        );
     }
 
     println!();
@@ -560,7 +570,9 @@ async fn run_server(
     println!("\nShutting down...");
 
     // Signal shutdown
-    daemon.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+    daemon
+        .shutdown
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
     // Give servers time to cleanup
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -575,8 +587,8 @@ async fn run_ipc_server(
     daemon: std::sync::Arc<Daemon>,
     addr: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use nng::{Protocol, Socket};
     use mullama::daemon::{Request, Response};
+    use nng::{Protocol, Socket};
 
     let socket = Socket::new(Protocol::Rep0)?;
     socket.listen(addr)?;
@@ -639,7 +651,10 @@ fn run_chat(socket: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>
     // Verify connection
     match client.ping() {
         Ok((uptime, version)) => {
-            println!("Connected to Mullama daemon v{} (uptime: {}s)", version, uptime);
+            println!(
+                "Connected to Mullama daemon v{} (uptime: {}s)",
+                version, uptime
+            );
         }
         Err(e) => {
             eprintln!("Failed to connect: {}", e);
@@ -881,7 +896,11 @@ async fn pull_model(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::
     println!("  Path: {}", path.display());
     println!();
     println!("To use this model:");
-    println!("  mullama serve --model {}:{}", hf_spec.get_alias(), path.display());
+    println!(
+        "  mullama serve --model {}:{}",
+        hf_spec.get_alias(),
+        path.display()
+    );
 
     Ok(())
 }
@@ -906,7 +925,10 @@ async fn handle_cache_action(action: CacheAction) -> Result<(), Box<dyn std::err
                 println!("  {} / {}", model.repo_id, model.filename);
                 if verbose {
                     println!("    Path: {}", model.local_path.display());
-                    println!("    Size: {:.2} GB", model.size_bytes as f64 / 1_073_741_824.0);
+                    println!(
+                        "    Size: {:.2} GB",
+                        model.size_bytes as f64 / 1_073_741_824.0
+                    );
                     println!("    Downloaded: {}", model.downloaded_at);
                     println!();
                 }
@@ -942,10 +964,7 @@ async fn handle_cache_action(action: CacheAction) -> Result<(), Box<dyn std::err
             } else {
                 // Remove all files from repo
                 let models = downloader.list_cached();
-                let to_remove: Vec<_> = models
-                    .iter()
-                    .filter(|m| m.repo_id == repo_id)
-                    .collect();
+                let to_remove: Vec<_> = models.iter().filter(|m| m.repo_id == repo_id).collect();
 
                 if to_remove.is_empty() {
                     println!("No cached files found for {}", repo_id);
@@ -966,7 +985,11 @@ async fn handle_cache_action(action: CacheAction) -> Result<(), Box<dyn std::err
                 let models = downloader.list_cached();
                 let size = downloader.cache_size();
 
-                println!("This will remove {} models ({:.2} GB).", models.len(), size as f64 / 1_073_741_824.0);
+                println!(
+                    "This will remove {} models ({:.2} GB).",
+                    models.len(),
+                    size as f64 / 1_073_741_824.0
+                );
                 print!("Are you sure? [y/N] ");
                 io::stdout().flush()?;
 
@@ -1083,19 +1106,21 @@ async fn show_repo_info(repo_id: &str) -> Result<(), Box<dyn std::error::Error>>
     println!();
 
     // Group by quantization type
-    let mut by_quant: std::collections::HashMap<String, Vec<&GgufFileInfo>> = std::collections::HashMap::new();
+    let mut by_quant: std::collections::HashMap<String, Vec<&GgufFileInfo>> =
+        std::collections::HashMap::new();
     for file in &files {
-        let key = file.quantization.clone().unwrap_or_else(|| "Other".to_string());
+        let key = file
+            .quantization
+            .clone()
+            .unwrap_or_else(|| "Other".to_string());
         by_quant.entry(key).or_default().push(file);
     }
 
     // Sort quantization types by preference
     let quant_order = [
-        "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1",
-        "Q8_0", "Q6_K", "Q3_K_M", "Q3_K_S", "Q3_K_L", "Q2_K",
-        "IQ4_XS", "IQ4_NL", "IQ3_M", "IQ3_S", "IQ3_XS", "IQ3_XXS",
-        "IQ2_M", "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_M", "IQ1_S",
-        "F16", "F32", "Other",
+        "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1", "Q8_0", "Q6_K", "Q3_K_M", "Q3_K_S",
+        "Q3_K_L", "Q2_K", "IQ4_XS", "IQ4_NL", "IQ3_M", "IQ3_S", "IQ3_XS", "IQ3_XXS", "IQ2_M",
+        "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_M", "IQ1_S", "F16", "F32", "Other",
     ];
 
     for quant in quant_order {
@@ -1137,7 +1162,11 @@ async fn show_repo_info(repo_id: &str) -> Result<(), Box<dyn std::error::Error>>
         println!();
         println!("Cached locally:");
         for c in cached_from_repo {
-            println!("  {} ({:.2} GB)", c.filename, c.size_bytes as f64 / 1_073_741_824.0);
+            println!(
+                "  {} ({:.2} GB)",
+                c.filename,
+                c.size_bytes as f64 / 1_073_741_824.0
+            );
         }
     }
 

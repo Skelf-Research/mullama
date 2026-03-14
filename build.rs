@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The llama.cpp version to use when downloading
@@ -48,7 +48,10 @@ fn get_llama_cpp_path() -> PathBuf {
     if let Ok(path) = env::var("LLAMA_CPP_PATH") {
         let path = PathBuf::from(path);
         if path.exists() && path.join("include").join("llama.h").exists() {
-            println!("cargo:warning=Using llama.cpp from LLAMA_CPP_PATH: {:?}", path);
+            println!(
+                "cargo:warning=Using llama.cpp from LLAMA_CPP_PATH: {:?}",
+                path
+            );
             return path;
         }
         panic!(
@@ -86,7 +89,10 @@ fn get_llama_cpp_path() -> PathBuf {
         return download_path;
     }
 
-    println!("cargo:warning=Downloading llama.cpp {} from GitHub...", LLAMA_CPP_VERSION);
+    println!(
+        "cargo:warning=Downloading llama.cpp {} from GitHub...",
+        LLAMA_CPP_VERSION
+    );
     download_llama_cpp(&download_path);
 
     if !download_path.join("include").join("llama.h").exists() {
@@ -154,7 +160,10 @@ fn download_llama_cpp(target_path: &PathBuf) {
         panic!("Failed to extract llama.cpp archive. Please ensure tar is installed.");
     }
 
-    println!("cargo:warning=Successfully downloaded llama.cpp {}", LLAMA_CPP_VERSION);
+    println!(
+        "cargo:warning=Successfully downloaded llama.cpp {}",
+        LLAMA_CPP_VERSION
+    );
 }
 
 fn setup_platform_specific() {
@@ -400,7 +409,7 @@ fn configure_cuda_linking() {
     println!("cargo:rustc-link-lib=curand");
 
     // Check CUDA version
-    if let Ok(output) = Command::new("nvcc").args(&["--version"]).output() {
+    if let Ok(output) = Command::new("nvcc").args(["--version"]).output() {
         let version_str = String::from_utf8_lossy(&output.stdout);
         if version_str.contains("release 12") {
             println!("cargo:rustc-cfg=cuda_version=\"12\"");
@@ -424,14 +433,10 @@ fn configure_opencl_linking() {
         println!("cargo:rustc-link-lib=OpenCL");
     } else if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=framework=OpenCL");
+    } else if pkg_config::probe_library("OpenCL").is_ok() {
+        println!("cargo:rustc-link-lib=OpenCL");
     } else {
-        if pkg_config::probe_library("OpenCL").is_ok() {
-            println!("cargo:rustc-link-lib=OpenCL");
-        } else {
-            println!(
-                "cargo:warning=OpenCL not found. Install opencl-headers and ocl-icd-opencl-dev"
-            );
-        }
+        println!("cargo:warning=OpenCL not found. Install opencl-headers and ocl-icd-opencl-dev");
     }
 
     // CLBlast for improved OpenCL performance
@@ -487,7 +492,7 @@ fn command_exists(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
+fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
     let include_path = llama_cpp_path.join("include");
     let ggml_include_path = llama_cpp_path.join("ggml").join("include");
 
@@ -522,18 +527,17 @@ fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             for line in stderr.lines() {
                 let line = line.trim();
-                if line.starts_with('/') && !line.contains(' ') {
-                    if std::path::Path::new(line).exists() {
-                        builder = builder.clang_arg(format!("-isystem{}", line));
-                    }
+                if line.starts_with('/')
+                    && !line.contains(' ')
+                    && std::path::Path::new(line).exists()
+                {
+                    builder = builder.clang_arg(format!("-isystem{}", line));
                 }
             }
         }
     }
 
-    let bindings = builder
-        .generate()
-        .expect("Unable to generate bindings");
+    let bindings = builder.generate().expect("Unable to generate bindings");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings

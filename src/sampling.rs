@@ -9,8 +9,7 @@
 //! - Logit bias for token preference control
 
 use crate::{context::Context, error::MullamaError, model::Model, sys, token::TokenId};
-use std::os::raw::c_void;
-use std::{ffi::CString, ptr, sync::Arc};
+use std::{ffi::CString, sync::Arc};
 
 /// High-level sampler wrapper providing safe access to llama.cpp sampling
 pub struct Sampler {
@@ -330,6 +329,7 @@ impl Sampler {
     }
 
     /// Get the internal sampler pointer (for advanced use)
+    #[allow(dead_code)]
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_sampler {
         self.sampler_ptr
     }
@@ -362,7 +362,7 @@ impl SamplerChain {
     }
 
     /// Create a chain with default parameters
-    pub fn default() -> Self {
+    pub fn with_defaults() -> Self {
         Self::new(SamplerChainParams::default())
     }
 
@@ -434,6 +434,7 @@ impl SamplerChain {
     }
 
     /// Get the internal pointer (for advanced use)
+    #[allow(dead_code)]
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_sampler {
         self.chain_ptr
     }
@@ -449,16 +450,16 @@ impl Drop for SamplerChain {
     }
 }
 
-/// Parameters for creating a sampler chain
-#[derive(Debug, Clone)]
-pub struct SamplerChainParams {
-    pub no_perf: bool,
+impl Default for SamplerChain {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
 }
 
-impl Default for SamplerChainParams {
-    fn default() -> Self {
-        Self { no_perf: false }
-    }
+/// Parameters for creating a sampler chain
+#[derive(Debug, Clone, Default)]
+pub struct SamplerChainParams {
+    pub no_perf: bool,
 }
 
 /// Logit bias for controlling token preferences
@@ -485,7 +486,7 @@ pub struct TokenDataArray {
 
 impl TokenDataArray {
     /// Create a new token data array from candidates
-    pub fn new(mut candidates: Vec<TokenData>) -> Self {
+    pub fn new(candidates: Vec<TokenData>) -> Self {
         let mut data: Vec<sys::llama_token_data> = candidates
             .iter()
             .map(|candidate| sys::llama_token_data {
@@ -526,7 +527,7 @@ impl TokenDataArray {
 
     /// Check if the array is sorted
     pub fn is_sorted(&self) -> bool {
-        self.inner.sorted as bool
+        self.inner.sorted
     }
 
     /// Get candidates as a slice

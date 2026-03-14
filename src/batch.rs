@@ -1,6 +1,7 @@
 use crate::{sys, token::TokenId};
 
 /// Represents a batch of tokens for processing
+#[allow(dead_code)]
 pub struct Batch {
     inner: Option<sys::llama_batch>,
     /// Store tokens to ensure they outlive the batch (for llama_batch_get_one)
@@ -47,6 +48,7 @@ impl Batch {
     }
 
     /// Get the internal llama_batch struct
+    #[allow(dead_code)]
     pub(crate) fn as_llama_batch(&self) -> Option<&sys::llama_batch> {
         self.inner.as_ref()
     }

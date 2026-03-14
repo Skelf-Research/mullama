@@ -8,9 +8,7 @@
 
 use crate::error::MullamaError;
 use crate::Model;
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{BufWriter, Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Hugging Face Hub API base URL
@@ -19,6 +17,7 @@ const HF_MODELS_BASE: &str = "https://huggingface.co";
 
 /// GGUF quantization types commonly available
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
 pub enum QuantizationType {
     /// Full precision (F32)
     F32,
@@ -662,7 +661,7 @@ impl HFClient {
     ) -> Result<PathBuf, MullamaError> {
         // Create download directory
         let model_dir = self.download_dir.join(model_id.replace('/', "_"));
-        fs::create_dir_all(&model_dir).map_err(|e| MullamaError::IoError(e))?;
+        fs::create_dir_all(&model_dir).map_err(MullamaError::IoError)?;
 
         let dest_path = model_dir.join(&gguf_file.filename);
 
@@ -789,7 +788,7 @@ impl HFClient {
             }
 
             // Move temp file to final destination
-            fs::rename(&temp_path, dest).map_err(|e| MullamaError::IoError(e))?;
+            fs::rename(&temp_path, dest).map_err(MullamaError::IoError)?;
 
             // Call progress callback with completion
             if let Some(callback) = progress_callback {
@@ -816,8 +815,6 @@ impl HFClient {
 
     /// Test a downloaded model
     pub fn test_model(&self, model_path: &Path) -> Result<ModelTestResult, MullamaError> {
-        use crate::context::ContextParams;
-        use crate::Context;
         use std::sync::Arc;
         use std::time::Instant;
 
@@ -1001,14 +998,14 @@ impl HFClient {
             return Ok(models);
         }
 
-        for entry in fs::read_dir(&self.download_dir).map_err(|e| MullamaError::IoError(e))? {
-            let entry = entry.map_err(|e| MullamaError::IoError(e))?;
+        for entry in fs::read_dir(&self.download_dir).map_err(MullamaError::IoError)? {
+            let entry = entry.map_err(MullamaError::IoError)?;
             let path = entry.path();
 
             if path.is_dir() {
                 // Look for GGUF files in this directory
-                for file_entry in fs::read_dir(&path).map_err(|e| MullamaError::IoError(e))? {
-                    let file_entry = file_entry.map_err(|e| MullamaError::IoError(e))?;
+                for file_entry in fs::read_dir(&path).map_err(MullamaError::IoError)? {
+                    let file_entry = file_entry.map_err(MullamaError::IoError)?;
                     let file_path = file_entry.path();
 
                     if file_path.extension().map(|e| e == "gguf").unwrap_or(false) {
@@ -1026,7 +1023,7 @@ impl HFClient {
     /// Delete a locally downloaded model
     pub fn delete_local_model(&self, model_path: &Path) -> Result<(), MullamaError> {
         if model_path.exists() {
-            fs::remove_file(model_path).map_err(|e| MullamaError::IoError(e))?;
+            fs::remove_file(model_path).map_err(MullamaError::IoError)?;
         }
         Ok(())
     }

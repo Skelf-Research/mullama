@@ -6,7 +6,9 @@
 //!
 //! **NOTE**: These are low-level FFI bindings. Use the safe Rust API in other modules.
 
-use std::os::raw::{c_char, c_float, c_int, c_longlong, c_uint, c_void};
+#![allow(non_camel_case_types)]
+
+use std::os::raw::{c_char, c_float, c_int, c_void};
 
 // c_bool type alias for compatibility
 pub type c_bool = bool;

@@ -100,9 +100,9 @@ impl HfSearchResult {
 
     /// Get the author name
     pub fn author_name(&self) -> &str {
-        self.author.as_deref().unwrap_or_else(|| {
-            self.id.split('/').next().unwrap_or("unknown")
-        })
+        self.author
+            .as_deref()
+            .unwrap_or_else(|| self.id.split('/').next().unwrap_or("unknown"))
     }
 }
 
@@ -129,13 +129,9 @@ impl GgufFileInfo {
 /// Extract quantization type from filename
 fn extract_quantization(filename: &str) -> Option<String> {
     let quantizations = [
-        "Q2_K", "Q3_K_S", "Q3_K_M", "Q3_K_L",
-        "Q4_0", "Q4_1", "Q4_K_S", "Q4_K_M",
-        "Q5_0", "Q5_1", "Q5_K_S", "Q5_K_M",
-        "Q6_K", "Q8_0", "F16", "F32",
-        "IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S", "IQ2_M",
-        "IQ3_XXS", "IQ3_XS", "IQ3_S", "IQ3_M",
-        "IQ4_NL", "IQ4_XS",
+        "Q2_K", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_0", "Q4_1", "Q4_K_S", "Q4_K_M", "Q5_0", "Q5_1",
+        "Q5_K_S", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32", "IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS",
+        "IQ2_S", "IQ2_M", "IQ3_XXS", "IQ3_XS", "IQ3_S", "IQ3_M", "IQ4_NL", "IQ4_XS",
     ];
 
     let upper = filename.to_uppercase();
@@ -327,11 +323,7 @@ impl HfDownloader {
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         let platform = "Other: ~/.mullama/models";
 
-        format!(
-            "Current: {}\nDefault for {}",
-            dir.display(),
-            platform
-        )
+        format!("Current: {}\nDefault for {}", dir.display(), platform)
     }
 
     /// Get the cache directory
@@ -355,8 +347,9 @@ impl HfDownloader {
     /// Save the cache index
     fn save_index(&self, index: &CacheIndex) -> Result<(), MullamaError> {
         let index_path = self.cache_dir.join("index.json");
-        let content = serde_json::to_string_pretty(index)
-            .map_err(|e| MullamaError::OperationFailed(format!("Failed to serialize index: {}", e)))?;
+        let content = serde_json::to_string_pretty(index).map_err(|e| {
+            MullamaError::OperationFailed(format!("Failed to serialize index: {}", e))
+        })?;
         fs::write(&index_path, content)
             .map_err(|e| MullamaError::OperationFailed(format!("Failed to write index: {}", e)))?;
         Ok(())
@@ -402,9 +395,9 @@ impl HfDownloader {
             )));
         }
 
-        resp.json().await.map_err(|e| {
-            MullamaError::OperationFailed(format!("Failed to parse repo info: {}", e))
-        })
+        resp.json()
+            .await
+            .map_err(|e| MullamaError::OperationFailed(format!("Failed to parse repo info: {}", e)))
     }
 
     /// Search for models on HuggingFace
@@ -439,9 +432,10 @@ impl HfDownloader {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
 
-        let resp = req.send().await.map_err(|e| {
-            MullamaError::OperationFailed(format!("Search failed: {}", e))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| MullamaError::OperationFailed(format!("Search failed: {}", e)))?;
 
         if !resp.status().is_success() {
             return Err(MullamaError::OperationFailed(format!(
@@ -476,9 +470,9 @@ impl HfDownloader {
     pub async fn list_gguf_files(&self, repo_id: &str) -> Result<Vec<GgufFileInfo>, MullamaError> {
         let info = self.get_repo_info(repo_id).await?;
 
-        let siblings = info.siblings.ok_or_else(|| {
-            MullamaError::OperationFailed("No files found in repository".into())
-        })?;
+        let siblings = info
+            .siblings
+            .ok_or_else(|| MullamaError::OperationFailed("No files found in repository".into()))?;
 
         let gguf_files: Vec<GgufFileInfo> = siblings
             .into_iter()
@@ -506,9 +500,9 @@ impl HfDownloader {
     pub async fn find_best_gguf(&self, repo_id: &str) -> Result<String, MullamaError> {
         let info = self.get_repo_info(repo_id).await?;
 
-        let siblings = info.siblings.ok_or_else(|| {
-            MullamaError::OperationFailed("No files found in repository".into())
-        })?;
+        let siblings = info
+            .siblings
+            .ok_or_else(|| MullamaError::OperationFailed("No files found in repository".into()))?;
 
         // Find GGUF files and sort by preference
         let mut gguf_files: Vec<_> = siblings
@@ -524,8 +518,8 @@ impl HfDownloader {
 
         // Sort by quantization preference (Q4_K_M is a good default)
         let preference_order = [
-            "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1",
-            "Q8_0", "Q6_K", "Q3_K_M", "Q3_K_S", "Q2_K",
+            "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1", "Q8_0", "Q6_K", "Q3_K_M",
+            "Q3_K_S", "Q2_K",
         ];
 
         gguf_files.sort_by(|a, b| {
@@ -567,10 +561,7 @@ impl HfDownloader {
         let local_path = repo_dir.join(filename);
 
         // Build download URL
-        let url = format!(
-            "{}/{}/resolve/main/{}",
-            HF_CDN_URL, repo_id, filename
-        );
+        let url = format!("{}/{}/resolve/main/{}", HF_CDN_URL, repo_id, filename);
 
         if show_progress {
             println!("Downloading {} from {}", filename, repo_id);
@@ -582,9 +573,10 @@ impl HfDownloader {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
 
-        let resp = req.send().await.map_err(|e| {
-            MullamaError::OperationFailed(format!("Download failed: {}", e))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| MullamaError::OperationFailed(format!("Download failed: {}", e)))?;
 
         if !resp.status().is_success() {
             return Err(MullamaError::OperationFailed(format!(
@@ -621,21 +613,18 @@ impl HfDownloader {
 
         // Download to temp file first
         let temp_path = local_path.with_extension("part");
-        let mut file = File::create(&temp_path).map_err(|e| {
-            MullamaError::OperationFailed(format!("Failed to create file: {}", e))
-        })?;
+        let mut file = File::create(&temp_path)
+            .map_err(|e| MullamaError::OperationFailed(format!("Failed to create file: {}", e)))?;
 
         let mut downloaded: u64 = 0;
         let mut stream = resp.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                MullamaError::OperationFailed(format!("Download error: {}", e))
-            })?;
+            let chunk = chunk
+                .map_err(|e| MullamaError::OperationFailed(format!("Download error: {}", e)))?;
 
-            file.write_all(&chunk).map_err(|e| {
-                MullamaError::OperationFailed(format!("Write error: {}", e))
-            })?;
+            file.write_all(&chunk)
+                .map_err(|e| MullamaError::OperationFailed(format!("Write error: {}", e)))?;
 
             downloaded += chunk.len() as u64;
             if let Some(ref pb) = progress {
@@ -654,7 +643,9 @@ impl HfDownloader {
 
         // Update cache index
         let mut index = self.load_index();
-        index.models.retain(|m| !(m.repo_id == repo_id && m.filename == filename));
+        index
+            .models
+            .retain(|m| !(m.repo_id == repo_id && m.filename == filename));
         index.models.push(CachedModel {
             repo_id: repo_id.to_string(),
             filename: filename.to_string(),
@@ -695,7 +686,11 @@ impl HfDownloader {
     pub fn remove_cached(&self, repo_id: &str, filename: &str) -> Result<(), MullamaError> {
         let mut index = self.load_index();
 
-        if let Some(pos) = index.models.iter().position(|m| m.repo_id == repo_id && m.filename == filename) {
+        if let Some(pos) = index
+            .models
+            .iter()
+            .position(|m| m.repo_id == repo_id && m.filename == filename)
+        {
             let model = index.models.remove(pos);
             if model.local_path.exists() {
                 fs::remove_file(&model.local_path).map_err(|e| {

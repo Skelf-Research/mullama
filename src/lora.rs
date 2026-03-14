@@ -9,8 +9,6 @@ use crate::Context;
 use crate::Model;
 use std::ffi::CString;
 use std::path::Path;
-use std::ptr;
-use std::sync::Arc;
 
 /// LoRA adapter for fine-tuning model behavior
 #[derive(Debug)]
@@ -118,6 +116,7 @@ impl LoRAAdapter {
     }
 
     /// Get the raw pointer (for internal use)
+    #[allow(dead_code)]
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_adapter_lora {
         self.adapter_ptr
     }
@@ -191,11 +190,6 @@ impl LoRAManager {
     pub fn apply_to_context(&self, ctx: &mut Context) -> Result<(), MullamaError> {
         for (idx, scale) in &self.active_adapters {
             if let Some(adapter) = self.adapters.get(*idx) {
-                let mut adapter_with_scale = LoRAAdapter {
-                    adapter_ptr: adapter.adapter_ptr,
-                    path: adapter.path.clone(),
-                    scale: *scale,
-                };
                 // Note: We need to be careful here - we're creating a temporary
                 // that shares the pointer but we don't want it to be freed
                 let result = unsafe {
@@ -273,7 +267,7 @@ impl LoRAManager {
 
     /// Create a preset configuration for common LoRA scenarios
     pub fn create_preset(preset: LoRAPreset) -> Self {
-        let mut manager = Self::new();
+        let manager = Self::new();
 
         match preset {
             LoRAPreset::ChatAssistant => {
@@ -414,6 +408,7 @@ pub mod training {
     }
 
     /// LoRA trainer (placeholder for future implementation)
+    #[allow(dead_code)]
     pub struct LoRATrainer {
         params: LoRATrainingParams,
     }

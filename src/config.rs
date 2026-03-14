@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Complete Mullama configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MullamaConfig {
     /// Model configuration
     pub model: ModelConfig,
@@ -67,19 +67,6 @@ pub struct MullamaConfig {
     /// Custom metadata
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
-}
-
-impl Default for MullamaConfig {
-    fn default() -> Self {
-        Self {
-            model: ModelConfig::default(),
-            context: ContextConfig::default(),
-            sampling: SamplingConfig::default(),
-            performance: PerformanceConfig::default(),
-            logging: LoggingConfig::default(),
-            metadata: HashMap::new(),
-        }
-    }
 }
 
 /// Model configuration

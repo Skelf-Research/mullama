@@ -40,23 +40,21 @@
 //!   -d '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}'
 //! ```
 
-mod protocol;
-mod models;
-mod server;
-mod openai;
 mod client;
-mod tui;
 mod hf;
+mod models;
+mod openai;
+mod protocol;
+mod server;
+mod tui;
 
 // Protocol types (IPC)
 pub use protocol::{
-    Request, Response, ErrorCode, DaemonStatus, DaemonStats,
-    ModelInfo, ModelStatus, ChatMessage, Usage, EmbeddingInput,
-    ChatCompletionResponse as IpcChatCompletionResponse,
-    CompletionResponse as IpcCompletionResponse,
-    ChatChoice as IpcChatChoice,
-    CompletionChoice as IpcCompletionChoice,
-    generate_completion_id,
+    generate_completion_id, ChatChoice as IpcChatChoice,
+    ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
+    CompletionChoice as IpcCompletionChoice, CompletionResponse as IpcCompletionResponse,
+    DaemonStats, DaemonStatus, EmbeddingInput, ErrorCode, ModelInfo, ModelStatus, Request,
+    Response, Usage,
 };
 
 // Model management
@@ -67,23 +65,22 @@ pub use server::{Daemon, DaemonBuilder, DaemonConfig};
 
 // OpenAI-compatible HTTP API types
 pub use openai::{
-    create_openai_router, AppState, ApiError,
-    ChatCompletionRequest, ChatCompletionResponse,
-    CompletionRequest, CompletionResponse,
-    ChatChoice, CompletionChoice,
-    ModelsResponse, ModelObject,
-    EmbeddingsRequest, EmbeddingsResponse, EmbeddingObject,
-    ErrorResponse, ErrorDetail,
+    create_openai_router, ApiError, AppState, ChatChoice, ChatCompletionRequest,
+    ChatCompletionResponse, CompletionChoice, CompletionRequest, CompletionResponse,
+    EmbeddingObject, EmbeddingsRequest, EmbeddingsResponse, ErrorDetail, ErrorResponse,
+    ModelObject, ModelsResponse,
 };
 
 // Client
-pub use client::{DaemonClient, ChatResult, CompletionResult};
+pub use client::{ChatResult, CompletionResult, DaemonClient};
 
 // TUI
 pub use tui::TuiApp;
 
 // HuggingFace downloader
-pub use hf::{HfDownloader, HfModelSpec, HfSearchResult, GgufFileInfo, CachedModel, resolve_model_path};
+pub use hf::{
+    resolve_model_path, CachedModel, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult,
+};
 
 /// Default IPC socket path
 #[cfg(unix)]
