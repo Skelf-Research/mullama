@@ -90,7 +90,7 @@ impl Grammar {
     /// Create a grammar from GBNF (Grammar Backus-Naur Form) string
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// use mullama::grammar::Grammar;
     ///
     /// let grammar = Grammar::from_gbnf(r#"

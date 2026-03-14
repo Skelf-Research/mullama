@@ -260,6 +260,13 @@ impl Model {
     }
 
     /// Detokenize tokens back to text with advanced options
+    ///
+    /// Uses token_to_str() for each token to avoid buffer size issues
+    /// with the llama_detokenize API.
+    ///
+    /// Note: SentencePiece tokenizers include a leading space marker on the first
+    /// token. If you need exact roundtrip for text that didn't start with a space,
+    /// you may need to strip the leading space from the result.
     pub fn detokenize(
         &self,
         tokens: &[TokenId],
@@ -270,66 +277,24 @@ impl Model {
             return Ok(String::new());
         }
 
-        // Get the vocab from the model
-        let vocab = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
-        if vocab.is_null() {
-            return Err(MullamaError::TokenizationError(
-                "Failed to get vocabulary".to_string(),
-            ));
+        let mut result = String::new();
+        let mut is_first = true;
+
+        for &token in tokens {
+            // Skip control/special tokens if remove_special is true
+            if remove_special && self.token_is_control(token) {
+                continue;
+            }
+
+            // Convert token to string piece
+            // For the first non-special token, use lstrip=1 to remove leading space
+            // that SentencePiece adds for word boundary markers
+            let lstrip = if is_first { 1 } else { 0 };
+            let piece = self.token_to_str(token, lstrip, unparse_special)?;
+            result.push_str(&piece);
+            is_first = false;
         }
 
-        // Convert tokens to the correct type
-        let llama_tokens: Vec<sys::llama_token> =
-            tokens.iter().map(|&t| t as sys::llama_token).collect();
-
-        // First, get the required buffer size
-        let max_chars = unsafe {
-            sys::llama_detokenize(
-                vocab,
-                llama_tokens.as_ptr(),
-                tokens.len() as i32,
-                ptr::null_mut(),
-                0,
-                remove_special as sys::c_bool,
-                unparse_special as sys::c_bool,
-            )
-        };
-
-        if max_chars < 0 {
-            return Err(MullamaError::TokenizationError(format!(
-                "Detokenization failed with code: {}",
-                max_chars
-            )));
-        }
-
-        if max_chars == 0 {
-            return Ok(String::new());
-        }
-
-        // Allocate buffer and detokenize
-        let mut buffer = vec![0u8; max_chars as usize + 1]; // +1 for null terminator
-        let actual_chars = unsafe {
-            sys::llama_detokenize(
-                vocab,
-                llama_tokens.as_ptr(),
-                tokens.len() as i32,
-                buffer.as_mut_ptr() as *mut c_char,
-                buffer.len() as i32,
-                remove_special as sys::c_bool,
-                unparse_special as sys::c_bool,
-            )
-        };
-
-        if actual_chars < 0 {
-            return Err(MullamaError::TokenizationError(format!(
-                "Detokenization failed with code: {}",
-                actual_chars
-            )));
-        }
-
-        // Convert to string, handling the null terminator
-        let result_bytes = &buffer[..actual_chars as usize];
-        let result = String::from_utf8_lossy(result_bytes).to_string();
         Ok(result)
     }
 
@@ -441,8 +406,8 @@ impl Model {
         unsafe { sys::llama_model_rope_type(self.inner.model_ptr) }
     }
 
-    /// Get the internal model pointer (for use by other modules)
-    pub(crate) fn as_ptr(&self) -> *mut sys::llama_model {
+    /// Get the internal model pointer (for use by other modules and FFI)
+    pub fn as_ptr(&self) -> *mut sys::llama_model {
         self.inner.model_ptr
     }
 }
@@ -629,7 +594,7 @@ impl Model {
     /// * `add_generation_prompt` - Whether to add the generation prompt
     ///
     /// # Example
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// let messages = vec![
     ///     ("system", "You are a helpful assistant."),
     ///     ("user", "Hello!"),

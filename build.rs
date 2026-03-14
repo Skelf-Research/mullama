@@ -357,20 +357,39 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     cmake_config.define("BUILD_SHARED_LIBS", "OFF");
     cmake_config.define("GGML_STATIC", "ON");
 
+    // Build mtmd (multimodal) library for vision/audio support
+    cmake_config.define("LLAMA_BUILD_TOOLS", "ON");
+
     let dst = cmake_config.build();
 
     // Link the built library
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
-    println!("cargo:rustc-link-lib=static=llama");
 
-    // Platform-specific library linking - link all ggml components
+    // Platform-specific library linking
+    // The ggml libraries have circular dependencies, so we use +whole-archive
+    // to include all symbols (Rust 1.61+ feature)
     if cfg!(target_os = "windows") {
+        println!("cargo:rustc-link-lib=static=llama");
         println!("cargo:rustc-link-lib=static=ggml_static");
+        // Link mtmd for multimodal support
+        println!("cargo:rustc-link-lib=static=mtmd");
+    } else if cfg!(target_os = "macos") {
+        // On macOS, use +whole-archive,-bundle for proper symbol inclusion
+        println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-base");
+        println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-cpu");
+        println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml");
+        println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=llama");
+        // Link mtmd for multimodal support
+        println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=mtmd");
     } else {
-        // Modern llama.cpp splits ggml into multiple libraries
-        println!("cargo:rustc-link-lib=static=ggml");
-        println!("cargo:rustc-link-lib=static=ggml-base");
-        println!("cargo:rustc-link-lib=static=ggml-cpu");
+        // On Linux, use +whole-archive to include all symbols from the ggml libraries
+        // This is needed because llama.cpp has circular dependencies between its libraries
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-base");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cpu");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml");
+        println!("cargo:rustc-link-lib=static:+whole-archive=llama");
+        // Link mtmd for multimodal support
+        println!("cargo:rustc-link-lib=static:+whole-archive=mtmd");
     }
 
     // Link standard libraries
@@ -495,12 +514,14 @@ fn command_exists(command: &str) -> bool {
 fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
     let include_path = llama_cpp_path.join("include");
     let ggml_include_path = llama_cpp_path.join("ggml").join("include");
+    let mtmd_include_path = llama_cpp_path.join("tools").join("mtmd");
 
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_path.display()))
         .clang_arg(format!("-I{}", ggml_include_path.display()))
         .clang_arg(format!("-I{}/ggml/src", llama_cpp_path.display()))
+        .clang_arg(format!("-I{}", mtmd_include_path.display()))
         // Use C11 standard to ensure stdbool.h and other standard headers are available
         .clang_arg("-std=c11")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -512,9 +533,13 @@ fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
         // Allow specific functions
         .allowlist_function("llama_.*")
         .allowlist_function("ggml_.*")
+        .allowlist_function("mtmd_.*")
+        .allowlist_function("clip_.*")
         // Allow specific types
         .allowlist_type("llama_.*")
-        .allowlist_type("ggml_.*");
+        .allowlist_type("ggml_.*")
+        .allowlist_type("mtmd_.*")
+        .allowlist_type("clip_.*");
 
     // On Linux, try to find system include paths for clang
     #[cfg(target_os = "linux")]

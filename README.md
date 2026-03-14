@@ -298,6 +298,21 @@ cargo test --all-features
 
 MIT License - see [LICENSE](LICENSE) for details.
 
+## llama.cpp Compatibility
+
+Mullama tracks upstream llama.cpp releases:
+
+| Mullama Version | llama.cpp Version | Release Date |
+|-----------------|-------------------|--------------|
+| 0.1.x           | b7542             | Dec 2025     |
+
+### Supported Model Architectures
+
+All architectures supported by llama.cpp b7542, including:
+- LLaMA 1/2/3, Mistral, Mixtral, Phi-1/2/3/4
+- Qwen, Qwen2, DeepSeek, Yi, Gemma
+- And [many more](https://github.com/ggml-org/llama.cpp#supported-models)
+
 ## Acknowledgments
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) - The underlying inference engine

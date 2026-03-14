@@ -2,6 +2,56 @@
 
 This guide helps developers migrate to Mullama from other Rust llama.cpp bindings or direct C++ usage.
 
+## Mullama Version Upgrades
+
+### Upgrading to v0.1.x (llama.cpp b7542)
+
+#### Breaking Change: `flash_attn` → `flash_attn_type`
+
+The `flash_attn: bool` field in `ContextParams` has been replaced with `flash_attn_type: llama_flash_attn_type` enum.
+
+**Before (v0.0.x):**
+```rust
+let params = ContextParams {
+    flash_attn: true,
+    ..Default::default()
+};
+```
+
+**After (v0.1.x):**
+```rust
+use mullama::sys::llama_flash_attn_type;
+
+let params = ContextParams {
+    flash_attn_type: llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED,
+    ..Default::default()
+};
+
+// Or use AUTO for automatic detection (recommended):
+let params = ContextParams {
+    flash_attn_type: llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO,
+    ..Default::default()
+};
+```
+
+**Flash Attention Types:**
+| Value | Description |
+|-------|-------------|
+| `LLAMA_FLASH_ATTN_TYPE_AUTO` | Auto-detect best setting (default) |
+| `LLAMA_FLASH_ATTN_TYPE_DISABLED` | Disable flash attention |
+| `LLAMA_FLASH_ATTN_TYPE_ENABLED` | Enable flash attention |
+
+**Note:** The `ContextConfig` struct (used for file-based configuration) still uses `flash_attn: bool` for simplicity. It's automatically converted to the enum type when creating a context.
+
+#### New Features in v0.1.x
+
+- **Text Generation**: `context.generate()`, `generate_with_params()`, `generate_streaming()`
+- **Automatic Batch Chunking**: Long prompts are automatically split into batches
+- **LoRA Support**: Full adapter loading with `LoRAAdapter::load()`
+- **llama.cpp b7542**: Latest model architecture support
+
+---
+
 ## From Other Rust Bindings
 
 ### From `llama-rs`

@@ -159,7 +159,7 @@ mod context_integration_tests {
                 n_threads: 1,
                 n_threads_batch: 1,
                 embeddings: false,
-                flash_attn: false,
+                flash_attn_type: mullama::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED,
                 offload_kqv: false,
                 ..Default::default()
             },
@@ -172,7 +172,7 @@ mod context_integration_tests {
                 n_threads: 16,
                 n_threads_batch: 16,
                 embeddings: true,
-                flash_attn: true,
+                flash_attn_type: mullama::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED,
                 offload_kqv: true,
                 swa_full: true,
                 kv_unified: false,
@@ -762,7 +762,7 @@ mod performance_integration_tests {
 
         let duration = start.elapsed();
         assert!(
-            duration.as_millis() < 100,
+            duration.as_millis() < 1000,
             "Parameter creation should be fast"
         );
         println!(

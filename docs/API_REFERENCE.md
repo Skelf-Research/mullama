@@ -1057,8 +1057,15 @@ pub struct ContextConfig {
     pub n_threads: usize,
     pub n_threads_batch: Option<usize>,
     pub rope_scaling_type: i32,
-    pub flash_attn: bool,
+    pub flash_attn: bool,  // Converted to llama_flash_attn_type internally
     pub no_perf: bool,
+}
+
+// Note: ContextParams uses flash_attn_type enum directly:
+pub enum llama_flash_attn_type {
+    LLAMA_FLASH_ATTN_TYPE_AUTO = -1,     // Auto-detect best setting
+    LLAMA_FLASH_ATTN_TYPE_DISABLED = 0,  // Disable flash attention
+    LLAMA_FLASH_ATTN_TYPE_ENABLED = 1,   // Enable flash attention
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
