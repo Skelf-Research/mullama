@@ -22,9 +22,9 @@ impl Batch {
         }
     }
 
-    /// Create a batch from tokens using llama_batch_get_one
-    /// This is simpler and safer for single-sequence inference
-    pub fn from_tokens(tokens: &[TokenId]) -> Self {
+    /// Create a batch from owned tokens using llama_batch_get_one
+    /// This avoids copying when you already have a Vec
+    pub fn from_tokens_owned(mut tokens: Vec<TokenId>) -> Self {
         if tokens.is_empty() {
             return Self {
                 inner: None,
@@ -33,18 +33,21 @@ impl Batch {
             };
         }
 
-        // Store tokens so they outlive the batch
-        let mut tokens_storage = tokens.to_vec();
-
         let inner = unsafe {
-            sys::llama_batch_get_one(tokens_storage.as_mut_ptr(), tokens_storage.len() as i32)
+            sys::llama_batch_get_one(tokens.as_mut_ptr(), tokens.len() as i32)
         };
 
         Self {
             inner: Some(inner),
-            tokens_storage: Some(tokens_storage),
-            needs_free: false, // llama_batch_get_one doesn't allocate memory that needs freeing
+            tokens_storage: Some(tokens),
+            needs_free: false,
         }
+    }
+
+    /// Create a batch from a token slice using llama_batch_get_one
+    /// This copies the tokens - use from_tokens_owned if you already have a Vec
+    pub fn from_tokens(tokens: &[TokenId]) -> Self {
+        Self::from_tokens_owned(tokens.to_vec())
     }
 
     /// Get the internal llama_batch struct

@@ -382,14 +382,16 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         // Link mtmd for multimodal support
         println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=mtmd");
     } else {
-        // On Linux, use +whole-archive to include all symbols from the ggml libraries
-        // This is needed because llama.cpp has circular dependencies between its libraries
-        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-base");
-        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cpu");
-        println!("cargo:rustc-link-lib=static:+whole-archive=ggml");
+        // On Linux, use linker group to handle circular dependencies between libraries
+        // The order matters: llama depends on ggml, ggml depends on ggml-base
+        // Using --start-group/--end-group ensures all symbols are resolved
+        println!("cargo:rustc-link-arg=-Wl,--start-group");
         println!("cargo:rustc-link-lib=static:+whole-archive=llama");
-        // Link mtmd for multimodal support
         println!("cargo:rustc-link-lib=static:+whole-archive=mtmd");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cpu");
+        println!("cargo:rustc-link-lib=static:+whole-archive=ggml-base");
+        println!("cargo:rustc-link-arg=-Wl,--end-group");
     }
 
     // Link standard libraries
