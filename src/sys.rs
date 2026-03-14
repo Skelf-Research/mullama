@@ -95,6 +95,35 @@ pub struct llama_adapter_lora {
 }
 
 //
+// Multimodal (mtmd) opaque types
+//
+
+#[repr(C)]
+pub struct mtmd_context {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct mtmd_bitmap {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct mtmd_image_tokens {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct mtmd_input_chunk {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct mtmd_input_chunks {
+    _private: [u8; 0],
+}
+
+//
 // Type aliases - exact matches to llama.cpp
 //
 
@@ -228,6 +257,31 @@ pub enum llama_attention_type {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum llama_flash_attn_type {
+    LLAMA_FLASH_ATTN_TYPE_AUTO = -1,
+    LLAMA_FLASH_ATTN_TYPE_DISABLED = 0,
+    LLAMA_FLASH_ATTN_TYPE_ENABLED = 1,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum llama_model_meta_key {
+    LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE = 0,
+    LLAMA_MODEL_META_KEY_SAMPLING_TOP_K = 1,
+    LLAMA_MODEL_META_KEY_SAMPLING_TOP_P = 2,
+    LLAMA_MODEL_META_KEY_SAMPLING_MIN_P = 3,
+    LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY = 4,
+    LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD = 5,
+    LLAMA_MODEL_META_KEY_SAMPLING_TEMP = 6,
+    LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N = 7,
+    LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT = 8,
+    LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT = 9,
+    LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU = 10,
+    LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA = 11,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum llama_split_mode {
     LLAMA_SPLIT_MODE_NONE = 0,
     LLAMA_SPLIT_MODE_LAYER = 1,
@@ -295,6 +349,44 @@ pub enum ggml_numa_strategy {
     GGML_NUMA_STRATEGY_NUMACTL = 3,
     GGML_NUMA_STRATEGY_MIRROR = 4,
     GGML_NUMA_STRATEGY_COUNT,
+}
+
+//
+// Multimodal (mtmd) enums
+//
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum mtmd_input_chunk_type {
+    MTMD_INPUT_CHUNK_TYPE_TEXT = 0,
+    MTMD_INPUT_CHUNK_TYPE_IMAGE = 1,
+    MTMD_INPUT_CHUNK_TYPE_AUDIO = 2,
+}
+
+//
+// Multimodal (mtmd) parameter structures
+//
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct mtmd_context_params {
+    pub use_gpu: c_bool,
+    pub print_timings: c_bool,
+    pub n_threads: c_int,
+    pub image_marker: *const c_char,  // deprecated, use media_marker
+    pub media_marker: *const c_char,
+    pub flash_attn_type: llama_flash_attn_type,
+    pub warmup: c_bool,
+    pub image_min_tokens: c_int,
+    pub image_max_tokens: c_int,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct mtmd_input_text {
+    pub text: *const c_char,
+    pub add_special: c_bool,
+    pub parse_special: c_bool,
 }
 
 //
@@ -388,6 +480,8 @@ pub struct llama_model_params {
     pub use_mlock: c_bool,
     pub check_tensors: c_bool,
     pub use_extra_bufts: c_bool,
+    pub no_host: c_bool,
+    pub no_alloc: c_bool,
 }
 
 // llama_context_params must match llama.h exactly!
@@ -404,6 +498,7 @@ pub struct llama_context_params {
     pub rope_scaling_type: llama_rope_scaling_type,
     pub pooling_type: llama_pooling_type,
     pub attention_type: llama_attention_type,
+    pub flash_attn_type: llama_flash_attn_type,
 
     pub rope_freq_base: f32,
     pub rope_freq_scale: f32,
@@ -429,7 +524,6 @@ pub struct llama_context_params {
     // Keep booleans together at the end
     pub embeddings: c_bool,
     pub offload_kqv: c_bool,
-    pub flash_attn: c_bool,
     pub no_perf: c_bool,
     pub op_offload: c_bool,
     pub swa_full: c_bool,
@@ -1085,4 +1179,156 @@ extern "C" {
         trigger_tokens: *const llama_token,
         num_trigger_tokens: usize,
     ) -> *mut llama_sampler;
+
+    //
+    // Multimodal (mtmd) functions
+    //
+
+    // Default marker for media in prompts
+    pub fn mtmd_default_marker() -> *const c_char;
+
+    // Get default context params
+    pub fn mtmd_context_params_default() -> mtmd_context_params;
+
+    // Context lifecycle
+    pub fn mtmd_init_from_file(
+        mmproj_fname: *const c_char,
+        text_model: *const llama_model,
+        ctx_params: mtmd_context_params,
+    ) -> *mut mtmd_context;
+    pub fn mtmd_free(ctx: *mut mtmd_context);
+
+    // Context capability queries
+    pub fn mtmd_decode_use_non_causal(ctx: *mut mtmd_context) -> c_bool;
+    pub fn mtmd_decode_use_mrope(ctx: *mut mtmd_context) -> c_bool;
+    pub fn mtmd_support_vision(ctx: *mut mtmd_context) -> c_bool;
+    pub fn mtmd_support_audio(ctx: *mut mtmd_context) -> c_bool;
+    pub fn mtmd_get_audio_bitrate(ctx: *mut mtmd_context) -> c_int;
+
+    // Bitmap (image/audio data) management
+    pub fn mtmd_bitmap_init(
+        nx: u32,
+        ny: u32,
+        data: *const std::os::raw::c_uchar,
+    ) -> *mut mtmd_bitmap;
+    pub fn mtmd_bitmap_init_from_audio(
+        n_samples: usize,
+        data: *const c_float,
+    ) -> *mut mtmd_bitmap;
+    pub fn mtmd_bitmap_get_nx(bitmap: *const mtmd_bitmap) -> u32;
+    pub fn mtmd_bitmap_get_ny(bitmap: *const mtmd_bitmap) -> u32;
+    pub fn mtmd_bitmap_get_data(bitmap: *const mtmd_bitmap) -> *const std::os::raw::c_uchar;
+    pub fn mtmd_bitmap_get_n_bytes(bitmap: *const mtmd_bitmap) -> usize;
+    pub fn mtmd_bitmap_is_audio(bitmap: *const mtmd_bitmap) -> c_bool;
+    pub fn mtmd_bitmap_free(bitmap: *mut mtmd_bitmap);
+    pub fn mtmd_bitmap_get_id(bitmap: *const mtmd_bitmap) -> *const c_char;
+    pub fn mtmd_bitmap_set_id(bitmap: *mut mtmd_bitmap, id: *const c_char);
+
+    // Input chunks management
+    pub fn mtmd_input_chunks_init() -> *mut mtmd_input_chunks;
+    pub fn mtmd_input_chunks_size(chunks: *const mtmd_input_chunks) -> usize;
+    pub fn mtmd_input_chunks_get(
+        chunks: *const mtmd_input_chunks,
+        idx: usize,
+    ) -> *const mtmd_input_chunk;
+    pub fn mtmd_input_chunks_free(chunks: *mut mtmd_input_chunks);
+
+    // Input chunk inspection
+    pub fn mtmd_input_chunk_get_type(chunk: *const mtmd_input_chunk) -> mtmd_input_chunk_type;
+    pub fn mtmd_input_chunk_get_tokens_text(
+        chunk: *const mtmd_input_chunk,
+        n_tokens_output: *mut usize,
+    ) -> *const llama_token;
+    pub fn mtmd_input_chunk_get_tokens_image(
+        chunk: *const mtmd_input_chunk,
+    ) -> *const mtmd_image_tokens;
+    pub fn mtmd_input_chunk_get_n_tokens(chunk: *const mtmd_input_chunk) -> usize;
+    pub fn mtmd_input_chunk_get_id(chunk: *const mtmd_input_chunk) -> *const c_char;
+    pub fn mtmd_input_chunk_get_n_pos(chunk: *const mtmd_input_chunk) -> llama_pos;
+    pub fn mtmd_input_chunk_copy(chunk: *const mtmd_input_chunk) -> *mut mtmd_input_chunk;
+    pub fn mtmd_input_chunk_free(chunk: *mut mtmd_input_chunk);
+
+    // Image tokens
+    pub fn mtmd_image_tokens_get_n_tokens(image_tokens: *const mtmd_image_tokens) -> usize;
+    pub fn mtmd_image_tokens_get_nx(image_tokens: *const mtmd_image_tokens) -> usize;
+    pub fn mtmd_image_tokens_get_ny(image_tokens: *const mtmd_image_tokens) -> usize;
+    pub fn mtmd_image_tokens_get_id(image_tokens: *const mtmd_image_tokens) -> *const c_char;
+    pub fn mtmd_image_tokens_get_n_pos(image_tokens: *const mtmd_image_tokens) -> llama_pos;
+
+    // Tokenization
+    pub fn mtmd_tokenize(
+        ctx: *mut mtmd_context,
+        output: *mut mtmd_input_chunks,
+        text: *const mtmd_input_text,
+        bitmaps: *const *const mtmd_bitmap,
+        n_bitmaps: usize,
+    ) -> i32;
+
+    // Encoding
+    pub fn mtmd_encode(
+        ctx: *mut mtmd_context,
+        image_tokens: *const mtmd_image_tokens,
+    ) -> i32;
+    pub fn mtmd_encode_chunk(
+        ctx: *mut mtmd_context,
+        chunk: *const mtmd_input_chunk,
+    ) -> i32;
+    pub fn mtmd_get_output_embd(ctx: *mut mtmd_context) -> *mut c_float;
+
+    //
+    // Multimodal helper functions (mtmd-helper.h)
+    //
+
+    // Helper to load bitmap from file
+    pub fn mtmd_helper_bitmap_init_from_file(
+        ctx: *mut mtmd_context,
+        fname: *const c_char,
+    ) -> *mut mtmd_bitmap;
+
+    // Helper to load bitmap from buffer
+    pub fn mtmd_helper_bitmap_init_from_buf(
+        ctx: *mut mtmd_context,
+        buf: *const std::os::raw::c_uchar,
+        len: usize,
+    ) -> *mut mtmd_bitmap;
+
+    // Helper to count tokens
+    pub fn mtmd_helper_get_n_tokens(chunks: *const mtmd_input_chunks) -> usize;
+    pub fn mtmd_helper_get_n_pos(chunks: *const mtmd_input_chunks) -> llama_pos;
+
+    // Helper to evaluate chunks in llama context
+    pub fn mtmd_helper_eval_chunks(
+        ctx: *mut mtmd_context,
+        lctx: *mut llama_context,
+        chunks: *const mtmd_input_chunks,
+        n_past: llama_pos,
+        seq_id: llama_seq_id,
+        n_batch: i32,
+        logits_last: c_bool,
+        new_n_past: *mut llama_pos,
+    ) -> i32;
+
+    // Helper to evaluate single chunk
+    pub fn mtmd_helper_eval_chunk_single(
+        ctx: *mut mtmd_context,
+        lctx: *mut llama_context,
+        chunk: *const mtmd_input_chunk,
+        n_past: llama_pos,
+        seq_id: llama_seq_id,
+        n_batch: i32,
+        logits_last: c_bool,
+        new_n_past: *mut llama_pos,
+    ) -> i32;
+
+    // Helper to decode image chunk
+    pub fn mtmd_helper_decode_image_chunk(
+        ctx: *mut mtmd_context,
+        lctx: *mut llama_context,
+        chunk: *const mtmd_input_chunk,
+        encoded_embd: *mut c_float,
+        n_past: llama_pos,
+        seq_id: llama_seq_id,
+        n_batch: i32,
+        new_n_past: *mut llama_pos,
+    ) -> i32;
 }

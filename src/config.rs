@@ -604,7 +604,11 @@ impl MullamaConfig {
             n_threads: self.context.n_threads,
             n_threads_batch: self.context.n_threads_batch,
             embeddings: self.context.embeddings,
-            flash_attn: self.context.flash_attn,
+            flash_attn_type: if self.context.flash_attn {
+                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED
+            } else {
+                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO
+            },
             offload_kqv: self.context.offload_kqv,
             ..Default::default()
         }

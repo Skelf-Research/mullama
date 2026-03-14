@@ -27,7 +27,7 @@ include = [
 
 [features]
 default = []
-multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio-util"]
+multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio", "tokio-util"]
 format-conversion = ["multimodal", "ffmpeg-next"]
 streaming-audio = ["multimodal", "cpal", "ringbuf"]
 cuda = []
@@ -139,3 +139,40 @@ anyhow = "1.0"
 name = "mullama"
 path = "src/bin/mullama.rs"
 required-features = ["daemon"]
+
+# Examples that require specific features
+[[example]]
+name = "async_generation"
+required-features = ["async"]
+
+[[example]]
+name = "streaming_generation"
+required-features = ["streaming"]
+
+[[example]]
+name = "web_service"
+required-features = ["web"]
+
+[[example]]
+name = "streaming_audio_demo"
+required-features = ["streaming-audio"]
+
+[[example]]
+name = "builder_patterns"
+required-features = ["async"]
+
+[[example]]
+name = "configuration_management"
+required-features = ["async"]
+
+[[example]]
+name = "complete_integration_demo"
+required-features = ["async"]
+
+[[example]]
+name = "integration_showcase"
+required-features = ["async"]
+
+[[example]]
+name = "chat"
+required-features = ["async"]

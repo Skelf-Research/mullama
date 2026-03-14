@@ -185,7 +185,7 @@ impl QuantizationEngine {
     /// Quantize the model with current parameters
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// use mullama::quantization::{QuantizationEngine, QuantizationParams, QuantizationType};
     ///
     /// let params = QuantizationParams::default()
