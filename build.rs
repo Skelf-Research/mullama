@@ -299,53 +299,54 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         cmake_config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
     }
 
-    // GPU acceleration configurations
+    // GPU acceleration configurations (using new GGML_* naming)
     if env::var("LLAMA_CUDA").is_ok() {
         println!("cargo:rustc-cfg=feature=\"cuda\"");
-        cmake_config.define("LLAMA_CUDA", "ON");
+        cmake_config.define("GGML_CUDA", "ON");
         cmake_config.define("CMAKE_CUDA_ARCHITECTURES", "61;70;75;80;86;89");
         configure_cuda_linking();
     } else {
-        cmake_config.define("LLAMA_CUDA", "OFF");
+        cmake_config.define("GGML_CUDA", "OFF");
     }
 
     if env::var("LLAMA_METAL").is_ok() {
         println!("cargo:rustc-cfg=feature=\"metal\"");
-        cmake_config.define("LLAMA_METAL", "ON");
+        cmake_config.define("GGML_METAL", "ON");
     } else {
-        cmake_config.define("LLAMA_METAL", "OFF");
+        cmake_config.define("GGML_METAL", "OFF");
     }
 
     if env::var("LLAMA_HIPBLAS").is_ok() {
         println!("cargo:rustc-cfg=feature=\"rocm\"");
-        cmake_config.define("LLAMA_HIPBLAS", "ON");
+        cmake_config.define("GGML_HIP", "ON");
         configure_rocm_linking();
     } else {
-        cmake_config.define("LLAMA_HIPBLAS", "OFF");
+        cmake_config.define("GGML_HIP", "OFF");
     }
 
     if env::var("LLAMA_CLBLAST").is_ok() {
         println!("cargo:rustc-cfg=feature=\"opencl\"");
-        cmake_config.define("LLAMA_CLBLAST", "ON");
+        cmake_config.define("GGML_OPENCL", "ON");
         configure_opencl_linking();
     } else {
-        cmake_config.define("LLAMA_CLBLAST", "OFF");
+        cmake_config.define("GGML_OPENCL", "OFF");
     }
 
-    // General optimizations
-    cmake_config.define("LLAMA_NATIVE", "ON");
-    cmake_config.define("LLAMA_LTO", "ON");
-    cmake_config.define("LLAMA_AVX", "ON");
-    cmake_config.define("LLAMA_AVX2", "ON");
-    cmake_config.define("LLAMA_FMA", "ON");
-    cmake_config.define("LLAMA_F16C", "ON");
-    cmake_config.define("LLAMA_OPENMP", "ON");
+    // General optimizations (using new GGML_* naming)
+    cmake_config.define("GGML_NATIVE", "ON");
+    cmake_config.define("GGML_LTO", "ON");
+    cmake_config.define("GGML_AVX", "ON");
+    cmake_config.define("GGML_AVX2", "ON");
+    cmake_config.define("GGML_FMA", "ON");
+    cmake_config.define("GGML_F16C", "ON");
+    cmake_config.define("GGML_OPENMP", "ON");
 
     // Build configuration
     cmake_config.define("LLAMA_BUILD_TESTS", "OFF");
     cmake_config.define("LLAMA_BUILD_EXAMPLES", "OFF");
+    cmake_config.define("LLAMA_CURL", "OFF");
     cmake_config.define("BUILD_SHARED_LIBS", "OFF");
-    cmake_config.define("LLAMA_STATIC", "ON");
+    cmake_config.define("GGML_STATIC", "ON");
 
     let dst = cmake_config.build();
 
@@ -490,11 +491,13 @@ fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
     let include_path = llama_cpp_path.join("include");
     let ggml_include_path = llama_cpp_path.join("ggml").join("include");
 
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_path.display()))
         .clang_arg(format!("-I{}", ggml_include_path.display()))
         .clang_arg(format!("-I{}/ggml/src", llama_cpp_path.display()))
+        // Use C11 standard to ensure stdbool.h and other standard headers are available
+        .clang_arg("-std=c11")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // Blocklist problematic types
         .blocklist_type("max_align_t")
@@ -506,7 +509,29 @@ fn generate_bindings(llama_cpp_path: &PathBuf, _build_path: &PathBuf) {
         .allowlist_function("ggml_.*")
         // Allow specific types
         .allowlist_type("llama_.*")
-        .allowlist_type("ggml_.*")
+        .allowlist_type("ggml_.*");
+
+    // On Linux, try to find system include paths for clang
+    #[cfg(target_os = "linux")]
+    {
+        // Try to get GCC's include paths
+        if let Ok(output) = Command::new("gcc")
+            .args(["-E", "-Wp,-v", "-xc", "/dev/null"])
+            .output()
+        {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for line in stderr.lines() {
+                let line = line.trim();
+                if line.starts_with('/') && !line.contains(' ') {
+                    if std::path::Path::new(line).exists() {
+                        builder = builder.clang_arg(format!("-isystem{}", line));
+                    }
+                }
+            }
+        }
+    }
+
+    let bindings = builder
         .generate()
         .expect("Unable to generate bindings");
 
