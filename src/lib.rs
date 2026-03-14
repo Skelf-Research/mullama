@@ -105,6 +105,8 @@ pub mod vocab;
 pub mod async_support;
 pub mod builder;
 pub mod config;
+#[cfg(feature = "daemon")]
+pub mod daemon;
 #[cfg(feature = "format-conversion")]
 pub mod format_conversion;
 #[cfg(feature = "multimodal")]
@@ -121,8 +123,6 @@ pub mod tokio_integration;
 pub mod web;
 #[cfg(feature = "websockets")]
 pub mod websockets;
-#[cfg(feature = "daemon")]
-pub mod daemon;
 
 // Advanced features
 pub mod grammar;
@@ -240,11 +240,10 @@ pub type LogCallback = extern "C" fn(
 /// Set custom log callback
 ///
 /// # Safety
-/// The callback must remain valid for the lifetime of the program.
-pub fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
-    unsafe {
-        sys::llama_log_set(Some(callback), user_data);
-    }
+/// The caller must ensure that `user_data` points to valid memory that will remain
+/// valid for the lifetime of this callback, or is null.
+pub unsafe fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
+    sys::llama_log_set(Some(callback), user_data);
 }
 
 // ==================== Batch Helpers ====================

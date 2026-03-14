@@ -9,7 +9,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::protocol::ModelInfo;
-use crate::{Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain, SamplerParams};
+use crate::{
+    Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain, SamplerParams,
+};
 
 /// A loaded model instance with its context
 pub struct LoadedModel {
@@ -208,9 +210,10 @@ impl ModelManager {
             }
         };
 
-        models.get(&key).cloned().ok_or_else(|| {
-            MullamaError::OperationFailed(format!("Model '{}' not found", key))
-        })
+        models
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| MullamaError::OperationFailed(format!("Model '{}' not found", key)))
     }
 
     /// Set the default model

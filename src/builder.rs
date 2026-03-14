@@ -56,10 +56,8 @@
 //! ```
 
 use crate::{
-    Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain, SamplerChainParams,
-    SamplerParams,
+    Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain, SamplerParams,
 };
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[cfg(feature = "async")]
@@ -249,7 +247,7 @@ impl ModelBuilder {
     /// let builder = ModelBuilder::new()
     ///     .preset(presets::performance_optimized);
     /// ```
-    pub fn preset<F>(mut self, preset: F) -> Self
+    pub fn preset<F>(self, preset: F) -> Self
     where
         F: FnOnce(Self) -> Self,
     {

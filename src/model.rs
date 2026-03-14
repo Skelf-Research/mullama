@@ -4,7 +4,7 @@ use crate::{
     sys,
     token::TokenId,
 };
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 use std::{ffi::CString, path::Path, ptr, sync::Arc};
 
 /// Inner struct to hold the model pointer with proper cleanup
@@ -38,6 +38,7 @@ pub struct Model {
 
 impl Model {
     /// Get the raw model pointer (for internal use)
+    #[allow(dead_code)]
     pub(crate) fn model_ptr(&self) -> *mut sys::llama_model {
         self.inner.model_ptr
     }
@@ -147,7 +148,7 @@ impl Model {
         let kv_overrides: Vec<sys::llama_model_kv_override> = params
             .kv_overrides
             .iter()
-            .map(|override_| Self::convert_kv_override(override_))
+            .map(Self::convert_kv_override)
             .collect::<Result<Vec<_>, _>>()?;
 
         if !kv_overrides.is_empty() {
@@ -464,8 +465,7 @@ impl Model {
     /// Get complete token information including attributes
     pub fn get_token_info(&self, token: TokenId) -> Result<Token, MullamaError> {
         let vocab = self.vocab();
-        let text_ptr =
-            unsafe { sys::llama_vocab_get_text(vocab, token as sys::llama_token) };
+        let text_ptr = unsafe { sys::llama_vocab_get_text(vocab, token as sys::llama_token) };
         if text_ptr.is_null() {
             return Err(MullamaError::TokenizationError(
                 "Token not found".to_string(),
@@ -478,10 +478,8 @@ impl Model {
                 .to_string()
         };
 
-        let score =
-            unsafe { sys::llama_vocab_get_score(vocab, token as sys::llama_token) };
-        let attr =
-            unsafe { sys::llama_vocab_get_attr(vocab, token as sys::llama_token) };
+        let score = unsafe { sys::llama_vocab_get_score(vocab, token as sys::llama_token) };
+        let attr = unsafe { sys::llama_vocab_get_attr(vocab, token as sys::llama_token) };
 
         Ok(Token {
             id: token,
@@ -498,9 +496,7 @@ impl Model {
 
     /// Check if token is a control token
     pub fn token_is_control(&self, token: TokenId) -> bool {
-        unsafe {
-            sys::llama_vocab_is_control(self.vocab(), token as sys::llama_token) as bool
-        }
+        unsafe { sys::llama_vocab_is_control(self.vocab(), token as sys::llama_token) as bool }
     }
 
     /// Get special tokens
@@ -615,9 +611,8 @@ impl Model {
 
     /// Get the model's built-in chat template
     pub fn chat_template(&self) -> Option<String> {
-        let template_ptr = unsafe {
-            sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null())
-        };
+        let template_ptr =
+            unsafe { sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null()) };
         if template_ptr.is_null() {
             None
         } else {
@@ -850,10 +845,10 @@ impl Model {
         }
 
         if !Path::new(path).exists() {
-            return Err(MullamaError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Model save failed: {}", path),
-            )));
+            return Err(MullamaError::IoError(std::io::Error::other(format!(
+                "Model save failed: {}",
+                path
+            ))));
         }
 
         Ok(())
@@ -879,21 +874,21 @@ impl Model {
 
         let (tag, value) = match &override_.value {
             ModelKvOverrideValue::Int(v) => {
-                let mut val = sys::llama_model_kv_override_value { val_i64: *v };
+                let val = sys::llama_model_kv_override_value { val_i64: *v };
                 (
                     sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_INT,
                     val,
                 )
             }
             ModelKvOverrideValue::Float(v) => {
-                let mut val = sys::llama_model_kv_override_value { val_f64: *v };
+                let val = sys::llama_model_kv_override_value { val_f64: *v };
                 (
                     sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_FLOAT,
                     val,
                 )
             }
             ModelKvOverrideValue::Bool(v) => {
-                let mut val = sys::llama_model_kv_override_value {
+                let val = sys::llama_model_kv_override_value {
                     val_bool: *v as sys::c_bool,
                 };
                 (

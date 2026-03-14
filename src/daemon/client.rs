@@ -71,16 +71,13 @@ impl DaemonClient {
             .send(nng::Message::from(req_bytes.as_slice()))
             .map_err(|(_, e)| MullamaError::DaemonError(format!("Send failed: {}", e)))?;
 
-        let msg = self
-            .socket
-            .recv()
-            .map_err(|e| {
-                if e == nng::Error::TimedOut {
-                    MullamaError::DaemonError("Request timed out - daemon may have crashed".to_string())
-                } else {
-                    MullamaError::DaemonError(format!("Receive failed: {}", e))
-                }
-            })?;
+        let msg = self.socket.recv().map_err(|e| {
+            if e == nng::Error::TimedOut {
+                MullamaError::DaemonError("Request timed out - daemon may have crashed".to_string())
+            } else {
+                MullamaError::DaemonError(format!("Receive failed: {}", e))
+            }
+        })?;
 
         Response::from_bytes(&msg)
             .map_err(|e| MullamaError::DaemonError(format!("Deserialization failed: {}", e)))

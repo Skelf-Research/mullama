@@ -83,7 +83,10 @@ impl Daemon {
                 path,
                 gpu_layers,
                 context_size,
-            } => self.handle_load_model(alias, path, gpu_layers, context_size).await,
+            } => {
+                self.handle_load_model(alias, path, gpu_layers, context_size)
+                    .await
+            }
 
             Request::UnloadModel { alias } => self.handle_unload_model(&alias).await,
             Request::SetDefaultModel { alias } => self.handle_set_default(&alias).await,
@@ -111,9 +114,7 @@ impl Daemon {
                     .await
             }
 
-            Request::Embeddings { model, input } => {
-                self.handle_embeddings(model, input).await
-            }
+            Request::Embeddings { model, input } => self.handle_embeddings(model, input).await,
 
             Request::Tokenize { model, text } => self.handle_tokenize(model, &text).await,
 
@@ -137,7 +138,10 @@ impl Daemon {
             uptime_secs: self.start_time.elapsed().as_secs(),
             models_loaded: self.models.count().await,
             default_model,
-            http_endpoint: self.config.http_port.map(|p| format!("http://{}:{}", self.config.http_addr, p)),
+            http_endpoint: self
+                .config
+                .http_port
+                .map(|p| format!("http://{}:{}", self.config.http_addr, p)),
             ipc_endpoint: self.config.ipc_addr.clone(),
             stats: DaemonStats {
                 requests_total: self.total_requests.load(Ordering::Relaxed),
@@ -172,8 +176,16 @@ impl Daemon {
         context_size: u32,
     ) -> Response {
         let config = ModelLoadConfig::new(&alias, &path)
-            .gpu_layers(if gpu_layers == 0 { self.config.default_gpu_layers } else { gpu_layers })
-            .context_size(if context_size == 0 { self.config.default_context_size } else { context_size })
+            .gpu_layers(if gpu_layers == 0 {
+                self.config.default_gpu_layers
+            } else {
+                gpu_layers
+            })
+            .context_size(if context_size == 0 {
+                self.config.default_context_size
+            } else {
+                context_size
+            })
             .threads(self.config.threads_per_model);
 
         match self.models.load(config).await {
@@ -184,14 +196,18 @@ impl Daemon {
 
     async fn handle_unload_model(&self, alias: &str) -> Response {
         match self.models.unload(alias).await {
-            Ok(()) => Response::ModelUnloaded { alias: alias.to_string() },
+            Ok(()) => Response::ModelUnloaded {
+                alias: alias.to_string(),
+            },
             Err(e) => Response::error(ErrorCode::ModelNotFound, e.to_string()),
         }
     }
 
     async fn handle_set_default(&self, alias: &str) -> Response {
         match self.models.set_default(alias).await {
-            Ok(()) => Response::DefaultModelSet { alias: alias.to_string() },
+            Ok(()) => Response::DefaultModelSet {
+                alias: alias.to_string(),
+            },
             Err(e) => Response::error(ErrorCode::ModelNotFound, e.to_string()),
         }
     }
@@ -205,8 +221,12 @@ impl Daemon {
         _stream: bool,
         _stop: Vec<String>,
     ) -> Response {
-        eprintln!("[DEBUG] handle_chat_completion: ENTRY - model={:?}, messages={}, max_tokens={}",
-                  model, messages.len(), max_tokens);
+        eprintln!(
+            "[DEBUG] handle_chat_completion: ENTRY - model={:?}, messages={}, max_tokens={}",
+            model,
+            messages.len(),
+            max_tokens
+        );
         use std::io::Write;
         std::io::stderr().flush().ok();
 
@@ -227,11 +247,16 @@ impl Daemon {
         eprintln!("[DEBUG] handle_chat_completion: building prompt");
         std::io::stderr().flush().ok();
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
-        eprintln!("[DEBUG] handle_chat_completion: prompt built, length={}", prompt.len());
+        eprintln!(
+            "[DEBUG] handle_chat_completion: prompt built, length={}",
+            prompt.len()
+        );
         std::io::stderr().flush().ok();
 
         // Generate
-        let result = self.generate_text(&loaded, &prompt, max_tokens, temperature).await;
+        let result = self
+            .generate_text(&loaded, &prompt, max_tokens, temperature)
+            .await;
 
         self.active_requests.fetch_sub(1, Ordering::SeqCst);
 
@@ -283,7 +308,9 @@ impl Daemon {
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::SeqCst);
 
-        let result = self.generate_text(&loaded, &prompt, max_tokens, temperature).await;
+        let result = self
+            .generate_text(&loaded, &prompt, max_tokens, temperature)
+            .await;
 
         self.active_requests.fetch_sub(1, Ordering::SeqCst);
 
@@ -315,11 +342,7 @@ impl Daemon {
         }
     }
 
-    async fn handle_embeddings(
-        &self,
-        _model: Option<String>,
-        _input: EmbeddingInput,
-    ) -> Response {
+    async fn handle_embeddings(&self, _model: Option<String>, _input: EmbeddingInput) -> Response {
         Response::error(ErrorCode::Internal, "Embeddings not yet implemented")
     }
 
@@ -383,7 +406,10 @@ impl Daemon {
 
         // Get context lock
         let mut context = loaded.context.write().await;
-        eprintln!("[DEBUG] generate_text: got context lock, ctx_ptr={:?}", context.as_ptr());
+        eprintln!(
+            "[DEBUG] generate_text: got context lock, ctx_ptr={:?}",
+            context.as_ptr()
+        );
         std::io::stderr().flush().ok();
 
         // Clear KV cache to start fresh for each request
@@ -404,7 +430,10 @@ impl Daemon {
         std::io::stderr().flush().ok();
 
         // Decode prompt
-        eprintln!("[DEBUG] generate_text: about to decode prompt with {} tokens", tokens.len());
+        eprintln!(
+            "[DEBUG] generate_text: about to decode prompt with {} tokens",
+            tokens.len()
+        );
         std::io::stderr().flush().ok();
         context.decode(&tokens)?;
         eprintln!("[DEBUG] generate_text: decoded prompt successfully");
@@ -415,7 +444,10 @@ impl Daemon {
         let mut completion_tokens = 0u32;
 
         for i in 0..max_tokens {
-            eprintln!("[DEBUG] generate_text: loop iteration {}, about to sample", i);
+            eprintln!(
+                "[DEBUG] generate_text: loop iteration {}, about to sample",
+                i
+            );
             // Use -1 to sample from the last token's logits
             let next_token = sampler.sample(&mut *context, -1);
             eprintln!("[DEBUG] generate_text: sampled token {}", next_token);
@@ -439,7 +471,10 @@ impl Daemon {
         }
 
         self.models.add_tokens(completion_tokens as u64);
-        eprintln!("[DEBUG] generate_text: done, generated {} tokens", completion_tokens);
+        eprintln!(
+            "[DEBUG] generate_text: done, generated {} tokens",
+            completion_tokens
+        );
 
         Ok((generated, prompt_tokens, completion_tokens))
     }

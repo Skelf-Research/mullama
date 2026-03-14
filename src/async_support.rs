@@ -328,7 +328,10 @@ pub struct AsyncConfig {
 impl std::fmt::Debug for AsyncConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AsyncConfig")
-            .field("progress_callback", &self.progress_callback.as_ref().map(|_| "<callback>"))
+            .field(
+                "progress_callback",
+                &self.progress_callback.as_ref().map(|_| "<callback>"),
+            )
             .field("cancellation_token", &self.cancellation_token)
             .finish()
     }
