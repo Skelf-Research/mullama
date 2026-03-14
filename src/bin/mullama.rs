@@ -32,6 +32,10 @@
 //! mullama pull hf:TheBloke/Llama-2-7B-GGUF
 //! ```
 
+// Use mimalloc for better allocation performance
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
