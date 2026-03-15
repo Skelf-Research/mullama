@@ -7,19 +7,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::{sse::Event, IntoResponse, Response, Sse},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
-use futures::stream::{self, Stream};
+use futures::stream::{self};
 use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt as _;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::protocol::{ChatMessage, EmbeddingInput, Response as ProtoResponse, StreamChunk, Usage};
+use super::anthropic::messages_handler;
+use super::protocol::{ChatMessage, EmbeddingInput, Response as ProtoResponse, Usage};
 use super::server::Daemon;
 
 /// Shared state for the HTTP server
@@ -39,9 +40,25 @@ pub fn create_openai_router(daemon: Arc<Daemon>) -> Router {
         .route("/v1/models", get(list_models))
         .route("/v1/models/:model", get(get_model))
         .route("/v1/embeddings", post(embeddings))
+        // Anthropic API endpoint
+        .route("/v1/messages", post(messages_handler))
+        // Model management API
+        .route("/api/models", get(api_list_models))
+        .route("/api/models/pull", post(api_pull_model))
+        .route("/api/models/load", post(api_load_model))
+        .route("/api/models/:name/unload", post(api_unload_model))
+        .route("/api/models/:name", delete(api_delete_model))
+        .route("/api/models/:name", get(api_get_model))
+        // System API
+        .route("/api/system/status", get(api_system_status))
         // Health and status
         .route("/health", get(health))
         .route("/status", get(status))
+        .route("/metrics", get(metrics))
+        // Embedded Web UI
+        .route("/ui", get(ui_redirect))
+        .route("/ui/", get(serve_ui_handler))
+        .route("/ui/*path", get(serve_ui_handler))
         .with_state(daemon)
         .layer(cors)
 }
@@ -619,6 +636,659 @@ async fn status(State(daemon): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+/// Prometheus-compatible metrics endpoint
+async fn metrics(State(daemon): State<AppState>) -> impl IntoResponse {
+    let models = daemon.models.list().await;
+    let uptime = daemon.start_time.elapsed().as_secs();
+    let total_requests = daemon.total_requests.load(std::sync::atomic::Ordering::Relaxed);
+    let active_requests = daemon.active_requests.load(std::sync::atomic::Ordering::Relaxed);
+    let tokens_generated = daemon.models.total_tokens();
+
+    let mut output = String::new();
+
+    // Help text and type definitions
+    output.push_str("# HELP mullama_info Mullama daemon information\n");
+    output.push_str("# TYPE mullama_info gauge\n");
+    output.push_str(&format!(
+        "mullama_info{{version=\"{}\"}} 1\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+
+    output.push_str("\n# HELP mullama_uptime_seconds Daemon uptime in seconds\n");
+    output.push_str("# TYPE mullama_uptime_seconds counter\n");
+    output.push_str(&format!("mullama_uptime_seconds {}\n", uptime));
+
+    output.push_str("\n# HELP mullama_models_loaded Number of loaded models\n");
+    output.push_str("# TYPE mullama_models_loaded gauge\n");
+    output.push_str(&format!("mullama_models_loaded {}\n", models.len()));
+
+    output.push_str("\n# HELP mullama_requests_total Total number of requests processed\n");
+    output.push_str("# TYPE mullama_requests_total counter\n");
+    output.push_str(&format!("mullama_requests_total {}\n", total_requests));
+
+    output.push_str("\n# HELP mullama_requests_active Number of active requests\n");
+    output.push_str("# TYPE mullama_requests_active gauge\n");
+    output.push_str(&format!("mullama_requests_active {}\n", active_requests));
+
+    output.push_str("\n# HELP mullama_tokens_generated_total Total tokens generated\n");
+    output.push_str("# TYPE mullama_tokens_generated_total counter\n");
+    output.push_str(&format!("mullama_tokens_generated_total {}\n", tokens_generated));
+
+    output.push_str("\n# HELP mullama_gpu_available Whether GPU offload is available\n");
+    output.push_str("# TYPE mullama_gpu_available gauge\n");
+    output.push_str(&format!(
+        "mullama_gpu_available {}\n",
+        if crate::supports_gpu_offload() { 1 } else { 0 }
+    ));
+
+    // Per-model metrics
+    if !models.is_empty() {
+        output.push_str("\n# HELP mullama_model_parameters Model parameter count\n");
+        output.push_str("# TYPE mullama_model_parameters gauge\n");
+        for (alias, info, _, _) in &models {
+            output.push_str(&format!(
+                "mullama_model_parameters{{model=\"{}\"}} {}\n",
+                alias, info.parameters
+            ));
+        }
+
+        output.push_str("\n# HELP mullama_model_context_size Model context size\n");
+        output.push_str("# TYPE mullama_model_context_size gauge\n");
+        for (alias, info, _, _) in &models {
+            output.push_str(&format!(
+                "mullama_model_context_size{{model=\"{}\"}} {}\n",
+                alias, info.context_size
+            ));
+        }
+
+        output.push_str("\n# HELP mullama_model_gpu_layers Model GPU layers\n");
+        output.push_str("# TYPE mullama_model_gpu_layers gauge\n");
+        for (alias, info, _, _) in &models {
+            output.push_str(&format!(
+                "mullama_model_gpu_layers{{model=\"{}\"}} {}\n",
+                alias, info.gpu_layers
+            ));
+        }
+
+        output.push_str("\n# HELP mullama_model_active_requests Active requests per model\n");
+        output.push_str("# TYPE mullama_model_active_requests gauge\n");
+        for (alias, _, _, active) in &models {
+            output.push_str(&format!(
+                "mullama_model_active_requests{{model=\"{}\"}} {}\n",
+                alias, active
+            ));
+        }
+    }
+
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        output,
+    )
+}
+
+// ==================== Model Management API ====================
+
+/// Request to pull a model
+#[derive(Debug, Deserialize)]
+pub struct PullModelRequest {
+    /// Model name or HuggingFace spec
+    pub name: String,
+}
+
+/// Request to load a model into the daemon
+#[derive(Debug, Deserialize)]
+pub struct LoadModelRequest {
+    /// Model name, path, or alias
+    pub name: String,
+    /// GPU layers to offload (optional, uses daemon default if not specified)
+    #[serde(default)]
+    pub gpu_layers: Option<i32>,
+    /// Context size (optional, uses daemon default if not specified)
+    #[serde(default)]
+    pub context_size: Option<u32>,
+}
+
+/// Response for model operations
+#[derive(Debug, Serialize)]
+pub struct ModelOperationResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<serde_json::Value>,
+}
+
+/// Detailed model information
+#[derive(Debug, Serialize)]
+pub struct ModelDetails {
+    pub name: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    pub size: u64,
+    pub size_formatted: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloaded: Option<String>,
+}
+
+/// List all models (cached + running)
+async fn api_list_models(State(daemon): State<AppState>) -> Json<serde_json::Value> {
+    use super::hf::HfDownloader;
+    use super::registry::registry;
+
+    let mut models = Vec::new();
+
+    // Get cached HuggingFace models
+    if let Ok(downloader) = HfDownloader::new() {
+        for cached in downloader.list_cached() {
+            let short_name = format!(
+                "{}:{}",
+                cached.repo_id.split('/').last().unwrap_or(&cached.repo_id),
+                cached.filename.trim_end_matches(".gguf")
+            );
+
+            models.push(serde_json::json!({
+                "name": short_name,
+                "source": "huggingface",
+                "repo_id": cached.repo_id,
+                "filename": cached.filename,
+                "size": cached.size_bytes,
+                "size_formatted": format_size(cached.size_bytes),
+                "path": cached.local_path.display().to_string(),
+                "downloaded": cached.downloaded_at,
+                "loaded": false,
+            }));
+        }
+    }
+
+    // Get loaded models
+    let loaded = daemon.models.list().await;
+    for (alias, info, is_default, active_requests) in loaded {
+        // Check if already in list
+        let already_listed = models.iter().any(|m| {
+            m.get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| p == info.path)
+                .unwrap_or(false)
+        });
+
+        if already_listed {
+            // Update the existing entry to mark it as loaded
+            for model in &mut models {
+                if model.get("path").and_then(|p| p.as_str()) == Some(&info.path) {
+                    model["loaded"] = serde_json::json!(true);
+                    model["is_default"] = serde_json::json!(is_default);
+                    model["active_requests"] = serde_json::json!(active_requests);
+                    model["context_size"] = serde_json::json!(info.context_size);
+                    model["gpu_layers"] = serde_json::json!(info.gpu_layers);
+                }
+            }
+        } else {
+            models.push(serde_json::json!({
+                "name": alias,
+                "source": "local",
+                "size": 0,
+                "size_formatted": "unknown",
+                "path": info.path,
+                "loaded": true,
+                "is_default": is_default,
+                "active_requests": active_requests,
+                "context_size": info.context_size,
+                "gpu_layers": info.gpu_layers,
+            }));
+        }
+    }
+
+    // Get available aliases
+    let reg = registry();
+    let aliases: Vec<_> = reg.list_aliases().iter().map(|a| a.to_string()).collect();
+
+    Json(serde_json::json!({
+        "models": models,
+        "available_aliases": aliases,
+        "total_cached": models.len(),
+    }))
+}
+
+/// Format bytes as human-readable size
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Pull a model from HuggingFace
+async fn api_pull_model(
+    State(_daemon): State<AppState>,
+    Json(request): Json<PullModelRequest>,
+) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
+    use super::hf::{HfDownloader, HfModelSpec};
+    use super::registry::{resolve_model_name, ResolvedModel};
+
+    // Resolve the model name
+    let resolved = resolve_model_name(&request.name);
+
+    let hf_spec = match resolved {
+        ResolvedModel::HuggingFace { spec, .. } => spec,
+        ResolvedModel::LocalPath(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ModelOperationResponse {
+                    success: false,
+                    message: "Cannot pull a local path".to_string(),
+                    model: None,
+                }),
+            ));
+        }
+        ResolvedModel::Unknown(name) => {
+            // Try as direct HF spec
+            if name.starts_with("hf:") || name.contains('/') {
+                if name.starts_with("hf:") {
+                    name
+                } else {
+                    format!("hf:{}", name)
+                }
+            } else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Unknown model '{}'. Use hf:owner/repo format or a known alias.", name),
+                        model: None,
+                    }),
+                ));
+            }
+        }
+    };
+
+    // Parse and download
+    let spec = HfModelSpec::parse(&hf_spec).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Invalid HuggingFace spec: {}", hf_spec),
+                model: None,
+            }),
+        )
+    })?;
+
+    let downloader = HfDownloader::new().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Failed to initialize downloader: {}", e),
+                model: None,
+            }),
+        )
+    })?;
+
+    // Download without progress (for API)
+    let path = downloader.download_spec(&spec, false).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Download failed: {}", e),
+                model: None,
+            }),
+        )
+    })?;
+
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+    Ok(Json(ModelOperationResponse {
+        success: true,
+        message: format!("Model '{}' downloaded successfully", request.name),
+        model: Some(serde_json::json!({
+            "name": spec.get_alias(),
+            "source": "huggingface",
+            "repo_id": spec.repo_id,
+            "filename": spec.filename,
+            "size": size,
+            "size_formatted": format_size(size),
+            "path": path.display().to_string(),
+            "downloaded": chrono::Utc::now().to_rfc3339(),
+        })),
+    }))
+}
+
+/// Delete a model
+async fn api_delete_model(
+    State(_daemon): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
+    use super::hf::HfDownloader;
+
+    let downloader = HfDownloader::new().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Failed to initialize: {}", e),
+                model: None,
+            }),
+        )
+    })?;
+
+    let cached = downloader.list_cached();
+
+    // Find the model
+    let mut found = None;
+    for model in &cached {
+        let short_name = format!(
+            "{}:{}",
+            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model.filename.trim_end_matches(".gguf")
+        );
+
+        if model.filename == name
+            || model.repo_id == name
+            || short_name == name
+            || model.filename.trim_end_matches(".gguf") == name
+        {
+            found = Some(model);
+            break;
+        }
+    }
+
+    let model = found.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Model '{}' not found", name),
+                model: None,
+            }),
+        )
+    })?;
+
+    let size = model.size_bytes;
+    let path = model.local_path.display().to_string();
+
+    // Delete the file
+    std::fs::remove_file(&model.local_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Failed to delete: {}", e),
+                model: None,
+            }),
+        )
+    })?;
+
+    Ok(Json(ModelOperationResponse {
+        success: true,
+        message: format!("Model '{}' deleted, freed {}", name, format_size(size)),
+        model: Some(serde_json::json!({
+            "name": name,
+            "source": "huggingface",
+            "repo_id": model.repo_id,
+            "filename": model.filename,
+            "size": size,
+            "size_formatted": format_size(size),
+            "path": path,
+        })),
+    }))
+}
+
+/// Get model details
+async fn api_get_model(
+    State(daemon): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ModelOperationResponse>)> {
+    use super::hf::HfDownloader;
+
+    // Check if model is loaded
+    let loaded = daemon.models.list().await;
+    for (alias, info, is_default, active_requests) in &loaded {
+        if alias == &name {
+            return Ok(Json(serde_json::json!({
+                "name": alias,
+                "source": "loaded",
+                "path": info.path,
+                "parameters": info.parameters,
+                "context_size": info.context_size,
+                "gpu_layers": info.gpu_layers,
+                "is_default": is_default,
+                "active_requests": active_requests,
+                "loaded": true,
+            })));
+        }
+    }
+
+    // Check cached models
+    if let Ok(downloader) = HfDownloader::new() {
+        for model in downloader.list_cached() {
+            let short_name = format!(
+                "{}:{}",
+                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model.filename.trim_end_matches(".gguf")
+            );
+
+            if model.filename == name
+                || model.repo_id == name
+                || short_name == name
+                || model.filename.trim_end_matches(".gguf") == name
+            {
+                return Ok(Json(serde_json::json!({
+                    "name": short_name,
+                    "source": "huggingface",
+                    "repo_id": model.repo_id,
+                    "filename": model.filename,
+                    "size": model.size_bytes,
+                    "size_formatted": format_size(model.size_bytes),
+                    "path": model.local_path.display().to_string(),
+                    "downloaded": model.downloaded_at,
+                    "loaded": false,
+                })));
+            }
+        }
+    }
+
+    Err((
+        StatusCode::NOT_FOUND,
+        Json(ModelOperationResponse {
+            success: false,
+            message: format!("Model '{}' not found", name),
+            model: None,
+        }),
+    ))
+}
+
+/// Load a model into the daemon
+async fn api_load_model(
+    State(daemon): State<AppState>,
+    Json(request): Json<LoadModelRequest>,
+) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
+    use super::hf::HfDownloader;
+    use super::registry::{resolve_model_name, ResolvedModel};
+
+    // Resolve the model name to find the actual path
+    let resolved = resolve_model_name(&request.name);
+
+    let (path, alias): (String, String) = match resolved {
+        ResolvedModel::HuggingFace { spec, .. } => {
+            // Check if it's already downloaded
+            let downloader = HfDownloader::new().map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Failed to initialize downloader: {}", e),
+                        model: None,
+                    }),
+                )
+            })?;
+
+            // Parse the spec to get repo info
+            if let Some(hf_spec) = super::hf::HfModelSpec::parse(&spec) {
+                // Look for cached model
+                let cached = downloader.list_cached();
+                let found = cached.iter().find(|m| {
+                    m.repo_id == hf_spec.repo_id
+                        && (hf_spec.filename.is_none() || Some(&m.filename) == hf_spec.filename.as_ref())
+                });
+
+                if let Some(model) = found {
+                    // Use the alias from the spec or the request name
+                    let model_alias = hf_spec.alias.unwrap_or_else(|| request.name.clone());
+                    (model.local_path.display().to_string(), model_alias)
+                } else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ModelOperationResponse {
+                            success: false,
+                            message: format!("Model '{}' not downloaded. Pull it first.", request.name),
+                            model: None,
+                        }),
+                    ));
+                }
+            } else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Invalid model spec: {}", spec),
+                        model: None,
+                    }),
+                ));
+            }
+        }
+        ResolvedModel::LocalPath(path) => {
+            (path.display().to_string(), request.name.clone())
+        }
+        ResolvedModel::Unknown(name) => {
+            // Try to find in cached models
+            let downloader = HfDownloader::new().map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Failed to initialize: {}", e),
+                        model: None,
+                    }),
+                )
+            })?;
+
+            let cached = downloader.list_cached();
+            let found = cached.iter().find(|m| {
+                let short_name = format!(
+                    "{}:{}",
+                    m.repo_id.split('/').last().unwrap_or(&m.repo_id),
+                    m.filename.trim_end_matches(".gguf")
+                );
+                m.filename == name
+                    || m.repo_id == name
+                    || short_name == name
+                    || m.filename.trim_end_matches(".gguf") == name
+            });
+
+            if let Some(model) = found {
+                let short_name = format!(
+                    "{}:{}",
+                    model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                    model.filename.trim_end_matches(".gguf")
+                );
+                (model.local_path.display().to_string(), short_name)
+            } else {
+                // Check if it's a direct path
+                if std::path::Path::new(&name).exists() {
+                    (name.clone(), name)
+                } else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ModelOperationResponse {
+                            success: false,
+                            message: format!("Model '{}' not found. Pull it first or provide a valid path.", name),
+                            model: None,
+                        }),
+                    ));
+                }
+            }
+        }
+    };
+
+    // Load the model
+    let gpu_layers = request.gpu_layers.unwrap_or(daemon.config.default_gpu_layers);
+    let context_size = request.context_size.unwrap_or(daemon.config.default_context_size);
+
+    let config = super::models::ModelLoadConfig {
+        alias: alias.clone(),
+        path: path.clone(),
+        gpu_layers,
+        context_size,
+        threads: num_cpus::get() as i32,
+        mmproj_path: None,
+    };
+
+    match daemon.models.load(config).await {
+        Ok(info) => Ok(Json(ModelOperationResponse {
+            success: true,
+            message: format!("Model '{}' loaded successfully", alias),
+            model: Some(serde_json::json!({
+                "alias": alias,
+                "path": path,
+                "parameters": info.parameters,
+                "context_size": info.context_size,
+                "gpu_layers": info.gpu_layers,
+            })),
+        })),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ModelOperationResponse {
+                success: false,
+                message: format!("Failed to load model: {}", e),
+                model: None,
+            }),
+        )),
+    }
+}
+
+/// Unload a model from the daemon
+async fn api_unload_model(
+    State(daemon): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
+    match daemon.models.unload(&name).await {
+        Ok(_) => Ok(Json(ModelOperationResponse {
+            success: true,
+            message: format!("Model '{}' unloaded successfully", name),
+            model: None,
+        })),
+        Err(e) => {
+            let status = if e.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            Err((
+                status,
+                Json(ModelOperationResponse {
+                    success: false,
+                    message: format!("Failed to unload model: {}", e),
+                    model: None,
+                }),
+            ))
+        }
+    }
+}
+
 // ==================== Error Handling ====================
 
 pub struct ApiError {
@@ -653,4 +1323,50 @@ impl IntoResponse for ApiError {
         });
         (self.status, body).into_response()
     }
+}
+
+// ==================== System API ====================
+
+/// System status response
+#[derive(Debug, Serialize)]
+pub struct SystemStatus {
+    pub version: String,
+    pub uptime_secs: u64,
+    pub models_loaded: usize,
+    pub http_endpoint: Option<String>,
+}
+
+/// Get system status
+async fn api_system_status(State(daemon): State<AppState>) -> Json<SystemStatus> {
+    let models = daemon.models.list().await;
+    let uptime = daemon.start_time.elapsed().as_secs();
+
+    let http_endpoint = daemon.config.http_port.map(|port| {
+        format!("http://{}:{}", daemon.config.http_addr, port)
+    });
+
+    Json(SystemStatus {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: uptime,
+        models_loaded: models.len(),
+        http_endpoint,
+    })
+}
+
+// ==================== Embedded Web UI ====================
+
+use axum::http::{header, Uri};
+
+/// Redirect /ui to /ui/
+async fn ui_redirect() -> impl IntoResponse {
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, "/ui/")],
+        "",
+    )
+}
+
+/// Serve embedded UI assets
+async fn serve_ui_handler(uri: Uri) -> impl IntoResponse {
+    super::ui::serve_ui(uri).await
 }

@@ -89,6 +89,47 @@ let context = Context::new(&model, params)?
 
 ## ✅ Recently Implemented
 
+### Daemon Mode Enhancements
+**Status**: Complete | **Since**: v0.1.1
+
+Major enhancements to daemon mode making it a complete Ollama alternative.
+
+**Implemented Features:**
+- **Model Aliases**: 40+ pre-configured short names (e.g., `llama3.2:1b`)
+- **Modelfile/Mullamafile**: Ollama-compatible model configuration files
+- **Anthropic API**: `/v1/messages` endpoint for Claude API compatibility
+- **Auto-Spawn**: Daemon starts automatically when CLI commands need it
+- **Embedded Web UI**: Vue.js management interface at `/ui/`
+- **Prometheus Metrics**: `/metrics` endpoint for monitoring
+- **Daemon CLI**: `mullama daemon start/stop/status/logs` commands
+- **Model Management**: `mullama create`, `mullama cp`, `mullama show --modelfile`
+
+```bash
+# Model aliases - simple names that resolve to HuggingFace
+mullama run llama3.2:1b "Hello!"
+mullama run qwen2.5:7b-instruct "Explain AI"
+
+# Modelfile support
+cat <<EOF > Modelfile
+FROM llama3.2:1b
+PARAMETER temperature 0.7
+SYSTEM "You are helpful."
+GPU_LAYERS 32
+EOF
+mullama create my-assistant -f Modelfile
+mullama run my-assistant "Hello!"
+
+# Auto-spawn - daemon starts automatically
+mullama chat  # Starts daemon if not running
+
+# Anthropic-compatible API
+curl http://localhost:8080/v1/messages \
+  -d '{"model": "llama3.2:1b", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Prometheus metrics
+curl http://localhost:8080/metrics
+```
+
 ### Late Interaction / ColBERT Support
 **Status**: Complete | **Since**: v0.1.1
 

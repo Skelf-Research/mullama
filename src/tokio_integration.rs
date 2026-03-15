@@ -43,9 +43,9 @@
 #[cfg(feature = "tokio-runtime")]
 use tokio::{
     runtime::{Builder, Handle, Runtime},
-    sync::{broadcast, mpsc, oneshot, RwLock, Semaphore},
+    sync::{mpsc, RwLock, Semaphore},
     task::{JoinHandle, JoinSet},
-    time::{interval, Duration, Instant},
+    time::{interval, Duration},
 };
 
 #[cfg(feature = "tokio-runtime")]
@@ -61,7 +61,7 @@ use std::{
 };
 
 #[cfg(feature = "async")]
-use crate::{AsyncContext, AsyncModel, MullamaError};
+use crate::{AsyncModel, MullamaError};
 
 /// Managed Tokio runtime for Mullama operations
 #[cfg(feature = "tokio-runtime")]

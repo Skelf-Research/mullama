@@ -40,13 +40,17 @@
 //!   -d '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}'
 //! ```
 
+mod anthropic;
 mod client;
 mod hf;
 mod models;
 mod openai;
 mod protocol;
+pub mod registry;
 mod server;
+pub mod spawn;
 mod tui;
+pub mod ui;
 
 // Protocol types (IPC)
 pub use protocol::{
@@ -81,6 +85,27 @@ pub use tui::TuiApp;
 pub use hf::{
     resolve_model_path, CachedModel, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult,
 };
+
+// Model registry (aliases)
+pub use registry::{
+    registry, resolve_model_name, ModelAlias, ModelRegistry, ParsedModelSpec, RegistryError,
+    ResolvedModel,
+};
+
+// Anthropic API types
+pub use anthropic::{
+    AnthropicMessage, AnthropicUsage, ContentBlock, MessageContent, MessagesRequest,
+    MessagesResponse, ResponseContentBlock,
+};
+
+// Daemon spawn utilities
+pub use spawn::{
+    daemon_status, ensure_daemon_running, is_daemon_running, spawn_daemon, stop_daemon,
+    DaemonInfo, SpawnConfig, SpawnResult,
+};
+
+// Embedded Web UI
+pub use ui::{serve_ui, ui_available};
 
 /// Default IPC socket path
 #[cfg(unix)]

@@ -21,7 +21,7 @@ models/
 *.gguf
 *.ggml
 *.bin
-
+*.safetensors
 
 # IDE and editor files
 .idea/
@@ -42,3 +42,44 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Node.js / Vue UI
+ui/node_modules/
+ui/dist/
+ui/.vite/
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Python bindings
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Audit logs
+*.jsonl
+audit/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# llama.cpp submodule build artifacts
+llama.cpp/build/
+llama.cpp/*.o
+llama.cpp/*.a
+
+# Coverage
+*.gcno
+*.gcda
+lcov.info
+coverage/

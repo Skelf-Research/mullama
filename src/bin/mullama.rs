@@ -36,15 +36,19 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use mullama::daemon::{
-    create_openai_router, resolve_model_path, Daemon, DaemonBuilder, DaemonClient, GgufFileInfo,
-    HfDownloader, HfModelSpec, HfSearchResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
+    create_openai_router, daemon_status, ensure_daemon_running, is_daemon_running, registry,
+    resolve_model_name, resolve_model_path, spawn_daemon, stop_daemon, Daemon, DaemonBuilder,
+    DaemonClient, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult, ResolvedModel,
+    SpawnConfig, SpawnResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
 };
+use mullama::daemon::spawn::default_log_path;
+use mullama::modelfile::{find_modelfile, Modelfile, ModelfileParser};
 
 #[derive(Parser)]
 #[command(name = "mullama")]
@@ -57,6 +61,54 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// List all local models (cached and custom)
+    #[command(alias = "ls")]
+    List {
+        /// Show detailed information (size, date, path)
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove a model from disk
+    #[command(alias = "delete")]
+    Rm {
+        /// Model name or path to remove
+        name: String,
+
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Show running models (processes)
+    Ps {
+        /// IPC socket to connect to
+        #[arg(short, long, default_value = DEFAULT_SOCKET)]
+        socket: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show model details
+    Show {
+        /// Model name to show
+        name: String,
+
+        /// Show the Modelfile/Mullamafile
+        #[arg(long)]
+        modelfile: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start the daemon server
     #[command(alias = "start")]
     Serve {
@@ -299,6 +351,102 @@ enum Commands {
         /// Repository ID (e.g., TheBloke/Llama-2-7B-GGUF)
         repo: String,
     },
+
+    /// Create a model from a Modelfile
+    Create {
+        /// Name for the new model
+        name: String,
+
+        /// Path to Modelfile (default: ./Modelfile or ./Mullamafile)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+
+        /// Download base model if not cached
+        #[arg(long, default_value = "true")]
+        download: bool,
+
+        /// Quiet mode (no progress bar)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Copy/rename a model
+    #[command(alias = "copy")]
+    Cp {
+        /// Source model name
+        source: String,
+
+        /// Destination model name
+        destination: String,
+    },
+
+    /// Manage the daemon process
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the daemon in background
+    Start {
+        /// HTTP port for OpenAI-compatible API
+        #[arg(short = 'p', long, default_value = "8080")]
+        http_port: u16,
+
+        /// Default GPU layers to offload
+        #[arg(short, long, default_value = "0")]
+        gpu_layers: i32,
+
+        /// Default context size
+        #[arg(short, long, default_value = "4096")]
+        context_size: u32,
+
+        /// IPC socket address
+        #[arg(short, long, default_value = DEFAULT_SOCKET)]
+        socket: String,
+    },
+
+    /// Stop the daemon
+    Stop {
+        /// IPC socket address
+        #[arg(short, long, default_value = DEFAULT_SOCKET)]
+        socket: String,
+
+        /// Force stop (SIGKILL)
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Restart the daemon
+    Restart {
+        /// IPC socket address
+        #[arg(short, long, default_value = DEFAULT_SOCKET)]
+        socket: String,
+    },
+
+    /// Show daemon status
+    Status {
+        /// IPC socket address
+        #[arg(short, long, default_value = DEFAULT_SOCKET)]
+        socket: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show daemon logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+
+        /// Follow log output
+        #[arg(short, long)]
+        follow: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -339,6 +487,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::List { verbose, json } => {
+            list_all_models(verbose, json).await?;
+        }
+
+        Commands::Rm { name, force } => {
+            remove_model(&name, force).await?;
+        }
+
+        Commands::Ps { socket, json } => {
+            show_running_models(&socket, json)?;
+        }
+
+        Commands::Show {
+            name,
+            modelfile,
+            json,
+        } => {
+            show_model_details(&name, modelfile, json).await?;
+        }
+
         Commands::Serve {
             model,
             mmproj,
@@ -432,7 +600,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Stop { socket, force: _ } => {
-            stop_daemon(&socket)?;
+            cli_stop_daemon(&socket)?;
         }
 
         Commands::Tokenize {
@@ -471,6 +639,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Info { repo } => {
             show_repo_info(&repo).await?;
+        }
+
+        Commands::Create {
+            name,
+            file,
+            download,
+            quiet,
+        } => {
+            create_model(&name, file, download, !quiet).await?;
+        }
+
+        Commands::Cp {
+            source,
+            destination,
+        } => {
+            copy_model(&source, &destination).await?;
+        }
+
+        Commands::Daemon { action } => {
+            handle_daemon_action(action)?;
         }
     }
 
@@ -717,12 +905,39 @@ async fn run_ipc_server(
 // ==================== Client Commands ====================
 
 fn connect(socket: &str) -> Result<DaemonClient, Box<dyn std::error::Error>> {
-    DaemonClient::connect_with_timeout(socket, Duration::from_secs(5))
-        .map_err(|e| format!("Failed to connect to daemon: {}\nIs the daemon running?", e).into())
+    // Try to connect first
+    match DaemonClient::connect_with_timeout(socket, Duration::from_millis(500)) {
+        Ok(client) => return Ok(client),
+        Err(_) => {
+            // Daemon not running, try to auto-spawn it
+            eprintln!("Daemon not running, starting it automatically...");
+
+            let config = SpawnConfig {
+                socket: socket.to_string(),
+                log_file: Some(default_log_path()),
+                ..Default::default()
+            };
+
+            if let Err(e) = ensure_daemon_running(&config) {
+                return Err(format!(
+                    "Failed to start daemon automatically: {}\n\
+                    You can start the daemon manually with: mullama serve",
+                    e
+                ).into());
+            }
+
+            eprintln!("Daemon started successfully, connecting...");
+
+            // Now try to connect again
+            DaemonClient::connect_with_timeout(socket, Duration::from_secs(5))
+                .map_err(|e| format!("Failed to connect to daemon after starting: {}", e).into())
+        }
+    }
 }
 
-fn run_chat(socket: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let client = DaemonClient::connect_with_timeout(socket, Duration::from_secs(timeout))?;
+fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
+    // Use auto-spawning connect
+    let client = connect(socket)?;
 
     // Verify connection
     match client.ping() {
@@ -734,7 +949,6 @@ fn run_chat(socket: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>
         }
         Err(e) => {
             eprintln!("Failed to connect: {}", e);
-            eprintln!("Make sure the daemon is running: mullama serve --model <path>");
             return Err(e.into());
         }
     }
@@ -1018,7 +1232,7 @@ fn ping_daemon(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn stop_daemon(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn cli_stop_daemon(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
 
     print!("Shutting down daemon... ");
@@ -1116,10 +1330,24 @@ fn embed_text(
 // ==================== HuggingFace / Cache Commands ====================
 
 async fn pull_model(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let hf_spec = HfModelSpec::parse(spec).ok_or_else(|| {
+    use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
+
+    // First try to resolve as an alias
+    let resolved_spec = match resolve_model_name(spec) {
+        ResolvedModel::HuggingFace { spec: hf_spec, .. } => hf_spec,
+        ResolvedModel::LocalPath(path) => {
+            return Err(format!("'{}' is a local path, not a downloadable model", path.display()).into());
+        }
+        ResolvedModel::Unknown(_) => {
+            // Not a known alias, try as direct HF spec
+            spec.to_string()
+        }
+    };
+
+    let hf_spec = HfModelSpec::parse(&resolved_spec).ok_or_else(|| {
         format!(
-            "Invalid HuggingFace spec: {}\n\
-             Expected format: hf:owner/repo:filename.gguf or hf:owner/repo",
+            "Unknown model '{}'\n\
+             Use an alias (e.g., llama3.2:1b, phi3:mini) or HF format: hf:owner/repo:filename.gguf",
             spec
         )
     })?;
@@ -1414,6 +1642,972 @@ async fn show_repo_info(repo_id: &str) -> Result<(), Box<dyn std::error::Error>>
                 c.filename,
                 c.size_bytes as f64 / 1_073_741_824.0
             );
+        }
+    }
+
+    Ok(())
+}
+
+// ==================== New Ollama-like Commands ====================
+
+/// Format bytes as human-readable size
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Format duration as human-readable time ago
+fn format_time_ago(time: &chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(*time);
+
+    if duration.num_days() > 30 {
+        format!("{} months ago", duration.num_days() / 30)
+    } else if duration.num_days() > 0 {
+        format!("{} days ago", duration.num_days())
+    } else if duration.num_hours() > 0 {
+        format!("{} hours ago", duration.num_hours())
+    } else if duration.num_minutes() > 0 {
+        format!("{} minutes ago", duration.num_minutes())
+    } else {
+        "just now".to_string()
+    }
+}
+
+/// List all local models (cached HuggingFace + custom models)
+async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let downloader = HfDownloader::new()?;
+    let cached = downloader.list_cached();
+
+    // Also check ~/.mullama/models/ for custom models
+    let mullama_dir = dirs::home_dir()
+        .map(|h| h.join(".mullama").join("models"))
+        .unwrap_or_else(|| PathBuf::from(".mullama/models"));
+
+    let mut custom_models: Vec<(String, PathBuf, u64, chrono::DateTime<chrono::Utc>)> = Vec::new();
+
+    if mullama_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&mullama_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "gguf").unwrap_or(false) {
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        let name = path.file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let size = metadata.len();
+                        let modified = metadata.modified()
+                            .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
+                            .unwrap_or_else(|_| chrono::Utc::now());
+                        custom_models.push((name, path, size, modified));
+                    }
+                }
+            }
+        }
+    }
+
+    if json_output {
+        let mut models_json = Vec::new();
+
+        for model in &cached {
+            models_json.push(serde_json::json!({
+                "name": format!("{}:{}", model.repo_id.replace('/', "-"),
+                    model.filename.trim_end_matches(".gguf")),
+                "source": "huggingface",
+                "repo_id": model.repo_id,
+                "filename": model.filename,
+                "size": model.size_bytes,
+                "size_formatted": format_size(model.size_bytes),
+                "modified": model.downloaded_at,
+                "path": model.local_path,
+            }));
+        }
+
+        for (name, path, size, modified) in &custom_models {
+            models_json.push(serde_json::json!({
+                "name": name,
+                "source": "local",
+                "size": size,
+                "size_formatted": format_size(*size),
+                "modified": modified.to_rfc3339(),
+                "path": path,
+            }));
+        }
+
+        println!("{}", serde_json::to_string_pretty(&models_json)?);
+        return Ok(());
+    }
+
+    if cached.is_empty() && custom_models.is_empty() {
+        println!("No models found.");
+        println!();
+        println!("Download models with:");
+        println!("  mullama pull llama3.2:1b");
+        println!("  mullama pull hf:TheBloke/Llama-2-7B-GGUF");
+        return Ok(());
+    }
+
+    println!("NAME                                      SIZE       MODIFIED");
+
+    // Print cached HF models
+    for model in &cached {
+        let name = format!("{}:{}",
+            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model.filename.trim_end_matches(".gguf"));
+        let name_display = if name.len() > 40 {
+            format!("{}...", &name[..37])
+        } else {
+            name.clone()
+        };
+
+        let modified = chrono::DateTime::parse_from_rfc3339(&model.downloaded_at)
+            .map(|dt| format_time_ago(&dt.with_timezone(&chrono::Utc)))
+            .unwrap_or_else(|_| model.downloaded_at.clone());
+
+        println!("{:<42} {:>10} {}",
+            name_display,
+            format_size(model.size_bytes),
+            modified
+        );
+
+        if verbose {
+            println!("    Path: {}", model.local_path.display());
+            println!("    Repo: {}", model.repo_id);
+            println!();
+        }
+    }
+
+    // Print custom models
+    for (name, path, size, modified) in &custom_models {
+        let name_display = if name.len() > 40 {
+            format!("{}...", &name[..37])
+        } else {
+            name.clone()
+        };
+
+        println!("{:<42} {:>10} {}",
+            name_display,
+            format_size(*size),
+            format_time_ago(modified)
+        );
+
+        if verbose {
+            println!("    Path: {}", path.display());
+            println!();
+        }
+    }
+
+    let total_count = cached.len() + custom_models.len();
+    let total_size: u64 = cached.iter().map(|m| m.size_bytes).sum::<u64>()
+        + custom_models.iter().map(|(_, _, s, _)| s).sum::<u64>();
+
+    println!();
+    println!("{} model(s), {} total", total_count, format_size(total_size));
+
+    Ok(())
+}
+
+/// Remove a model from disk
+async fn remove_model(name: &str, force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let downloader = HfDownloader::new()?;
+    let cached = downloader.list_cached();
+
+    // Try to find the model by name
+    let mut found = None;
+
+    // Check if it's a direct path
+    if PathBuf::from(name).exists() {
+        found = Some(("path".to_string(), PathBuf::from(name)));
+    } else {
+        // Check cached models
+        for model in &cached {
+            let short_name = format!("{}:{}",
+                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model.filename.trim_end_matches(".gguf"));
+
+            if model.filename == name
+                || model.repo_id == name
+                || short_name == name
+                || model.filename.trim_end_matches(".gguf") == name
+            {
+                found = Some((model.repo_id.clone(), model.local_path.clone()));
+                break;
+            }
+        }
+
+        // Check ~/.mullama/models/
+        if found.is_none() {
+            let mullama_dir = dirs::home_dir()
+                .map(|h| h.join(".mullama").join("models"))
+                .unwrap_or_else(|| PathBuf::from(".mullama/models"));
+
+            let model_path = mullama_dir.join(format!("{}.gguf", name));
+            if model_path.exists() {
+                found = Some(("local".to_string(), model_path));
+            }
+        }
+    }
+
+    let (source, path) = match found {
+        Some(f) => f,
+        None => {
+            eprintln!("Model '{}' not found.", name);
+            eprintln!();
+            eprintln!("Use 'mullama list' to see available models.");
+            return Err("Model not found".into());
+        }
+    };
+
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+    if !force {
+        println!("Will remove: {}", path.display());
+        println!("Size: {}", format_size(size));
+        print!("Are you sure? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    print!("Removing {}... ", name);
+    io::stdout().flush()?;
+
+    std::fs::remove_file(&path)?;
+
+    // If it's from HF cache, also remove metadata
+    if source != "path" && source != "local" {
+        let meta_path = path.with_extension("json");
+        if meta_path.exists() {
+            let _ = std::fs::remove_file(meta_path);
+        }
+    }
+
+    println!("OK");
+    println!("Freed {}", format_size(size));
+
+    Ok(())
+}
+
+/// Show running models (similar to docker ps)
+fn show_running_models(socket: &str, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let client = connect(socket)?;
+    let models = client.list_models()?;
+
+    if json_output {
+        let mut models_json = Vec::new();
+        for model in &models {
+            models_json.push(serde_json::json!({
+                "name": model.alias,
+                "is_default": model.is_default,
+                "path": model.info.path,
+                "parameters": model.info.parameters,
+                "parameters_formatted": format!("{}M", model.info.parameters / 1_000_000),
+                "context_size": model.info.context_size,
+                "gpu_layers": model.info.gpu_layers,
+                "active_requests": model.active_requests,
+            }));
+        }
+        println!("{}", serde_json::to_string_pretty(&models_json)?);
+        return Ok(());
+    }
+
+    if models.is_empty() {
+        println!("No models currently running.");
+        println!();
+        println!("Load a model with:");
+        println!("  mullama serve --model ./model.gguf");
+        println!("  mullama load ./model.gguf");
+        return Ok(());
+    }
+
+    println!("NAME                 SIZE       GPU      CONTEXT    ACTIVE");
+
+    for model in &models {
+        let default_marker = if model.is_default { "*" } else { " " };
+        let name = format!("{}{}", default_marker, model.alias);
+        let name_display = if name.len() > 20 {
+            format!("{}...", &name[..17])
+        } else {
+            name
+        };
+
+        let size = format!("{}M", model.info.parameters / 1_000_000);
+        let gpu = if model.info.gpu_layers > 0 {
+            format!("{} layers", model.info.gpu_layers)
+        } else {
+            "CPU".to_string()
+        };
+        let active = if model.active_requests > 0 {
+            format!("{} req", model.active_requests)
+        } else {
+            "-".to_string()
+        };
+
+        println!("{:<20} {:>10} {:>12} {:>10} {:>8}",
+            name_display,
+            size,
+            gpu,
+            model.info.context_size,
+            active
+        );
+    }
+
+    println!();
+    println!("* = default model");
+
+    Ok(())
+}
+
+/// Show model details
+async fn show_model_details(name: &str, show_modelfile: bool, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let downloader = HfDownloader::new()?;
+    let cached = downloader.list_cached();
+
+    // Try to find the model
+    let mut found = None;
+
+    for model in &cached {
+        let short_name = format!("{}:{}",
+            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model.filename.trim_end_matches(".gguf"));
+
+        if model.filename == name
+            || model.repo_id == name
+            || short_name == name
+            || model.filename.trim_end_matches(".gguf") == name
+        {
+            found = Some(model);
+            break;
+        }
+    }
+
+    let model = match found {
+        Some(m) => m,
+        None => {
+            eprintln!("Model '{}' not found.", name);
+            eprintln!();
+            eprintln!("Use 'mullama list' to see available models.");
+            return Err("Model not found".into());
+        }
+    };
+
+    if json_output {
+        let info = serde_json::json!({
+            "name": format!("{}:{}", model.repo_id.replace('/', "-"),
+                model.filename.trim_end_matches(".gguf")),
+            "repo_id": model.repo_id,
+            "filename": model.filename,
+            "size": model.size_bytes,
+            "size_formatted": format_size(model.size_bytes),
+            "downloaded": model.downloaded_at,
+            "path": model.local_path,
+        });
+        println!("{}", serde_json::to_string_pretty(&info)?);
+        return Ok(());
+    }
+
+    if show_modelfile {
+        // Check if there's a Modelfile next to the model
+        let modelfile_path = model.local_path.with_extension("modelfile");
+        let mullamafile_path = model.local_path.with_extension("mullamafile");
+
+        if modelfile_path.exists() {
+            let content = std::fs::read_to_string(&modelfile_path)?;
+            println!("{}", content);
+        } else if mullamafile_path.exists() {
+            let content = std::fs::read_to_string(&mullamafile_path)?;
+            println!("{}", content);
+        } else {
+            // Generate a default Modelfile
+            println!("# Modelfile for {}", model.filename);
+            println!("# Auto-generated - no custom Modelfile found");
+            println!();
+            println!("FROM {}", model.local_path.display());
+            println!();
+            println!("PARAMETER temperature 0.7");
+            println!("PARAMETER top_p 0.9");
+            println!("PARAMETER num_ctx 4096");
+        }
+        return Ok(());
+    }
+
+    // Show detailed info
+    println!("Model: {}", model.filename.trim_end_matches(".gguf"));
+    println!();
+    println!("  Repository:  {}", model.repo_id);
+    println!("  Filename:    {}", model.filename);
+    println!("  Size:        {}", format_size(model.size_bytes));
+    println!("  Downloaded:  {}", model.downloaded_at);
+    println!("  Path:        {}", model.local_path.display());
+    println!();
+    println!("Quick start:");
+    println!("  mullama serve --model {}", model.local_path.display());
+
+    Ok(())
+}
+
+/// Create a model from a Modelfile/Mullamafile
+async fn create_model(
+    name: &str,
+    file: Option<PathBuf>,
+    download: bool,
+    show_progress: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Find the Modelfile
+    let modelfile_path = if let Some(path) = file {
+        if !path.exists() {
+            return Err(format!("Modelfile not found: {}", path.display()).into());
+        }
+        path
+    } else {
+        find_modelfile(".").ok_or("No Modelfile or Mullamafile found in current directory")?
+    };
+
+    println!("Reading {}...", modelfile_path.display());
+
+    // Parse the Modelfile
+    let parser = ModelfileParser::new();
+    let modelfile = parser.parse_file(&modelfile_path)?;
+
+    println!("  FROM: {}", modelfile.from);
+
+    if let Some(ref system) = modelfile.system {
+        let preview = if system.len() > 50 {
+            format!("{}...", &system[..50])
+        } else {
+            system.clone()
+        };
+        println!("  SYSTEM: {}", preview.replace('\n', " "));
+    }
+
+    if !modelfile.parameters.is_empty() {
+        println!("  Parameters: {}", modelfile.parameters.len());
+    }
+
+    if modelfile.gpu_layers.is_some() || modelfile.flash_attention.is_some() {
+        println!("  Mullama extensions: enabled");
+    }
+
+    // Resolve the base model
+    let base_model_path = resolve_base_model(&modelfile.from, download, show_progress).await?;
+
+    println!();
+    println!("Base model: {}", base_model_path.display());
+
+    // Create the model directory
+    let mullama_dir = dirs::home_dir()
+        .map(|h| h.join(".mullama").join("models"))
+        .unwrap_or_else(|| PathBuf::from(".mullama/models"));
+
+    std::fs::create_dir_all(&mullama_dir)?;
+
+    let model_dir = mullama_dir.join(name);
+    std::fs::create_dir_all(&model_dir)?;
+
+    // Save the Mullamafile
+    let mullamafile_dest = model_dir.join("Mullamafile");
+    let mut saved_modelfile = modelfile.clone();
+    saved_modelfile.from = base_model_path.display().to_string();
+    saved_modelfile.save(&mullamafile_dest)?;
+
+    // Create a symlink or copy to the model
+    let model_link = model_dir.join("model.gguf");
+    if model_link.exists() {
+        std::fs::remove_file(&model_link)?;
+    }
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&base_model_path, &model_link)?;
+    }
+
+    #[cfg(windows)]
+    {
+        std::fs::copy(&base_model_path, &model_link)?;
+    }
+
+    // Create metadata
+    let metadata = serde_json::json!({
+        "name": name,
+        "created": chrono::Utc::now().to_rfc3339(),
+        "base_model": base_model_path.display().to_string(),
+        "system": modelfile.system,
+        "parameters": modelfile.parameters.iter()
+            .map(|(k, v)| (k.clone(), v.to_string()))
+            .collect::<std::collections::HashMap<_, _>>(),
+        "gpu_layers": modelfile.gpu_layers,
+        "flash_attention": modelfile.flash_attention,
+    });
+
+    let metadata_path = model_dir.join("metadata.json");
+    std::fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+
+    println!();
+    println!("Created model '{}' successfully!", name);
+    println!();
+    println!("Model location: {}", model_dir.display());
+    println!();
+    println!("To use this model:");
+    println!("  mullama serve --model {}", model_link.display());
+    println!("  mullama run --model {} \"Hello!\"", name);
+
+    Ok(())
+}
+
+/// Resolve a base model reference to a local path
+async fn resolve_base_model(
+    from: &str,
+    download: bool,
+    show_progress: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Check if it's a local path
+    let path = PathBuf::from(from);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    // Check if it's an HF spec
+    if from.starts_with("hf:") {
+        if !download {
+            return Err("Base model is HuggingFace spec but --download=false".into());
+        }
+
+        println!();
+        println!("Downloading base model from HuggingFace...");
+        let (_, resolved_path) = resolve_model_path(from, show_progress).await?;
+        return Ok(resolved_path);
+    }
+
+    // Try to resolve as an alias
+    let resolved = resolve_model_name(from);
+    match resolved {
+        ResolvedModel::LocalPath(p) => {
+            if p.exists() {
+                Ok(p)
+            } else {
+                Err(format!("Local model not found: {}", p.display()).into())
+            }
+        }
+        ResolvedModel::HuggingFace { spec, .. } => {
+            if !download {
+                return Err(format!(
+                    "Model '{}' needs to be downloaded. Use --download=true or run 'mullama pull {}'",
+                    from, from
+                ).into());
+            }
+
+            println!();
+            println!("Downloading '{}' from HuggingFace...", from);
+            let (_, resolved_path) = resolve_model_path(&spec, show_progress).await?;
+            Ok(resolved_path)
+        }
+        ResolvedModel::Unknown(name) => {
+            // Check if it's cached
+            let downloader = HfDownloader::new()?;
+            let cached = downloader.list_cached();
+
+            for model in cached {
+                let short_name = format!("{}:{}",
+                    model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                    model.filename.trim_end_matches(".gguf"));
+
+                if model.filename == name
+                    || short_name == name
+                    || model.filename.trim_end_matches(".gguf") == name
+                {
+                    return Ok(model.local_path);
+                }
+            }
+
+            Err(format!(
+                "Unknown model '{}'. Use a local path, HF spec (hf:owner/repo), or a known alias.",
+                name
+            ).into())
+        }
+    }
+}
+
+/// Copy/rename a model
+async fn copy_model(source: &str, destination: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mullama_dir = dirs::home_dir()
+        .map(|h| h.join(".mullama").join("models"))
+        .unwrap_or_else(|| PathBuf::from(".mullama/models"));
+
+    // Find source model
+    let source_dir = mullama_dir.join(source);
+    let source_mullamafile = source_dir.join("Mullamafile");
+
+    if !source_dir.exists() {
+        // Try to find in cache
+        let downloader = HfDownloader::new()?;
+        let cached = downloader.list_cached();
+
+        let mut found = None;
+        for model in &cached {
+            let short_name = format!("{}:{}",
+                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model.filename.trim_end_matches(".gguf"));
+
+            if model.filename == source
+                || short_name == source
+                || model.filename.trim_end_matches(".gguf") == source
+            {
+                found = Some(model);
+                break;
+            }
+        }
+
+        if let Some(model) = found {
+            // Create a new model from the cached one
+            let dest_dir = mullama_dir.join(destination);
+            std::fs::create_dir_all(&dest_dir)?;
+
+            // Create Mullamafile
+            let modelfile = Modelfile::from_model(model.local_path.display().to_string());
+            modelfile.save(dest_dir.join("Mullamafile"))?;
+
+            // Create symlink
+            let model_link = dest_dir.join("model.gguf");
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&model.local_path, &model_link)?;
+            #[cfg(windows)]
+            std::fs::copy(&model.local_path, &model_link)?;
+
+            // Create metadata
+            let metadata = serde_json::json!({
+                "name": destination,
+                "created": chrono::Utc::now().to_rfc3339(),
+                "copied_from": source,
+                "base_model": model.local_path.display().to_string(),
+            });
+            std::fs::write(dest_dir.join("metadata.json"), serde_json::to_string_pretty(&metadata)?)?;
+
+            println!("Copied '{}' to '{}'", source, destination);
+            println!("Model location: {}", dest_dir.display());
+            return Ok(());
+        }
+
+        return Err(format!("Model '{}' not found", source).into());
+    }
+
+    // Copy custom model
+    let dest_dir = mullama_dir.join(destination);
+
+    if dest_dir.exists() {
+        return Err(format!("Destination '{}' already exists", destination).into());
+    }
+
+    // Copy directory contents
+    std::fs::create_dir_all(&dest_dir)?;
+
+    for entry in std::fs::read_dir(&source_dir)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest_dir.join(entry.file_name());
+
+        if src_path.is_file() {
+            std::fs::copy(&src_path, &dest_path)?;
+        } else if src_path.is_symlink() {
+            let target = std::fs::read_link(&src_path)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &dest_path)?;
+            #[cfg(windows)]
+            std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+
+    // Update metadata
+    let metadata_path = dest_dir.join("metadata.json");
+    if metadata_path.exists() {
+        let content = std::fs::read_to_string(&metadata_path)?;
+        let mut metadata: serde_json::Value = serde_json::from_str(&content)?;
+        metadata["name"] = serde_json::json!(destination);
+        metadata["copied_from"] = serde_json::json!(source);
+        metadata["copied_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+        std::fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+    }
+
+    println!("Copied '{}' to '{}'", source, destination);
+    println!("Model location: {}", dest_dir.display());
+
+    Ok(())
+}
+
+// ==================== Daemon Management ====================
+
+/// Handle daemon management actions
+fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        DaemonAction::Start {
+            http_port,
+            gpu_layers,
+            context_size,
+            socket,
+        } => {
+            daemon_start(&socket, http_port, gpu_layers, context_size)?;
+        }
+
+        DaemonAction::Stop { socket, force: _ } => {
+            daemon_stop(&socket)?;
+        }
+
+        DaemonAction::Restart { socket } => {
+            daemon_restart(&socket)?;
+        }
+
+        DaemonAction::Status { socket, json } => {
+            daemon_show_status(&socket, json)?;
+        }
+
+        DaemonAction::Logs { lines, follow } => {
+            daemon_logs(lines, follow)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Start the daemon in background
+fn daemon_start(
+    socket: &str,
+    http_port: u16,
+    gpu_layers: i32,
+    context_size: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Check if already running
+    if is_daemon_running(socket) {
+        println!("Daemon is already running.");
+        if let Ok(info) = daemon_status(socket) {
+            println!("  Version: {}", info.version);
+            println!("  Uptime:  {}s", info.uptime_secs);
+            println!("  Models:  {}", info.models_loaded);
+        }
+        return Ok(());
+    }
+
+    println!("Starting Mullama daemon...");
+
+    let config = SpawnConfig {
+        socket: socket.to_string(),
+        http_port,
+        gpu_layers,
+        context_size,
+        background: true,
+        log_file: Some(default_log_path()),
+        ..Default::default()
+    };
+
+    match spawn_daemon(&config) {
+        SpawnResult::AlreadyRunning => {
+            println!("Daemon is already running.");
+        }
+        SpawnResult::Spawned { pid } => {
+            // Wait for daemon to be ready
+            print!("Waiting for daemon to start");
+            io::stdout().flush()?;
+
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(30);
+
+            while start.elapsed() < timeout {
+                if is_daemon_running(socket) {
+                    println!(" OK");
+                    println!();
+                    println!("Daemon started successfully!");
+                    if let Some(pid) = pid {
+                        println!("  PID:     {}", pid);
+                    }
+                    println!("  Socket:  {}", socket);
+                    println!("  HTTP:    http://127.0.0.1:{}", http_port);
+                    println!("  Logs:    {}", default_log_path().display());
+                    return Ok(());
+                }
+                print!(".");
+                io::stdout().flush()?;
+                std::thread::sleep(Duration::from_millis(500));
+            }
+
+            println!(" FAILED");
+            eprintln!("Daemon did not start within {} seconds.", timeout.as_secs());
+            eprintln!("Check logs at: {}", default_log_path().display());
+        }
+        SpawnResult::Failed(e) => {
+            eprintln!("Failed to start daemon: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Stop the daemon
+fn daemon_stop(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !is_daemon_running(socket) {
+        println!("Daemon is not running.");
+        return Ok(());
+    }
+
+    print!("Stopping daemon... ");
+    io::stdout().flush()?;
+
+    match stop_daemon(socket) {
+        Ok(()) => {
+            // Wait for daemon to stop
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(10);
+
+            while start.elapsed() < timeout {
+                if !is_daemon_running(socket) {
+                    println!("OK");
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+
+            println!("TIMEOUT");
+            eprintln!("Daemon did not stop within {} seconds.", timeout.as_secs());
+        }
+        Err(e) => {
+            println!("FAILED");
+            eprintln!("Error: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Restart the daemon
+fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Get current config from running daemon if possible
+    let (http_port, gpu_layers, context_size) = if let Ok(info) = daemon_status(socket) {
+        let port = info
+            .http_endpoint
+            .and_then(|e| e.split(':').last().and_then(|p| p.parse().ok()))
+            .unwrap_or(8080);
+        (port, 0, 4096) // We don't have these from status
+    } else {
+        (8080, 0, 4096)
+    };
+
+    // Stop
+    if is_daemon_running(socket) {
+        println!("Stopping daemon...");
+        daemon_stop(socket)?;
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // Start
+    daemon_start(socket, http_port, gpu_layers, context_size)?;
+
+    Ok(())
+}
+
+/// Show daemon status
+fn daemon_show_status(socket: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !is_daemon_running(socket) {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "running": false,
+                    "socket": socket,
+                }))?
+            );
+        } else {
+            println!("Daemon is not running.");
+            println!();
+            println!("Start with: mullama daemon start");
+        }
+        return Ok(());
+    }
+
+    match daemon_status(socket) {
+        Ok(info) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "running": true,
+                        "version": info.version,
+                        "uptime_secs": info.uptime_secs,
+                        "models_loaded": info.models_loaded,
+                        "socket": info.socket,
+                        "http_endpoint": info.http_endpoint,
+                    }))?
+                );
+            } else {
+                println!("Mullama Daemon Status");
+                println!("=====================");
+                println!("Running:     Yes");
+                println!("Version:     {}", info.version);
+                println!("Uptime:      {}s", info.uptime_secs);
+                println!("Models:      {}", info.models_loaded);
+                println!("Socket:      {}", info.socket);
+                if let Some(ref http) = info.http_endpoint {
+                    println!("HTTP:        {}", http);
+                }
+                println!("Logs:        {}", default_log_path().display());
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to get status: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Show daemon logs
+fn daemon_logs(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let log_path = default_log_path();
+
+    if !log_path.exists() {
+        println!("No log file found at: {}", log_path.display());
+        return Ok(());
+    }
+
+    if follow {
+        // Use tail -f
+        let status = std::process::Command::new("tail")
+            .arg("-f")
+            .arg("-n")
+            .arg(lines.to_string())
+            .arg(&log_path)
+            .status()?;
+
+        if !status.success() {
+            eprintln!("Failed to follow logs");
+        }
+    } else {
+        // Read last N lines
+        let file = std::fs::File::open(&log_path)?;
+        let reader = std::io::BufReader::new(file);
+        let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+
+        let start = if all_lines.len() > lines {
+            all_lines.len() - lines
+        } else {
+            0
+        };
+
+        for line in &all_lines[start..] {
+            println!("{}", line);
         }
     }
 

@@ -1,0 +1,31 @@
+# Mullama Daemon systemd user service
+# Install to: ~/.config/systemd/user/mullamad.service
+# Enable with: systemctl --user enable mullamad
+# Start with: systemctl --user start mullamad
+
+[Unit]
+Description=Mullama LLM Daemon
+Documentation=https://github.com/neul-labs/mullama
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mullama serve
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=MULLAMA_HOST=127.0.0.1
+Environment=MULLAMA_PORT=11434
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mullamad
+
+# Resource limits
+MemoryMax=90%
+CPUQuota=100%
+
+[Install]
+WantedBy=default.target

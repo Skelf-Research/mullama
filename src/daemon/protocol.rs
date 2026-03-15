@@ -3,7 +3,6 @@
 //! Uses a JSON-based protocol over nng sockets for high-performance IPC.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Request messages from client to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
