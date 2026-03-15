@@ -1,0 +1,56 @@
+{
+  "name": "mullama",
+  "version": "0.1.0",
+  "description": "High-performance Node.js bindings for Mullama LLM library - local inference with GGUF models",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "mullama.*.node"
+  ],
+  "napi": {
+    "name": "mullama",
+    "triples": {
+      "additional": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-pc-windows-msvc"
+      ]
+    }
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "node --test tests/",
+    "universal": "napi universal",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "engines": {
+    "node": ">= 16"
+  },
+  "keywords": [
+    "llm",
+    "llama",
+    "gguf",
+    "inference",
+    "ai",
+    "machine-learning",
+    "native",
+    "napi"
+  ],
+  "author": "Neul Labs <hello@neul.uk>",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neul-labs/mullama"
+  }
+}

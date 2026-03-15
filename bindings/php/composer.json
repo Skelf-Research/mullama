@@ -1,0 +1,41 @@
+{
+    "name": "mullama/mullama",
+    "description": "High-performance PHP bindings for the Mullama LLM library - local inference with GGUF models",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Neul Labs",
+            "email": "hello@neul.uk"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "ext-ffi": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0 || ^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Mullama\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Mullama\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit --colors=always"
+    },
+    "minimum-stability": "stable",
+    "keywords": [
+        "llm",
+        "llama",
+        "gguf",
+        "inference",
+        "ai",
+        "machine-learning"
+    ]
+}

@@ -1,0 +1,30 @@
+[package]
+name = "mullama-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI FFI layer for Mullama - enables bindings for Node.js, Python, PHP, Go"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/neul-labs/mullama"
+readme = "README.md"
+keywords = ["llm", "ffi", "bindings", "llama"]
+categories = ["api-bindings", "external-ffi-bindings"]
+
+[lib]
+name = "mullama_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+mullama = { path = "../.." }
+libc = "0.2"
+num_cpus = "1.0"
+
+[build-dependencies]
+cbindgen = "0.26"
+
+[features]
+default = []
+cuda = []
+metal = []
+
+[package.metadata.docs.rs]
+all-features = true
