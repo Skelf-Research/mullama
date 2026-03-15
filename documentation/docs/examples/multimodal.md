@@ -1,326 +1,436 @@
-# Multimodal Examples
+---
+title: "Tutorial: Multimodal Processing"
+description: Process images and text together using vision-language models with Mullama for captioning, visual QA, and batch image analysis.
+---
 
-Examples using vision-language and audio models.
+# Multimodal Processing
 
-## Image Description
+Process images alongside text using vision-language models (VLMs). This tutorial covers image captioning, visual question answering, supported formats, image preprocessing, and batch processing.
 
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
+---
 
-fn main() -> Result<(), mullama::MullamaError> {
-    // Load VLM model
-    let model = Arc::new(Model::load("llava-v1.5-7b-q4.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
+## What You'll Build
 
-    // Create multimodal context
-    let mut mtmd = MtmdContext::new(
-        "llava-v1.5-7b-mmproj-f16.gguf",
-        &model,
-        MtmdParams::default()
-    )?;
+A multimodal processing pipeline that:
 
-    // Load image
-    let image = mtmd.bitmap_from_file("photo.jpg")?;
-    println!("Image size: {}x{}", image.width(), image.height());
+- Loads and processes images in various formats (JPEG, PNG, WebP)
+- Generates image captions and descriptions
+- Answers questions about image content
+- Preprocesses images for optimal model performance
+- Processes multiple images in batch
+- Handles vision model loading and configuration
 
-    // Create prompt with image
-    let chunks = mtmd.tokenize(
-        "<|im_start|>user\nDescribe this image in detail.<__media__><|im_end|>\n<|im_start|>assistant\n",
-        &[&image]
-    )?;
+---
 
-    // Evaluate
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
+## Prerequisites
 
-    // Generate description
-    print!("Description: ");
-    ctx.generate_streaming_continue(n_past, 256, |token| {
-        print!("{}", token);
-        std::io::Write::flush(&mut std::io::stdout()).ok();
-        true
-    })?;
-    println!();
+- Mullama with `multimodal` feature enabled
+- A vision-capable GGUF model (e.g., LLaVA, BakLLaVA)
+- Image processing dependencies:
 
-    Ok(())
-}
+=== "Linux (Ubuntu/Debian)"
+    ```bash
+    sudo apt install -y libpng-dev libjpeg-dev libtiff-dev libwebp-dev
+    ```
+
+=== "macOS"
+    ```bash
+    brew install libpng jpeg-turbo webp
+    ```
+
+- Rust toolchain (multimodal is primarily a Rust-native feature)
+- Features: `multimodal`, optionally `format-conversion`
+
+```bash
+# Pull a vision-capable model
+mullama pull llava:7b
 ```
 
-## Image Q&A
+---
+
+## Vision Model Requirements
+
+Not all models support multimodal input. You need a vision-language model:
+
+| Model | Size | Description |
+|-------|------|-------------|
+| `llava:7b` | 4.7 GB | LLaVA 1.5 -- general-purpose vision |
+| `llava:13b` | 8.1 GB | LLaVA 1.5 -- higher quality |
+| `bakllava:7b` | 4.7 GB | BakLLaVA -- improved architecture |
+| `llava-llama3:8b` | 5.0 GB | LLaVA with Llama 3 backbone |
+
+Vision models consist of two components:
+
+- **Vision encoder** -- Processes images into embeddings (e.g., CLIP ViT)
+- **Language model** -- Generates text conditioned on vision embeddings
+
+---
+
+## Step 1: Load a Vision Model
 
 ```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
-use std::io::{self, Write};
-
-fn main() -> Result<(), mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
-
-    // Load image once
-    let image = mtmd.bitmap_from_file("image.jpg")?;
-
-    loop {
-        print!("Question (or 'quit'): ");
-        io::stdout().flush()?;
-
-        let mut question = String::new();
-        io::stdin().read_line(&mut question)?;
-        let question = question.trim();
-
-        if question.is_empty() || question == "quit" {
-            break;
-        }
-
-        // Build prompt
-        let prompt = format!(
-            "<|im_start|>user\n{}<__media__><|im_end|>\n<|im_start|>assistant\n",
-            question
-        );
-
-        // Tokenize and evaluate
-        let chunks = mtmd.tokenize(&prompt, &[&image])?;
-        let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-
-        // Generate answer
-        print!("Answer: ");
-        ctx.generate_streaming_continue(n_past, 200, |token| {
-            print!("{}", token);
-            io::stdout().flush().ok();
-            true
-        })?;
-        println!("\n");
-
-        ctx.clear()?;
-    }
-
-    Ok(())
-}
-```
-
-## Compare Two Images
-
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
-
-fn main() -> Result<(), mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
-
-    // Load both images
-    let image1 = mtmd.bitmap_from_file("before.jpg")?;
-    let image2 = mtmd.bitmap_from_file("after.jpg")?;
-
-    // Compare with two media markers
-    let prompt = "<|im_start|>user\nCompare these two images. First image:<__media__>\nSecond image:<__media__>\nWhat are the differences?<|im_end|>\n<|im_start|>assistant\n";
-
-    let chunks = mtmd.tokenize(prompt, &[&image1, &image2])?;
-    println!("Created {} chunks", chunks.len());
-
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-
-    let response = ctx.generate_continue(n_past, 300)?;
-    println!("Comparison:\n{}", response);
-
-    Ok(())
-}
-```
-
-## OCR / Text Extraction
-
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
-
-fn extract_text(image_path: &str) -> Result<String, mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
-
-    let image = mtmd.bitmap_from_file(image_path)?;
-
-    let chunks = mtmd.tokenize(
-        "<|im_start|>user\nExtract all text from this image. Output only the text, nothing else.<__media__><|im_end|>\n<|im_start|>assistant\n",
-        &[&image]
-    )?;
-
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-    ctx.generate_continue(n_past, 500)
-}
-
-fn main() -> Result<(), mullama::MullamaError> {
-    let text = extract_text("document.png")?;
-    println!("Extracted text:\n{}", text);
-    Ok(())
-}
-```
-
-## Image Classification
-
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
-
-fn classify_image(image_path: &str, categories: &[&str]) -> Result<String, mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
-
-    let image = mtmd.bitmap_from_file(image_path)?;
-
-    let categories_str = categories.join(", ");
-    let prompt = format!(
-        "<|im_start|>user\nClassify this image into one of these categories: {}. Respond with only the category name.<__media__><|im_end|>\n<|im_start|>assistant\n",
-        categories_str
-    );
-
-    let chunks = mtmd.tokenize(&prompt, &[&image])?;
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-
-    ctx.generate_continue(n_past, 20)
-}
-
-fn main() -> Result<(), mullama::MullamaError> {
-    let categories = ["cat", "dog", "bird", "car", "building", "landscape"];
-    let result = classify_image("photo.jpg", &categories)?;
-    println!("Classification: {}", result.trim());
-    Ok(())
-}
-```
-
-## Process Multiple Images
-
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
+use mullama::{MultimodalProcessor, ImageInput};
 use std::path::Path;
 
-fn main() -> Result<(), mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mtmd_params = MtmdParams::default();
+// Initialize the multimodal processor with a vision model
+let processor = MultimodalProcessor::new()
+    .model_path("./llava-7b.Q4_K_M.gguf")
+    .enable_image_processing()
+    .n_ctx(2048)
+    .n_gpu_layers(-1)  // GPU acceleration
+    .build()?;
 
-    let image_dir = Path::new("./images");
-    let mut descriptions = Vec::new();
+println!("Vision model loaded: {}", processor.model_name());
+println!("Image support: {}", processor.supports_images());
+```
 
-    for entry in std::fs::read_dir(image_dir)? {
-        let path = entry?.path();
-        if path.extension().map_or(false, |e| e == "jpg" || e == "png") {
-            // Create fresh context for each image
-            let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-            let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, mtmd_params.clone())?;
+---
 
-            let image = mtmd.bitmap_from_file(path.to_str().unwrap())?;
-            let chunks = mtmd.tokenize(
-                "Describe this image briefly: <__media__>",
-                &[&image]
+## Step 2: Image Loading and Preprocessing
+
+Load images and prepare them for the vision encoder.
+
+```rust
+use mullama::{ImageInput, ImageFormat};
+
+// Load image from file
+let image = ImageInput::from_file("./photo.jpg")?;
+println!("Image size: {}x{}", image.width(), image.height());
+println!("Format: {:?}", image.format());
+
+// Load from bytes (e.g., from HTTP request)
+let bytes = std::fs::read("./photo.png")?;
+let image = ImageInput::from_bytes(&bytes, ImageFormat::Png)?;
+
+// Load from URL (requires format-conversion feature)
+let image = ImageInput::from_url("https://example.com/image.jpg").await?;
+
+// Preprocessing: resize for optimal model input
+let preprocessed = image
+    .resize(336, 336)         // Standard CLIP input size
+    .normalize()              // Normalize pixel values
+    .to_rgb()?;               // Ensure RGB format
+
+println!("Preprocessed: {}x{} RGB", preprocessed.width(), preprocessed.height());
+```
+
+### Supported Image Formats
+
+| Format | Extension | Notes |
+|--------|-----------|-------|
+| JPEG | `.jpg`, `.jpeg` | Lossy, most common |
+| PNG | `.png` | Lossless, supports transparency |
+| WebP | `.webp` | Modern format, good compression |
+| TIFF | `.tif`, `.tiff` | High quality, scientific imaging |
+| BMP | `.bmp` | Uncompressed, large files |
+
+---
+
+## Step 3: Image Captioning
+
+Generate descriptive captions for images.
+
+```rust
+use mullama::{MultimodalProcessor, ImageInput, SamplerParams};
+
+fn caption_image(processor: &MultimodalProcessor, image_path: &str) -> Result<String, MullamaError> {
+    let image = ImageInput::from_file(image_path)?;
+
+    // Simple captioning prompt
+    let caption = processor.generate_with_image(
+        &image,
+        "Describe this image in detail.",
+        200,  // max_tokens
+        Some(SamplerParams {
+            temperature: 0.3,    // Low temperature for factual descriptions
+            top_p: 0.9,
+            ..Default::default()
+        }),
+    )?;
+
+    println!("Caption: {}", caption.trim());
+    Ok(caption.trim().to_string())
+}
+
+// Usage
+let caption = caption_image(&processor, "./sunset.jpg")?;
+```
+
+---
+
+## Step 4: Visual Question Answering
+
+Ask questions about image content.
+
+```rust
+fn visual_qa(
+    processor: &MultimodalProcessor,
+    image_path: &str,
+    question: &str,
+) -> Result<String, MullamaError> {
+    let image = ImageInput::from_file(image_path)?;
+
+    let answer = processor.generate_with_image(
+        &image,
+        question,
+        150,
+        Some(SamplerParams {
+            temperature: 0.2,    // Very focused for factual answers
+            top_k: 20,
+            ..Default::default()
+        }),
+    )?;
+
+    println!("Q: {}", question);
+    println!("A: {}", answer.trim());
+    Ok(answer.trim().to_string())
+}
+
+// Ask different questions about the same image
+let image_path = "./street_scene.jpg";
+visual_qa(&processor, image_path, "How many people are in this image?")?;
+visual_qa(&processor, image_path, "What is the weather like?")?;
+visual_qa(&processor, image_path, "What colors are prominent?")?;
+visual_qa(&processor, image_path, "Is this indoors or outdoors?")?;
+```
+
+---
+
+## Step 5: Streaming Image Responses
+
+Stream generated text for longer descriptions.
+
+```rust
+use mullama::{MultimodalProcessor, ImageInput, StreamConfig, TokenStream};
+use futures::StreamExt;
+use std::io::Write;
+
+async fn stream_image_description(
+    processor: &MultimodalProcessor,
+    image_path: &str,
+) -> Result<String, MullamaError> {
+    let image = ImageInput::from_file(image_path)?;
+
+    let config = StreamConfig::default()
+        .max_tokens(300)
+        .temperature(0.5);
+
+    let prompt = "Provide a detailed description of this image, including colors, \
+                  objects, people, setting, and mood.";
+
+    let mut stream = processor.stream_with_image(&image, prompt, config).await?;
+    let mut response = String::new();
+
+    print!("Description: ");
+    while let Some(token) = stream.next().await {
+        let token = token?;
+        print!("{}", token.text);
+        std::io::stdout().flush().unwrap();
+        response.push_str(&token.text);
+        if token.is_final { break; }
+    }
+    println!();
+
+    Ok(response)
+}
+```
+
+---
+
+## Step 6: Batch Image Processing
+
+Process multiple images efficiently.
+
+```rust
+use mullama::{MultimodalProcessor, ImageInput, MullamaError};
+use std::path::PathBuf;
+
+fn batch_caption_images(
+    processor: &MultimodalProcessor,
+    image_paths: &[PathBuf],
+    prompt: &str,
+) -> Vec<Result<(PathBuf, String), MullamaError>> {
+    let start = std::time::Instant::now();
+    let mut results = Vec::new();
+
+    for (i, path) in image_paths.iter().enumerate() {
+        print!("[{}/{}] Processing: {} ... ",
+            i + 1, image_paths.len(), path.display());
+        std::io::stdout().flush().unwrap();
+
+        let result = (|| {
+            let image = ImageInput::from_file(path)?;
+            let caption = processor.generate_with_image(
+                &image, prompt, 100,
+                Some(SamplerParams { temperature: 0.3, ..Default::default() }),
             )?;
+            Ok((path.clone(), caption.trim().to_string()))
+        })();
 
-            let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-            let desc = ctx.generate_continue(n_past, 100)?;
-
-            descriptions.push((path.file_name().unwrap().to_string_lossy().to_string(), desc));
-            println!("Processed: {}", path.display());
+        match &result {
+            Ok((_, caption)) => println!("\"{}\"", &caption[..caption.len().min(60)]),
+            Err(e) => println!("Error: {}", e),
         }
+        results.push(result);
     }
 
-    println!("\n--- Results ---");
-    for (file, desc) in descriptions {
-        println!("{}: {}", file, desc.trim());
-    }
+    let elapsed = start.elapsed();
+    let successful = results.iter().filter(|r| r.is_ok()).count();
+    println!("\nProcessed: {}/{} images in {:.2}s",
+        successful, image_paths.len(), elapsed.as_secs_f64());
 
-    Ok(())
+    results
 }
+
+// Usage
+let paths: Vec<PathBuf> = std::fs::read_dir("./images/")?
+    .filter_map(|e| e.ok())
+    .filter(|e| {
+        let ext = e.path().extension().and_then(|e| e.to_str()).unwrap_or("");
+        matches!(ext, "jpg" | "jpeg" | "png" | "webp")
+    })
+    .map(|e| e.path())
+    .collect();
+
+let results = batch_caption_images(&processor, &paths, "Describe this image briefly:");
 ```
 
-## Load Image from URL
+---
+
+## Complete Working Example
 
 ```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
+use mullama::prelude::*;
+use mullama::{MultimodalProcessor, ImageInput, SamplerParams, MullamaError};
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
+    println!("Mullama Multimodal Demo");
+    println!("=======================\n");
 
-    // Download image
-    let response = reqwest::blocking::get("https://example.com/image.jpg")?;
-    let image_data = response.bytes()?;
+    #[cfg(feature = "multimodal")]
+    {
+        let model_path = std::env::args().nth(1)
+            .unwrap_or_else(|| "llava-7b.Q4_K_M.gguf".to_string());
+        let image_path = std::env::args().nth(2)
+            .unwrap_or_else(|| "sample.jpg".to_string());
 
-    // Load from buffer
-    let image = mtmd.bitmap_from_buffer(&image_data)?;
+        // Initialize processor
+        println!("Loading vision model...");
+        let processor = MultimodalProcessor::new()
+            .model_path(&model_path)
+            .enable_image_processing()
+            .n_ctx(2048)
+            .n_gpu_layers(-1)
+            .build()?;
+        println!("Model ready!\n");
 
-    let chunks = mtmd.tokenize("What's in this image? <__media__>", &[&image])?;
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
+        // Load image
+        let image = ImageInput::from_file(&image_path)?;
+        println!("Image: {} ({}x{})\n", image_path, image.width(), image.height());
 
-    let response = ctx.generate_continue(n_past, 200)?;
-    println!("{}", response);
+        // Caption
+        println!("--- Captioning ---");
+        let caption = processor.generate_with_image(
+            &image,
+            "Describe this image in one sentence.",
+            100,
+            Some(SamplerParams { temperature: 0.3, ..Default::default() }),
+        )?;
+        println!("Caption: {}\n", caption.trim());
 
-    Ok(())
-}
-```
+        // Visual QA
+        println!("--- Visual QA ---");
+        let questions = [
+            "What objects can you see?",
+            "What colors are prominent?",
+            "Describe the mood or atmosphere.",
+        ];
 
-## Custom Image Processing
+        for question in &questions {
+            let answer = processor.generate_with_image(
+                &image, question, 80,
+                Some(SamplerParams { temperature: 0.2, ..Default::default() }),
+            )?;
+            println!("Q: {}", question);
+            println!("A: {}\n", answer.trim());
+        }
 
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams, Bitmap};
-use std::sync::Arc;
-use image::{self, GenericImageView};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model = Arc::new(Model::load("llava-model.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
-    let mut mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
-
-    // Load and preprocess with image crate
-    let img = image::open("photo.jpg")?;
-
-    // Resize
-    let img = img.resize(800, 600, image::imageops::FilterType::Lanczos3);
-
-    // Convert to RGB bytes
-    let rgb = img.to_rgb8();
-    let (width, height) = rgb.dimensions();
-    let pixels: Vec<u8> = rgb.into_raw();
-
-    // Create bitmap from raw pixels
-    let bitmap = Bitmap::from_rgb(width, height, &pixels)?;
-
-    // Process normally
-    let chunks = mtmd.tokenize("Describe this image: <__media__>", &[&bitmap])?;
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-
-    let response = ctx.generate_continue(n_past, 200)?;
-    println!("{}", response);
-
-    Ok(())
-}
-```
-
-## Check Model Capabilities
-
-```rust
-use mullama::{Model, MtmdContext, MtmdParams};
-use std::sync::Arc;
-
-fn main() -> Result<(), mullama::MullamaError> {
-    let model = Arc::new(Model::load("multimodal-model.gguf")?);
-    let mtmd = MtmdContext::new("mmproj.gguf", &model, MtmdParams::default())?;
-
-    println!("Model capabilities:");
-    println!("  Vision: {}", mtmd.supports_vision());
-    println!("  Audio: {}", mtmd.supports_audio());
-
-    if let Some(rate) = mtmd.audio_bitrate() {
-        println!("  Audio sample rate: {} Hz", rate);
+        // Detailed description
+        println!("--- Detailed Description ---");
+        let description = processor.generate_with_image(
+            &image,
+            "Provide a detailed, structured description of this image.",
+            300,
+            Some(SamplerParams { temperature: 0.5, ..Default::default() }),
+        )?;
+        println!("{}", description.trim());
     }
 
-    println!("  Uses M-RoPE: {}", mtmd.uses_mrope());
-    println!("  Needs non-causal: {}", mtmd.needs_non_causal());
+    #[cfg(not(feature = "multimodal"))]
+    {
+        println!("This example requires the 'multimodal' feature.");
+        println!("Run with: cargo run --example multimodal --features multimodal");
+    }
 
     Ok(())
 }
 ```
+
+---
+
+## Python Bindings (Experimental)
+
+Multimodal support in Python bindings is under development. Currently you can use the daemon for multimodal processing:
+
+```python
+import requests
+import base64
+
+# Using the Mullama daemon's multimodal endpoint
+def describe_image(image_path: str) -> str:
+    with open(image_path, "rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode()
+
+    response = requests.post("http://localhost:8080/v1/chat/completions", json={
+        "model": "llava:7b",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this image."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
+            ]
+        }],
+        "max_tokens": 200
+    })
+
+    return response.json()["choices"][0]["message"]["content"]
+
+# Usage
+caption = describe_image("./photo.jpg")
+print(f"Caption: {caption}")
+```
+
+---
+
+## Image Preprocessing Tips
+
+| Parameter | Recommendation | Reason |
+|-----------|---------------|--------|
+| Resolution | 336x336 or 672x672 | Matches CLIP encoder training |
+| Format | RGB | Vision encoders expect 3 channels |
+| Normalization | ImageNet mean/std | Standard for CLIP-based models |
+| Aspect ratio | Preserve with padding | Avoids distortion |
+| File size | < 10 MB | Memory efficiency during loading |
+
+!!! warning "Model Compatibility"
+    Not all GGUF models support multimodal input. You need specifically trained vision-language models. Standard text-only models will produce errors when given image input. Check model documentation or metadata for `vision` or `multimodal` capabilities.
+
+---
+
+## What's Next
+
+- [Voice Assistant](voice-assistant.md) -- Combine vision with audio processing
+- [Batch Processing](batch.md) -- Process image collections at scale
+- [API Server](api-server.md) -- Serve multimodal endpoints over HTTP
+- [Guide: Multimodal](../guide/multimodal.md) -- In-depth multimodal architecture

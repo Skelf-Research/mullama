@@ -83,3 +83,6 @@ llama.cpp/*.a
 *.gcda
 lcov.info
 coverage/
+
+# MkDocs build output
+documentation/site/

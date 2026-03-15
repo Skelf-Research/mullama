@@ -1,280 +1,692 @@
-# Multimodal Support
+# Multimodal
 
-Mullama supports vision-language models (VLMs) and audio-language models through the `multimodal` feature.
+Process images and audio alongside text using vision-language models (VLMs) and audio-language models. Mullama supports multimodal inference with a unified API across image and audio inputs.
 
-## Enabling Multimodal
+!!! abstract "Feature Gate"
+    In Rust, enable the `multimodal` feature flag:
 
-Add the feature to your `Cargo.toml`:
+    ```toml
+    [dependencies]
+    mullama = { version = "0.1", features = ["multimodal"] }
 
-```toml
-[dependencies]
-mullama = { version = "0.1", features = ["multimodal"] }
-```
+    # For audio processing, also enable streaming-audio
+    mullama = { version = "0.1", features = ["multimodal", "streaming-audio"] }
+    ```
 
-## Vision-Language Models
+    Node.js and Python include multimodal support by default.
 
-### Supported Models
+## MultimodalProcessor Overview
 
-| Model | Size | Description |
-|-------|------|-------------|
-| NanoLLaVA | 0.5B | Tiny VLM for testing |
-| LLaVA 1.5 | 7B/13B | High quality image understanding |
-| LLaVA 1.6 | 7B/13B/34B | Improved visual reasoning |
-| Qwen-VL | 7B | Strong multilingual support |
-| InternVL | Various | State-of-the-art performance |
+The `MultimodalProcessor` is the central API for processing text, images, and audio together. It handles:
 
-### Basic Usage
+- Loading and preprocessing images into the format expected by vision encoders
+- Converting audio into the format expected by audio encoders
+- Combining multimodal inputs with text prompts
+- Routing to the appropriate encoder based on input type
 
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
+=== "Node.js"
 
-fn main() -> Result<(), mullama::MullamaError> {
-    // Load the text model
-    let model = Arc::new(Model::load("llava-v1.5-7b-q4.gguf")?);
-    let mut context = Context::new(model.clone(), ContextParams::default())?;
+    ```javascript
+    import { Model, MultimodalProcessor } from 'mullama';
 
-    // Create multimodal context with projector
-    let mtmd_params = MtmdParams::default();
-    let mut mtmd = MtmdContext::new(
-        "llava-v1.5-7b-mmproj-f16.gguf",
-        &model,
-        mtmd_params
+    const model = await Model.load('./llava-v1.6.gguf');
+    const processor = new MultimodalProcessor(model);
+
+    const response = await processor.generate({
+      text: "Describe this image in detail.",
+      images: ['./photo.jpg'],
+    });
+    console.log(response);
+    ```
+
+=== "Python"
+
+    ```python
+    from mullama import Model, MultimodalProcessor
+
+    model = Model.load("./llava-v1.6.gguf")
+    processor = MultimodalProcessor(model)
+
+    response = processor.generate(
+        text="Describe this image in detail.",
+        images=["./photo.jpg"],
+    )
+    print(response)
+    ```
+
+=== "Rust"
+
+    ```rust
+    use mullama::{Model, MultimodalProcessor};
+    use std::sync::Arc;
+
+    let model = Arc::new(Model::load("llava-v1.6.gguf")?);
+    let mut processor = MultimodalProcessor::new(model)?;
+
+    let response = processor.generate_with_image(
+        "Describe this image in detail.",
+        "photo.jpg",
+        200
     )?;
-
-    println!("Supports vision: {}", mtmd.supports_vision());
-    println!("Supports audio: {}", mtmd.supports_audio());
-
-    // Load image
-    let image = mtmd.bitmap_from_file("photo.jpg")?;
-    println!("Image size: {}x{}", image.width(), image.height());
-
-    // Tokenize with image
-    let chunks = mtmd.tokenize(
-        "Describe this image in detail: <__media__>",
-        &[&image]
-    )?;
-
-    println!("Created {} chunks", chunks.len());
-
-    // Evaluate chunks
-    let n_past = mtmd.eval_chunks(&mut context, &chunks, 0, 0, 512, true)?;
-
-    // Generate response
-    let response = context.generate_continue(n_past, 256)?;
     println!("{}", response);
+    ```
 
-    Ok(())
-}
-```
+=== "CLI"
 
-## Image Loading
+    ```bash
+    mullama run llava:13b "Describe this image in detail." --image ./photo.jpg
+    ```
 
-### From File
+## Image Input
 
-```rust
-let image = mtmd.bitmap_from_file("image.jpg")?;
-```
+### From File Path
 
-Supported formats: JPEG, PNG, BMP, GIF, WebP
+The simplest way to process an image:
+
+=== "Node.js"
+
+    ```javascript
+    const response = await processor.generate({
+      text: "What objects are in this image?",
+      images: ['./photo.jpg'],
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    response = processor.generate(
+        text="What objects are in this image?",
+        images=["./photo.jpg"],
+    )
+    ```
+
+=== "Rust"
+
+    ```rust
+    let response = processor.generate_with_image(
+        "What objects are in this image?",
+        "photo.jpg",
+        200
+    )?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run llava:13b "What objects are in this image?" --image ./photo.jpg
+    ```
 
 ### From Buffer
 
-```rust
-let image_data = std::fs::read("image.png")?;
-let image = mtmd.bitmap_from_buffer(&image_data)?;
-```
+Process images from memory (useful for web applications receiving uploads):
+
+=== "Node.js"
+
+    ```javascript
+    import { readFileSync } from 'fs';
+
+    const imageBuffer = readFileSync('./photo.jpg');
+
+    const response = await processor.generate({
+      text: "Describe this image.",
+      imageBuffers: [imageBuffer],
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    with open("./photo.jpg", "rb") as f:
+        image_buffer = f.read()
+
+    response = processor.generate(
+        text="Describe this image.",
+        image_buffers=[image_buffer],
+    )
+    ```
+
+=== "Rust"
+
+    ```rust
+    let image_data = std::fs::read("photo.jpg")?;
+
+    let response = processor.generate_with_image_buffer(
+        "Describe this image.",
+        &image_data,
+        200
+    )?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Pipe image data via stdin
+    cat photo.jpg | mullama run llava:13b "Describe this image." --image -
+    ```
 
 ### From Raw Pixels
 
-```rust
-use mullama::Bitmap;
+Process raw pixel data (useful for video frames or generated images):
 
-// RGB data: width * height * 3 bytes
-let pixels: Vec<u8> = generate_image();
-let image = Bitmap::from_rgb(width, height, &pixels)?;
-```
+=== "Node.js"
 
-## Multiple Images
+    ```javascript
+    import { RawImage } from 'mullama';
 
-Include multiple images in a single prompt:
+    // Raw RGBA pixels
+    const pixels = new Uint8Array(width * height * 4);
+    const image = new RawImage(pixels, width, height, 'rgba');
 
-```rust
-let image1 = mtmd.bitmap_from_file("photo1.jpg")?;
-let image2 = mtmd.bitmap_from_file("photo2.jpg")?;
+    const response = await processor.generate({
+      text: "What do you see?",
+      rawImages: [image],
+    });
+    ```
 
-// Use multiple markers
-let chunks = mtmd.tokenize(
-    "Compare these two images: <__media__> and <__media__>",
-    &[&image1, &image2]
-)?;
-```
+=== "Python"
 
-## Custom Media Markers
+    ```python
+    import numpy as np
+    from mullama import RawImage
 
-Change the default `<__media__>` marker:
+    # Raw RGBA pixels (numpy array)
+    pixels = np.zeros((height, width, 4), dtype=np.uint8)
+    image = RawImage(pixels, width, height, "rgba")
 
-```rust
-let params = MtmdParams {
-    media_marker: Some("<image>".to_string()),
-    ..Default::default()
-};
+    response = processor.generate(
+        text="What do you see?",
+        raw_images=[image],
+    )
+    ```
 
-let mtmd = MtmdContext::new(mmproj_path, &model, params)?;
+=== "Rust"
 
-// Now use <image> instead of <__media__>
-let chunks = mtmd.tokenize(
-    "What's in this picture? <image>",
-    &[&image]
-)?;
-```
+    ```rust
+    use mullama::multimodal::RawImage;
 
-## Audio Support
+    let pixels: Vec<u8> = vec![0; width * height * 4];
+    let image = RawImage::new(&pixels, width, height, 4)?;
 
-Some models support audio input:
+    let response = processor.generate_with_raw_image(
+        "What do you see?",
+        &image,
+        200
+    )?;
+    ```
 
-```rust
-// Check audio support
-if mtmd.supports_audio() {
-    let sample_rate = mtmd.audio_bitrate().unwrap();
-    println!("Audio sample rate: {} Hz", sample_rate);
+=== "CLI"
 
-    // Load audio file
-    let audio = mtmd.bitmap_from_file("speech.wav")?;
+    ```bash
+    # Raw pixel input is not available via CLI
+    # Use file path or buffer instead
+    mullama run llava:13b "What do you see?" --image ./image.png
+    ```
 
-    let chunks = mtmd.tokenize(
-        "Transcribe this audio: <__media__>",
-        &[&audio]
+## Supported Image Formats
+
+| Format | Extension | Notes |
+|--------|-----------|-------|
+| JPEG | `.jpg`, `.jpeg` | Most common, lossy compression |
+| PNG | `.png` | Lossless, supports transparency |
+| WebP | `.webp` | Modern format, good compression |
+| BMP | `.bmp` | Uncompressed bitmap |
+| GIF | `.gif` | First frame extracted for static analysis |
+| TIFF | `.tiff`, `.tif` | High-quality, large files |
+
+!!! info "Image Preprocessing"
+    Images are automatically resized and normalized to match the vision encoder's expected input dimensions. The original aspect ratio is preserved with padding. No manual preprocessing is required.
+
+## Vision Encoder Types
+
+Mullama supports multiple vision encoder architectures:
+
+| Encoder | Description | Models |
+|---------|-------------|--------|
+| CLIP | Contrastive Language-Image Pre-training | LLaVA, InternVL |
+| DINOv2 | Self-supervised vision transformer | Some research models |
+| SigLIP | Sigmoid-based CLIP variant | PaliGemma |
+
+The correct encoder is automatically selected based on the model's metadata. No configuration is needed.
+
+## Audio Input and Processing
+
+Process audio alongside text for speech understanding tasks:
+
+=== "Node.js"
+
+    ```javascript
+    import { Model, MultimodalProcessor } from 'mullama';
+
+    const model = await Model.load('./audio-model.gguf');
+    const processor = new MultimodalProcessor(model);
+
+    const response = await processor.generate({
+      text: "Transcribe this audio.",
+      audio: ['./recording.wav'],
+    });
+    console.log(response);
+    ```
+
+=== "Python"
+
+    ```python
+    from mullama import Model, MultimodalProcessor
+
+    model = Model.load("./audio-model.gguf")
+    processor = MultimodalProcessor(model)
+
+    response = processor.generate(
+        text="Transcribe this audio.",
+        audio=["./recording.wav"],
+    )
+    print(response)
+    ```
+
+=== "Rust"
+
+    ```rust
+    use mullama::{Model, MultimodalProcessor};
+
+    let model = Arc::new(Model::load("audio-model.gguf")?);
+    let mut processor = MultimodalProcessor::new(model)?;
+
+    let response = processor.generate_with_audio(
+        "Transcribe this audio.",
+        "recording.wav",
+        500
+    )?;
+    println!("{}", response);
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run audio-model "Transcribe this audio." --audio ./recording.wav
+    ```
+
+### Audio Formats
+
+| Format | Description | Sample Rates |
+|--------|-------------|--------------|
+| PCM16 | 16-bit signed integer | Any |
+| PCM32 | 32-bit signed integer | Any |
+| Float32 | 32-bit float | Any |
+| WAV | Waveform Audio | Any (auto-detected) |
+| MP3 | MPEG Layer 3 | Any (auto-decoded) |
+| FLAC | Free Lossless Audio | Any (auto-decoded) |
+
+!!! info "Audio Preprocessing"
+    Audio is automatically resampled to the model's expected sample rate (typically 16 kHz) and converted to mono if needed. The `format-conversion` feature handles all necessary format transformations.
+
+### Raw Audio Buffers
+
+Process audio from memory (e.g., from a microphone stream):
+
+=== "Node.js"
+
+    ```javascript
+    import { AudioBuffer } from 'mullama';
+
+    // Float32 PCM samples at 16kHz
+    const samples = new Float32Array(16000 * 5); // 5 seconds
+    const audio = new AudioBuffer(samples, 16000, 1);
+
+    const response = await processor.generate({
+      text: "What was said?",
+      audioBuffers: [audio],
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    import numpy as np
+    from mullama import AudioBuffer
+
+    # Float32 PCM samples at 16kHz
+    samples = np.zeros(16000 * 5, dtype=np.float32)  # 5 seconds
+    audio = AudioBuffer(samples, sample_rate=16000, channels=1)
+
+    response = processor.generate(
+        text="What was said?",
+        audio_buffers=[audio],
+    )
+    ```
+
+=== "Rust"
+
+    ```rust
+    use mullama::multimodal::AudioBuffer;
+
+    let samples: Vec<f32> = vec![0.0; 16000 * 5]; // 5 seconds
+    let audio = AudioBuffer::new(&samples, 16000, 1)?;
+
+    let response = processor.generate_with_audio_buffer(
+        "What was said?",
+        &audio,
+        500
+    )?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    # Record and process
+    mullama run audio-model "What was said?" --audio-device default --duration 5
+    ```
+
+## Batch Multimodal Processing
+
+Process multiple multimodal inputs efficiently:
+
+=== "Node.js"
+
+    ```javascript
+    const images = [
+      './image1.jpg',
+      './image2.jpg',
+      './image3.jpg',
+    ];
+
+    const results = await processor.generateBatch(
+      images.map(img => ({
+        text: "Describe this image briefly.",
+        images: [img],
+      }))
+    );
+
+    results.forEach((result, i) => {
+      console.log(`Image ${i+1}: ${result}`);
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    images = ["./image1.jpg", "./image2.jpg", "./image3.jpg"]
+
+    inputs = [
+        {"text": "Describe this image briefly.", "images": [img]}
+        for img in images
+    ]
+    results = processor.generate_batch(inputs)
+
+    for i, result in enumerate(results):
+        print(f"Image {i+1}: {result}")
+    ```
+
+=== "Rust"
+
+    ```rust
+    let images = vec!["image1.jpg", "image2.jpg", "image3.jpg"];
+
+    let results = processor.generate_batch(
+        images.iter().map(|img| {
+            ("Describe this image briefly.", img.to_string())
+        }).collect(),
+        200
     )?;
 
-    // Process as usual
-    let n_past = mtmd.eval_chunks(&mut context, &chunks, 0, 0, 512, true)?;
-}
-```
-
-## MtmdParams Configuration
-
-```rust
-let params = MtmdParams {
-    use_gpu: true,              // Use GPU for vision encoder
-    print_timings: false,       // Print processing times
-    n_threads: 4,               // CPU threads
-    media_marker: None,         // Custom marker (None = default)
-    warmup: true,               // Warmup encode on init
-    image_min_tokens: None,     // Min tokens per image
-    image_max_tokens: None,     // Max tokens per image
-    ..Default::default()
-};
-```
-
-## Understanding Chunks
-
-Multimodal input is split into chunks:
-
-```rust
-let chunks = mtmd.tokenize(prompt, &[&image])?;
-
-for (i, chunk) in chunks.iter().enumerate() {
-    match chunk.chunk_type() {
-        ChunkType::Text => {
-            println!("Chunk {}: Text ({} tokens)", i, chunk.n_tokens());
-        }
-        ChunkType::Image => {
-            println!("Chunk {}: Image ({} tokens)", i, chunk.n_tokens());
-        }
-        ChunkType::Audio => {
-            println!("Chunk {}: Audio ({} tokens)", i, chunk.n_tokens());
-        }
+    for (i, result) in results.iter().enumerate() {
+        println!("Image {}: {}", i + 1, result);
     }
-}
-```
+    ```
 
-## Chat with Images
+=== "CLI"
 
-Build a conversation with images:
+    ```bash
+    # Process multiple images
+    for img in image1.jpg image2.jpg image3.jpg; do
+      mullama run llava:13b "Describe this image briefly." --image "$img"
+    done
+    ```
 
-```rust
-// First turn with image
-let image = mtmd.bitmap_from_file("chart.png")?;
-let chunks = mtmd.tokenize(
-    "<|im_start|>user\nWhat does this chart show? <__media__><|im_end|>\n<|im_start|>assistant\n",
-    &[&image]
-)?;
+## Vision-Language Examples
 
-let n_past = mtmd.eval_chunks(&mut context, &chunks, 0, 0, 512, true)?;
-let response = context.generate_continue(n_past, 256)?;
-println!("Assistant: {}", response);
+### Describe an Image
 
-// Follow-up (text only)
-let follow_up = format!(
-    "<|im_end|>\n<|im_start|>user\nWhat's the trend?<|im_end|>\n<|im_start|>assistant\n"
-);
-let tokens = model.tokenize(&follow_up, false, true)?;
-context.decode(&tokens)?;
-let response = context.generate_continue(context.n_past(), 256)?;
-println!("Assistant: {}", response);
-```
+=== "Node.js"
 
-## Image Description Example
+    ```javascript
+    const response = await processor.generate({
+      text: "Provide a detailed description of this image including colors, objects, and composition.",
+      images: ['./landscape.jpg'],
+      maxTokens: 500,
+    });
+    ```
 
-Complete example for describing images:
+=== "Python"
 
-```rust
-use mullama::{Model, Context, ContextParams, MtmdContext, MtmdParams};
-use std::sync::Arc;
+    ```python
+    response = processor.generate(
+        text="Provide a detailed description of this image including colors, objects, and composition.",
+        images=["./landscape.jpg"],
+        max_tokens=500,
+    )
+    ```
 
-fn describe_image(image_path: &str) -> Result<String, mullama::MullamaError> {
-    let model = Arc::new(Model::load("llava-v1.5-7b-q4.gguf")?);
-    let mut context = Context::new(model.clone(), ContextParams {
-        n_ctx: 4096,
-        ..Default::default()
-    })?;
+=== "Rust"
 
-    let mut mtmd = MtmdContext::new(
-        "llava-v1.5-7b-mmproj-f16.gguf",
-        &model,
-        MtmdParams::default()
+    ```rust
+    let response = processor.generate_with_image(
+        "Provide a detailed description of this image including colors, objects, and composition.",
+        "landscape.jpg",
+        500
     )?;
+    ```
 
-    let image = mtmd.bitmap_from_file(image_path)?;
+=== "CLI"
 
-    let chunks = mtmd.tokenize(
-        "<|im_start|>user\nDescribe this image in detail.<__media__><|im_end|>\n<|im_start|>assistant\n",
-        &[&image]
+    ```bash
+    mullama run llava:13b \
+      "Provide a detailed description of this image including colors, objects, and composition." \
+      --image ./landscape.jpg --max-tokens 500
+    ```
+
+### Answer Questions About an Image
+
+=== "Node.js"
+
+    ```javascript
+    const questions = [
+      "How many people are in this image?",
+      "What is the dominant color?",
+      "Is this indoors or outdoors?",
+    ];
+
+    for (const question of questions) {
+      const answer = await processor.generate({
+        text: question,
+        images: ['./photo.jpg'],
+        maxTokens: 100,
+      });
+      console.log(`Q: ${question}\nA: ${answer}\n`);
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    questions = [
+        "How many people are in this image?",
+        "What is the dominant color?",
+        "Is this indoors or outdoors?",
+    ]
+
+    for question in questions:
+        answer = processor.generate(
+            text=question,
+            images=["./photo.jpg"],
+            max_tokens=100,
+        )
+        print(f"Q: {question}\nA: {answer}\n")
+    ```
+
+=== "Rust"
+
+    ```rust
+    let questions = vec![
+        "How many people are in this image?",
+        "What is the dominant color?",
+        "Is this indoors or outdoors?",
+    ];
+
+    for question in &questions {
+        let answer = processor.generate_with_image(question, "photo.jpg", 100)?;
+        println!("Q: {}\nA: {}\n", question, answer);
+    }
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run llava:13b "How many people are in this image?" --image ./photo.jpg
+    mullama run llava:13b "What is the dominant color?" --image ./photo.jpg
+    mullama run llava:13b "Is this indoors or outdoors?" --image ./photo.jpg
+    ```
+
+### OCR and Text Extraction
+
+=== "Node.js"
+
+    ```javascript
+    const response = await processor.generate({
+      text: "Extract all text visible in this image. Format it as a list.",
+      images: ['./document.png'],
+      maxTokens: 1000,
+    });
+    console.log(response);
+    ```
+
+=== "Python"
+
+    ```python
+    response = processor.generate(
+        text="Extract all text visible in this image. Format it as a list.",
+        images=["./document.png"],
+        max_tokens=1000,
+    )
+    print(response)
+    ```
+
+=== "Rust"
+
+    ```rust
+    let response = processor.generate_with_image(
+        "Extract all text visible in this image. Format it as a list.",
+        "document.png",
+        1000
     )?;
+    ```
 
-    let n_past = mtmd.eval_chunks(&mut context, &chunks, 0, 0, 512, true)?;
-    let description = context.generate_continue(n_past, 512)?;
+=== "CLI"
 
-    Ok(description)
-}
-```
+    ```bash
+    mullama run llava:13b \
+      "Extract all text visible in this image. Format it as a list." \
+      --image ./document.png --max-tokens 1000
+    ```
 
-## Performance Tips
+## Audio-Language Examples
 
-1. **Use GPU** - Vision encoders benefit greatly from GPU acceleration
-2. **Batch images** - Process multiple images together when possible
-3. **Resize large images** - Very large images use more tokens
-4. **Warmup** - First inference is slower due to memory allocation
-5. **Use quantized projectors** - F16 projectors can be quantized for speed
+### Speech Transcription
 
-## Error Handling
+=== "Node.js"
 
-```rust
-match mtmd.bitmap_from_file(path) {
-    Ok(image) => process_image(image),
-    Err(MullamaError::MultimodalError(msg)) => {
-        eprintln!("Failed to load image: {}", msg);
-    }
-    Err(e) => eprintln!("Error: {}", e),
-}
+    ```javascript
+    const transcription = await processor.generate({
+      text: "Transcribe the following audio word for word.",
+      audio: ['./speech.wav'],
+      maxTokens: 1000,
+    });
+    console.log(transcription);
+    ```
 
-match mtmd.tokenize(prompt, &images) {
-    Ok(chunks) => evaluate(chunks),
-    Err(MullamaError::InvalidInput(msg)) => {
-        // Wrong number of images for markers
-        eprintln!("Input error: {}", msg);
-    }
-    Err(e) => eprintln!("Error: {}", e),
-}
-```
+=== "Python"
+
+    ```python
+    transcription = processor.generate(
+        text="Transcribe the following audio word for word.",
+        audio=["./speech.wav"],
+        max_tokens=1000,
+    )
+    print(transcription)
+    ```
+
+=== "Rust"
+
+    ```rust
+    let transcription = processor.generate_with_audio(
+        "Transcribe the following audio word for word.",
+        "speech.wav",
+        1000
+    )?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run audio-model "Transcribe the following audio word for word." \
+      --audio ./speech.wav --max-tokens 1000
+    ```
+
+### Audio Understanding
+
+=== "Node.js"
+
+    ```javascript
+    const response = await processor.generate({
+      text: "Describe the sounds in this audio clip. What is happening?",
+      audio: ['./environment.wav'],
+      maxTokens: 200,
+    });
+    ```
+
+=== "Python"
+
+    ```python
+    response = processor.generate(
+        text="Describe the sounds in this audio clip. What is happening?",
+        audio=["./environment.wav"],
+        max_tokens=200,
+    )
+    ```
+
+=== "Rust"
+
+    ```rust
+    let response = processor.generate_with_audio(
+        "Describe the sounds in this audio clip. What is happening?",
+        "environment.wav",
+        200
+    )?;
+    ```
+
+=== "CLI"
+
+    ```bash
+    mullama run audio-model \
+      "Describe the sounds in this audio clip. What is happening?" \
+      --audio ./environment.wav
+    ```
+
+## Supported Multimodal Models
+
+| Model | Modality | Description |
+|-------|----------|-------------|
+| LLaVA 1.5/1.6 | Vision | Image understanding with CLIP |
+| BakLLaVA | Vision | High-resolution image understanding |
+| Obsidian | Vision | Efficient vision-language model |
+| MiniCPM-V | Vision | Compact vision model |
+| Qwen2-VL | Vision | Qwen's vision-language model |
+
+!!! warning "Model Compatibility"
+    Multimodal models require both a text model and a vision/audio projector. Ensure you download the complete model with all components.
+
+## See Also
+
+- [Loading Models](models.md) -- Loading multimodal model files
+- [Streaming](streaming.md) -- Streaming multimodal generation output
+- [Tutorials: Vision Assistant](../examples/voice-assistant.md) -- Building a vision-language assistant
+- [API Reference: Multimodal](../api/multimodal.md) -- Complete Multimodal API documentation
