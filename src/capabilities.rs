@@ -180,8 +180,8 @@ impl CapabilityRegistry {
             return Ok(());
         }
 
-        for entry in std::fs::read_dir(dir).map_err(|e| MullamaError::IoError(e))? {
-            let entry = entry.map_err(|e| MullamaError::IoError(e))?;
+        for entry in std::fs::read_dir(dir).map_err(MullamaError::IoError)? {
+            let entry = entry.map_err(MullamaError::IoError)?;
             let path = entry.path();
 
             if path.extension().map(|e| e == "toml").unwrap_or(false) {
@@ -204,7 +204,7 @@ impl CapabilityRegistry {
 
     /// Load a single configuration file
     fn load_config_file(&self, path: &Path) -> Result<ModelFamilyConfig, MullamaError> {
-        let contents = std::fs::read_to_string(path).map_err(|e| MullamaError::IoError(e))?;
+        let contents = std::fs::read_to_string(path).map_err(MullamaError::IoError)?;
 
         let config: ModelFamilyConfig = toml::from_str(&contents).map_err(|e| {
             MullamaError::InvalidInput(format!("Failed to parse {}: {}", path.display(), e))
