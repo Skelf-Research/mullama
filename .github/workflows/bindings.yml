@@ -1,0 +1,581 @@
+name: Bindings CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bindings/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - '.github/workflows/bindings.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bindings/**'
+      - 'src/**'
+      - 'Cargo.toml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish packages'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================
+  # Build FFI Library for all platforms
+  # ============================================
+  build-ffi:
+    name: Build FFI - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-x64
+          # Linux x64 CUDA
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-x64-cuda
+            cuda: true
+          # Linux ARM64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-arm64
+          # macOS x64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: libmullama_ffi.dylib
+            artifact_name: darwin-x64
+          # macOS ARM64 (Metal)
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: libmullama_ffi.dylib
+            artifact_name: darwin-arm64
+          # Windows x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: mullama_ffi.dll
+            artifact_name: win32-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install CUDA toolkit (Linux CUDA)
+        if: matrix.cuda == true
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+
+      - name: Set CUDA environment
+        if: matrix.cuda == true
+        run: |
+          echo "LLAMA_CUDA=1" >> $GITHUB_ENV
+          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
+
+      - name: Set Metal environment (macOS ARM64)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: echo "LLAMA_METAL=1" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-ffi-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-ffi-
+
+      - name: Build FFI library
+        run: cargo build --release -p mullama-ffi --target ${{ matrix.target }}
+
+      - name: Upload FFI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.artifact_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+
+      - name: Upload C header
+        if: matrix.artifact_name == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-header
+          path: bindings/ffi/include/mullama.h
+
+  # ============================================
+  # Test FFI Library
+  # ============================================
+  test-ffi:
+    name: Test FFI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-ffi-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run FFI tests
+        run: cargo test -p mullama-ffi
+
+  # ============================================
+  # Python Binding
+  # ============================================
+  build-python:
+    name: Python - ${{ matrix.target }}
+    needs: [test-ffi]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: auto
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
+            target: x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: bindings/python/dist/*.whl
+
+  test-python:
+    name: Test Python
+    needs: [build-python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels-ubuntu-latest-x86_64
+          path: dist
+
+      - name: Install wheel
+        run: |
+          pip install dist/*.whl
+          pip install pytest numpy
+
+      - name: Run tests
+        run: |
+          cd bindings/python
+          pytest tests/ -v
+
+  # ============================================
+  # Node.js Binding
+  # ============================================
+  build-node:
+    name: Node.js - ${{ matrix.target }}
+    needs: [test-ffi]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            node_arch: linux-x64-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            node_arch: linux-arm64-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+            node_arch: darwin-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            node_arch: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_arch: win32-x64-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-node-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install dependencies
+        working-directory: bindings/node
+        run: npm install
+
+      - name: Build native module
+        working-directory: bindings/node
+        run: npm run build -- --target ${{ matrix.target }}
+
+      - name: Upload native module
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.node_arch }}
+          path: bindings/node/*.node
+
+  test-node:
+    name: Test Node.js
+    needs: [build-node]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies and build
+        working-directory: bindings/node
+        run: |
+          npm install
+          npm run build
+
+      - name: Run tests
+        working-directory: bindings/node
+        run: npm test
+
+  # ============================================
+  # Go Binding
+  # ============================================
+  build-go:
+    name: Go - ${{ matrix.os }}
+    needs: [build-ffi]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: linux-x64
+          - os: macos-13
+            artifact_name: darwin-x64
+          - os: macos-14
+            artifact_name: darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build FFI library
+        run: cargo build --release -p mullama-ffi
+
+      - name: Download FFI header
+        uses: actions/download-artifact@v4
+        with:
+          name: ffi-header
+          path: bindings/ffi/include
+
+      - name: Build Go binding
+        working-directory: bindings/go
+        env:
+          CGO_ENABLED: 1
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+        run: go build -v ./...
+
+      - name: Run Go tests
+        working-directory: bindings/go
+        env:
+          CGO_ENABLED: 1
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+        run: go test -v ./...
+
+  # ============================================
+  # PHP Binding
+  # ============================================
+  test-php:
+    name: Test PHP
+    needs: [build-ffi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: ffi
+          tools: composer
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build FFI library
+        run: cargo build --release -p mullama-ffi
+
+      - name: Download FFI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ffi-linux-x64
+          path: bindings/php/lib
+
+      - name: Install PHP dependencies
+        working-directory: bindings/php
+        run: composer install
+
+      - name: Run PHP tests
+        working-directory: bindings/php
+        env:
+          MULLAMA_LIB_PATH: ${{ github.workspace }}/target/release/libmullama_ffi.so
+          MULLAMA_HEADER_PATH: ${{ github.workspace }}/bindings/ffi/include/mullama.h
+        run: composer test
+
+  # ============================================
+  # Publish Python to PyPI
+  # ============================================
+  publish-python:
+    name: Publish Python to PyPI
+    needs: [test-python]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # ============================================
+  # Publish Node.js to npm
+  # ============================================
+  publish-node:
+    name: Publish Node.js to npm
+    needs: [test-node]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all native modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: bindings/node/npm
+          merge-multiple: false
+
+      - name: Prepare npm packages
+        working-directory: bindings/node
+        run: |
+          # Move native modules to platform-specific directories
+          for dir in npm/node-*; do
+            platform=$(basename "$dir" | sed 's/node-//')
+            mkdir -p "npm/$platform"
+            mv "$dir"/*.node "npm/$platform/" 2>/dev/null || true
+          done
+
+      - name: Publish to npm
+        working-directory: bindings/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  # ============================================
+  # Create Release Assets
+  # ============================================
+  release-assets:
+    name: Upload Release Assets
+    needs: [build-ffi, build-python, build-node]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Download all FFI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-*
+          path: release-assets
+
+      - name: Package FFI libraries
+        run: |
+          cd release-assets
+          for dir in ffi-*/; do
+            name=$(basename "$dir")
+            tar -czvf "${name}.tar.gz" -C "$dir" .
+          done
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-assets/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

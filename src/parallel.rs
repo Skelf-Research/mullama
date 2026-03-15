@@ -15,7 +15,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use mullama::parallel::{ParallelProcessor, BatchConfig, ThreadPoolConfig};
+//! use mullama::parallel::{ParallelProcessor, ThreadPoolConfig};
 //! use std::sync::Arc;
 //!
 //! fn main() -> Result<(), mullama::MullamaError> {

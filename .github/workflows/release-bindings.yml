@@ -1,0 +1,422 @@
+name: Release Bindings
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (do not publish)'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================
+  # Validate and prepare release
+  # ============================================
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version format
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid version format. Expected X.Y.Z"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check version consistency
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Check Python version
+          PYTHON_VERSION=$(grep 'version = ' bindings/python/pyproject.toml | head -1 | cut -d'"' -f2)
+          if [ "$PYTHON_VERSION" != "$VERSION" ]; then
+            echo "Warning: Python version ($PYTHON_VERSION) differs from release version ($VERSION)"
+          fi
+
+          # Check Node version
+          NODE_VERSION=$(grep '"version"' bindings/node/package.json | head -1 | cut -d'"' -f4)
+          if [ "$NODE_VERSION" != "$VERSION" ]; then
+            echo "Warning: Node version ($NODE_VERSION) differs from release version ($VERSION)"
+          fi
+
+  # ============================================
+  # Build FFI for all platforms
+  # ============================================
+  build-ffi:
+    name: Build FFI - ${{ matrix.target }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-x64-cuda
+            cuda: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: libmullama_ffi.so
+            artifact_name: linux-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: libmullama_ffi.dylib
+            artifact_name: darwin-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: libmullama_ffi.dylib
+            artifact_name: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: mullama_ffi.dll
+            artifact_name: win32-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install CUDA toolkit
+        if: matrix.cuda == true
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+
+      - name: Set CUDA environment
+        if: matrix.cuda == true
+        run: echo "LLAMA_CUDA=1" >> $GITHUB_ENV
+
+      - name: Set Metal environment
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: echo "LLAMA_METAL=1" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build FFI library
+        run: cargo build --release -p mullama-ffi --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.artifact_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+
+  # ============================================
+  # Build Python wheels
+  # ============================================
+  build-python:
+    name: Python - ${{ matrix.target }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: auto
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
+            target: x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: bindings/python/dist/*.whl
+
+  # ============================================
+  # Build Node.js native modules
+  # ============================================
+  build-node:
+    name: Node.js - ${{ matrix.target }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            node_arch: linux-x64-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            node_arch: linux-arm64-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+            node_arch: darwin-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            node_arch: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_arch: win32-x64-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies
+        working-directory: bindings/node
+        run: npm install
+
+      - name: Build
+        working-directory: bindings/node
+        run: npm run build -- --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.node_arch }}
+          path: bindings/node/*.node
+
+  # ============================================
+  # Publish Python to PyPI
+  # ============================================
+  publish-python:
+    name: Publish to PyPI
+    needs: [build-python]
+    runs-on: ubuntu-latest
+    if: inputs.dry_run == false
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # ============================================
+  # Publish Node.js to npm
+  # ============================================
+  publish-node:
+    name: Publish to npm
+    needs: [build-node]
+    runs-on: ubuntu-latest
+    if: inputs.dry_run == false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download native modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: artifacts
+
+      - name: Prepare platform packages
+        working-directory: bindings/node
+        run: |
+          mkdir -p npm
+          for dir in ../../artifacts/node-*/; do
+            arch=$(basename "$dir" | sed 's/node-//')
+            mkdir -p "npm/${arch}"
+            cp "$dir"/*.node "npm/${arch}/" 2>/dev/null || true
+          done
+          ls -la npm/*/
+
+      - name: Install dependencies
+        working-directory: bindings/node
+        run: npm install
+
+      - name: Publish to npm
+        working-directory: bindings/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  # ============================================
+  # Create GitHub Release
+  # ============================================
+  create-release:
+    name: Create GitHub Release
+    needs: [build-ffi, build-python, build-node]
+    runs-on: ubuntu-latest
+    if: inputs.dry_run == false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all FFI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-*
+          path: release
+
+      - name: Package artifacts
+        run: |
+          cd release
+          for dir in ffi-*/; do
+            name=$(basename "$dir")
+            tar -czvf "mullama-${{ needs.prepare.outputs.version }}-${name#ffi-}.tar.gz" -C "$dir" .
+          done
+          ls -la *.tar.gz
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: bindings-v${{ needs.prepare.outputs.version }}
+          name: Bindings v${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: false
+          files: release/*.tar.gz
+          body: |
+            ## Mullama Bindings v${{ needs.prepare.outputs.version }}
+
+            ### Installation
+
+            **Python:**
+            ```bash
+            pip install mullama==${{ needs.prepare.outputs.version }}
+            ```
+
+            **Node.js:**
+            ```bash
+            npm install mullama@${{ needs.prepare.outputs.version }}
+            ```
+
+            **PHP:**
+            ```bash
+            composer require mullama/mullama:${{ needs.prepare.outputs.version }}
+            ```
+
+            **Go:**
+            ```bash
+            go get github.com/neul-labs/mullama-go@v${{ needs.prepare.outputs.version }}
+            ```
+
+            ### Pre-built Libraries
+
+            Download the FFI library for your platform from the assets below.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================
+  # Summary
+  # ============================================
+  summary:
+    name: Release Summary
+    needs: [build-ffi, build-python, build-node]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dry Run:** ${{ inputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "- FFI: ${{ needs.build-ffi.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Python: ${{ needs.build-python.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Node.js: ${{ needs.build-node.result }}" >> $GITHUB_STEP_SUMMARY

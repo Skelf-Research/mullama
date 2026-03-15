@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "bindings/ffi", "bindings/python", "bindings/node"]
+
 [package]
 name = "mullama"
 version = "0.1.1"
