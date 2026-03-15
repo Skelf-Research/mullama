@@ -357,8 +357,10 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     cmake_config.define("BUILD_SHARED_LIBS", "OFF");
     cmake_config.define("GGML_STATIC", "ON");
 
-    // Build mtmd (multimodal) library for vision/audio support
+    // Build common library (required for tools) and mtmd (multimodal) library
+    cmake_config.define("LLAMA_BUILD_COMMON", "ON");
     cmake_config.define("LLAMA_BUILD_TOOLS", "ON");
+    cmake_config.define("LLAMA_TOOLS_INSTALL", "ON");
 
     let dst = cmake_config.build();
 
