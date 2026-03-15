@@ -1,400 +1,449 @@
+---
+title: Multimodal API
+description: Text, image, and audio processing pipeline for vision-language models
+---
+
 # Multimodal API
 
-APIs for vision-language and audio-language models.
+The multimodal module provides a unified processing pipeline for text, images, and audio, enabling interaction with vision-language and audio-language models.
 
-## MtmdContext
+!!! info "Feature Gate"
+    This module requires the `multimodal` feature flag:
+    ```toml
+    mullama = { version = "0.1", features = ["multimodal"] }
+    ```
 
-Main interface for multimodal processing.
+## MultimodalProcessor
 
-### `MtmdContext::new`
-
-Create a multimodal context.
+The central coordinator for cross-modal AI processing. Manages vision encoders, audio processors, and format conversion.
 
 ```rust
-pub fn new(
-    mmproj_path: &str,
-    model: &Arc<Model>,
-    params: MtmdParams
-) -> Result<Self, MullamaError>
+pub struct MultimodalProcessor {
+    // Internal fields managing encoders and processors
+}
+
+impl MultimodalProcessor {
+    /// Create a new multimodal processor builder
+    pub fn new() -> MultimodalProcessorBuilder;
+
+    /// Process multimodal input (text + image + audio)
+    pub async fn process_multimodal(
+        &self,
+        input: &MultimodalInput,
+    ) -> Result<MultimodalOutput, MullamaError>;
+
+    /// Process text only
+    pub async fn process_text(&self, text: &str) -> Result<String, MullamaError>;
+
+    /// Process image with optional text prompt
+    pub async fn process_image(
+        &self,
+        image: &ImageInput,
+    ) -> Result<ImageProcessingResult, MullamaError>;
+
+    /// Process audio input
+    pub async fn process_audio(
+        &self,
+        audio: &AudioInput,
+    ) -> Result<AudioProcessingResult, MullamaError>;
+
+    /// Query supported modalities
+    pub fn supported_modalities(&self) -> Vec<Modality>;
+}
 ```
 
-**Parameters:**
-- `mmproj_path` - Path to the multimodal projector file
-- `model` - The text model
-- `params` - Configuration parameters
+### MultimodalProcessorBuilder
+
+```rust
+let processor = MultimodalProcessor::new()
+    .enable_image_processing()
+    .enable_audio_processing()
+    .image_config(ImageProcessingConfig { max_resolution: (1024, 1024) })
+    .audio_config(AudioProcessingConfig { sample_rate: 16000 })
+    .build();
+```
+
+| Method | Description |
+|--------|-------------|
+| `enable_image_processing()` | Enable image modality support |
+| `enable_audio_processing()` | Enable audio modality support |
+| `enable_video_processing()` | Enable video modality support |
+| `image_config(config)` | Set image processing configuration |
+| `audio_config(config)` | Set audio processing configuration |
+| `build()` | Build the processor |
+
+## VisionEncoder
+
+Handles image encoding for vision-language models. Converts images to the embedding space the LLM can understand.
+
+```rust
+pub struct VisionEncoder {
+    encoder_type: VisionEncoderType,
+    // Internal state
+}
+
+impl VisionEncoder {
+    /// Create a new vision encoder
+    pub fn new(encoder_type: VisionEncoderType) -> Result<Self, MullamaError>;
+
+    /// Encode an image to embeddings
+    pub fn encode(&self, image: &Bitmap) -> Result<Vec<f32>, MullamaError>;
+
+    /// Get the output embedding dimension
+    pub fn embedding_dim(&self) -> usize;
+
+    /// Get the expected input resolution
+    pub fn input_resolution(&self) -> (u32, u32);
+}
+```
+
+## VisionEncoderType
+
+Supported vision encoder architectures.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum VisionEncoderType {
+    /// CLIP (Contrastive Language-Image Pre-training)
+    Clip {
+        model_path: String,
+    },
+    /// DINO (Self-Distillation with No Labels)
+    Dino {
+        model_path: String,
+    },
+    /// Custom vision encoder with user-provided weights
+    Custom {
+        model_path: String,
+        config: CustomEncoderConfig,
+    },
+}
+```
+
+| Variant | Use Case | Description |
+|---------|----------|-------------|
+| `Clip` | General vision-language | CLIP-based encoding, used by LLaVA and similar models |
+| `Dino` | Dense visual features | Self-supervised features for detailed image understanding |
+| `Custom` | Specialized models | User-provided encoder with custom configuration |
+
+## Modality
+
+Enum representing supported input/output modalities.
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Modality {
+    Text,
+    Image,
+    Audio,
+    Video,
+}
+```
+
+## InputChunk
+
+Represents a piece of mixed-media input for models that support interleaved content.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum InputChunk {
+    /// Text segment
+    Text(String),
+    /// Image data
+    Image(ImageInput),
+    /// Audio data
+    Audio(AudioInput),
+    /// Video reference
+    Video { path: PathBuf },
+}
+```
+
+### InputChunks
+
+Ordered sequence of chunks for interleaved multimodal input.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct InputChunks {
+    pub chunks: Vec<InputChunk>,
+}
+
+impl InputChunks {
+    pub fn new() -> Self;
+    pub fn add_text(&mut self, text: &str) -> &mut Self;
+    pub fn add_image(&mut self, image: ImageInput) -> &mut Self;
+    pub fn add_audio(&mut self, audio: AudioInput) -> &mut Self;
+}
+```
 
 **Example:**
+
 ```rust
-let model = Arc::new(Model::load("llava-model.gguf")?);
-let mtmd = MtmdContext::new("llava-mmproj.gguf", &model, MtmdParams::default())?;
+use mullama::multimodal::{InputChunks, ImageInput};
+
+let mut chunks = InputChunks::new();
+chunks.add_text("Describe this image:");
+chunks.add_image(ImageInput::from_path("photo.jpg").await?);
+chunks.add_text("Focus on the colors and composition.");
 ```
 
----
+## AudioFeatures
 
-### `supports_vision`
-
-Check if vision (image) input is supported.
+Extracted audio feature representation for model consumption.
 
 ```rust
-pub fn supports_vision(&self) -> bool
-```
-
----
-
-### `supports_audio`
-
-Check if audio input is supported.
-
-```rust
-pub fn supports_audio(&self) -> bool
-```
-
----
-
-### `audio_bitrate`
-
-Get the audio sample rate if audio is supported.
-
-```rust
-pub fn audio_bitrate(&self) -> Option<i32>
-```
-
----
-
-### `bitmap_from_file`
-
-Load an image or audio file as a bitmap.
-
-```rust
-pub fn bitmap_from_file(&self, path: &str) -> Result<Bitmap, MullamaError>
-```
-
-**Supported formats:**
-- Images: JPEG, PNG, BMP, GIF, WebP
-- Audio: WAV, MP3, FLAC
-
-**Example:**
-```rust
-let image = mtmd.bitmap_from_file("photo.jpg")?;
-```
-
----
-
-### `bitmap_from_buffer`
-
-Load from a byte buffer.
-
-```rust
-pub fn bitmap_from_buffer(&self, data: &[u8]) -> Result<Bitmap, MullamaError>
-```
-
-**Example:**
-```rust
-let data = std::fs::read("image.png")?;
-let image = mtmd.bitmap_from_buffer(&data)?;
-```
-
----
-
-### `tokenize`
-
-Tokenize text with media, replacing markers with bitmaps.
-
-```rust
-pub fn tokenize(
-    &mut self,
-    text: &str,
-    bitmaps: &[&Bitmap]
-) -> Result<InputChunks, MullamaError>
-```
-
-**Parameters:**
-- `text` - Prompt with `<__media__>` markers
-- `bitmaps` - Bitmaps to substitute for each marker
-
-**Example:**
-```rust
-let image = mtmd.bitmap_from_file("photo.jpg")?;
-let chunks = mtmd.tokenize(
-    "What's in this image? <__media__>",
-    &[&image]
-)?;
-```
-
----
-
-### `eval_chunks`
-
-Evaluate multimodal chunks in a context.
-
-```rust
-pub fn eval_chunks(
-    &mut self,
-    context: &mut Context,
-    chunks: &InputChunks,
-    n_past: i32,
-    seq_id: i32,
-    n_batch: i32,
-    logits_last: bool
-) -> Result<i32, MullamaError>
-```
-
-**Parameters:**
-- `context` - The llama context
-- `chunks` - Tokenized input chunks
-- `n_past` - Current position
-- `seq_id` - Sequence ID (usually 0)
-- `n_batch` - Batch size
-- `logits_last` - Compute logits for last token
-
-**Returns:** New position after evaluation
-
-**Example:**
-```rust
-let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-```
-
----
-
-### `encode_chunk`
-
-Encode a single chunk.
-
-```rust
-pub fn encode_chunk(&mut self, chunk: &InputChunk) -> Result<(), MullamaError>
-```
-
----
-
-### `get_output_embeddings`
-
-Get embeddings from the last encode operation.
-
-```rust
-pub fn get_output_embeddings(&self, chunk: &InputChunk) -> Option<&[f32]>
-```
-
----
-
-## MtmdParams
-
-Configuration for multimodal context.
-
-```rust
-pub struct MtmdParams {
-    pub use_gpu: bool,
-    pub print_timings: bool,
-    pub n_threads: i32,
-    pub media_marker: Option<String>,
-    pub warmup: bool,
-    pub image_min_tokens: Option<i32>,
-    pub image_max_tokens: Option<i32>,
+#[derive(Debug, Clone)]
+pub struct AudioFeatures {
+    pub features: Vec<f32>,
+    pub n_frames: usize,
+    pub n_features: usize,
+    pub sample_rate: u32,
+    pub duration_ms: u64,
 }
 ```
 
 ### Fields
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `use_gpu` | `true` | Use GPU for vision encoder |
-| `print_timings` | `false` | Print processing times |
-| `n_threads` | `4` | CPU threads |
-| `media_marker` | `None` | Custom marker (default: `<__media__>`) |
-| `warmup` | `true` | Warmup encode on init |
-| `image_min_tokens` | `None` | Min tokens per image |
-| `image_max_tokens` | `None` | Max tokens per image |
+| Name | Type | Description |
+|------|------|-------------|
+| `features` | `Vec<f32>` | Flat array of audio features (n_frames * n_features) |
+| `n_frames` | `usize` | Number of time frames |
+| `n_features` | `usize` | Features per frame (e.g., mel bands) |
+| `sample_rate` | `u32` | Original sample rate |
+| `duration_ms` | `u64` | Audio duration in milliseconds |
 
-**Example:**
+## AudioFormat
+
+Supported audio formats for input and conversion.
+
 ```rust
-let params = MtmdParams {
-    use_gpu: true,
-    print_timings: true,
-    media_marker: Some("<image>".to_string()),
-    ..Default::default()
-};
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AudioFormat {
+    /// 16-bit signed integer PCM
+    PCM16,
+    /// 32-bit signed integer PCM
+    PCM32,
+    /// 32-bit floating point samples
+    Float32,
+    /// MP3 compressed audio
+    MP3,
+    /// WAV container (various internal formats)
+    WAV,
+    /// FLAC lossless compressed audio
+    FLAC,
+}
 ```
 
----
+| Format | Quality | Size | Use Case |
+|--------|---------|------|----------|
+| `PCM16` | Lossless | Large | Raw audio capture, maximum compatibility |
+| `PCM32` | Lossless | Very large | High-precision audio processing |
+| `Float32` | Lossless | Very large | Internal processing format |
+| `MP3` | Lossy | Small | Compressed storage, web delivery |
+| `WAV` | Lossless | Large | Standard audio file format |
+| `FLAC` | Lossless | Medium | Compressed lossless storage |
 
 ## Bitmap
 
-Represents image or audio data.
-
-### `width`
-
-Get image width (1 for audio).
+Raw image data for direct pixel manipulation and model input.
 
 ```rust
-pub fn width(&self) -> u32
-```
+#[derive(Debug, Clone)]
+pub struct Bitmap {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub channels: u8,  // 1=grayscale, 3=RGB, 4=RGBA
+}
 
----
+impl Bitmap {
+    /// Create empty bitmap with given dimensions
+    pub fn new(width: u32, height: u32, channels: u8) -> Self;
 
-### `height`
+    /// Create from ImageInput (decode compressed format)
+    pub fn from_image_input(input: &ImageInput) -> Result<Self, MullamaError>;
 
-Get image height (1 for audio).
+    /// Resize to new dimensions (bilinear interpolation)
+    pub fn resize(&self, new_width: u32, new_height: u32) -> Self;
 
-```rust
-pub fn height(&self) -> u32
-```
+    /// Convert to RGB format
+    pub fn to_rgb(&self) -> Self;
 
----
-
-### `from_rgb`
-
-Create bitmap from raw RGB pixels.
-
-```rust
-pub fn from_rgb(width: u32, height: u32, data: &[u8]) -> Result<Self, MullamaError>
-```
-
-**Example:**
-```rust
-let pixels: Vec<u8> = vec![0; width * height * 3];
-let bitmap = Bitmap::from_rgb(width, height, &pixels)?;
-```
-
----
-
-## InputChunks
-
-Collection of tokenized chunks.
-
-### `len`
-
-Get number of chunks.
-
-```rust
-pub fn len(&self) -> usize
-```
-
----
-
-### `iter`
-
-Iterate over chunks.
-
-```rust
-pub fn iter(&self) -> impl Iterator<Item = InputChunk>
-```
-
-**Example:**
-```rust
-for chunk in chunks.iter() {
-    println!("Type: {:?}, Tokens: {}", chunk.chunk_type(), chunk.n_tokens());
+    /// Get pixel value at coordinates
+    pub fn pixel_at(&self, x: u32, y: u32) -> &[u8];
 }
 ```
 
----
+## ImageInput
 
-## InputChunk
-
-A single tokenized chunk.
-
-### `chunk_type`
-
-Get the chunk type.
+Represents image data for multimodal processing.
 
 ```rust
-pub fn chunk_type(&self) -> ChunkType
-```
-
----
-
-### `n_tokens`
-
-Get the number of tokens.
-
-```rust
-pub fn n_tokens(&self) -> i32
-```
-
----
-
-## ChunkType
-
-Enum for chunk types.
-
-```rust
-pub enum ChunkType {
-    Text,
-    Image,
-    Audio,
+#[derive(Debug, Clone)]
+pub struct ImageInput {
+    pub data: Vec<u8>,
+    pub format: ImageFormat,
+    pub dimensions: (u32, u32),
+    pub metadata: HashMap<String, String>,
 }
 ```
 
----
+### Fields
+
+| Name | Type | Description |
+|------|------|-------------|
+| `data` | `Vec<u8>` | Raw image bytes (compressed or raw) |
+| `format` | `ImageFormat` | Image format identifier |
+| `dimensions` | `(u32, u32)` | Width and height in pixels |
+| `metadata` | `HashMap<String, String>` | Optional metadata (EXIF, etc.) |
+
+### Factory Methods
+
+```rust
+impl ImageInput {
+    /// Load from file path (auto-detects format)
+    pub async fn from_path(path: impl AsRef<Path>) -> Result<Self, MullamaError>;
+
+    /// Load from URL
+    pub async fn from_url(url: &str) -> Result<Self, MullamaError>;
+
+    /// Create from raw bytes with known format
+    pub fn from_bytes(data: Vec<u8>, format: ImageFormat) -> Result<Self, MullamaError>;
+}
+```
+
+**Example:**
+
+```rust
+use mullama::multimodal::ImageInput;
+
+// From file
+let image = ImageInput::from_path("photo.jpg").await?;
+
+// From bytes
+let bytes = std::fs::read("photo.png")?;
+let image = ImageInput::from_bytes(bytes, ImageFormat::PNG)?;
+```
+
+## Image Processing Pipeline
+
+The image processing pipeline follows these steps:
+
+1. **Load** -- Read image from file/bytes/URL
+2. **Decode** -- Convert compressed format to raw bitmap
+3. **Resize** -- Scale to encoder's expected resolution
+4. **Normalize** -- Convert pixel values to float range
+5. **Encode** -- Pass through vision encoder to get embeddings
+6. **Interleave** -- Combine image embeddings with text tokens
+7. **Inference** -- Run the LLM with combined input
+
+```rust
+use mullama::{Model, Context, ContextParams};
+use mullama::multimodal::{MtmdContext, MtmdParams, ImageInput};
+use std::sync::Arc;
+
+let model = Arc::new(Model::load("llava-model.gguf")?);
+let mut ctx = Context::new(model.clone(), ContextParams::default())?;
+let mut mtmd = MtmdContext::new("mmproj.gguf", &model, MtmdParams::default())?;
+
+// Load and process image
+let image = mtmd.bitmap_from_file("photo.jpg")?;
+let prompt = "What do you see? <__media__>";
+let chunks = mtmd.tokenize(prompt, &[&image])?;
+
+// Evaluate multimodal input
+let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
+// Generate response from context...
+```
+
+## Audio Processing Pipeline
+
+The audio processing pipeline:
+
+1. **Load** -- Read audio from file/bytes/stream
+2. **Decode** -- Convert compressed format to PCM samples
+3. **Resample** -- Convert to model's expected sample rate
+4. **Feature extraction** -- Compute mel spectrograms or other features
+5. **Encode** -- Pass through audio encoder
+6. **Interleave** -- Combine audio features with text tokens
+7. **Inference** -- Run the LLM with combined input
+
+```rust
+use mullama::multimodal::{AudioInput, AudioFormat};
+
+// Load audio
+let audio = AudioInput::from_path("speech.wav").await?;
+println!("Duration: {:.1}s, Rate: {}Hz", audio.duration, audio.sample_rate);
+
+// Process with multimodal processor
+let processor = MultimodalProcessor::new()
+    .enable_audio_processing()
+    .build();
+
+let result = processor.process_audio(&audio).await?;
+println!("Transcript: {:?}", result.transcript);
+```
+
+## MultimodalInput
+
+Combined input supporting multiple modalities simultaneously.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum MultimodalInput {
+    Text(String),
+    Image { image: ImageInput, prompt: Option<String> },
+    Audio { audio: AudioInput, context: Option<String> },
+    Video { path: PathBuf, prompt: Option<String> },
+    Mixed {
+        text: Option<String>,
+        image: Option<ImageInput>,
+        audio: Option<AudioInput>,
+        max_tokens: Option<usize>,
+    },
+}
+```
+
+## MultimodalOutput
+
+Result from multimodal processing.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct MultimodalOutput {
+    pub text_response: String,
+    pub image_description: Option<String>,
+    pub audio_transcript: Option<String>,
+    pub video_description: Option<String>,
+    pub confidence: f32,
+    pub processing_time_ms: u64,
+}
+```
 
 ## Complete Example
 
 ```rust
-use mullama::{
-    Model, Context, ContextParams,
-    MtmdContext, MtmdParams, ChunkType
-};
-use std::sync::Arc;
+use mullama::multimodal::{MultimodalProcessor, ImageInput, MultimodalInput};
 
-fn describe_image(image_path: &str) -> Result<String, mullama::MullamaError> {
-    // Load model
-    let model = Arc::new(Model::load("llava-v1.5-7b-q4.gguf")?);
-    let mut ctx = Context::new(model.clone(), ContextParams::default())?;
+#[tokio::main]
+async fn main() -> Result<(), mullama::MullamaError> {
+    let processor = MultimodalProcessor::new()
+        .enable_image_processing()
+        .enable_audio_processing()
+        .build();
 
-    // Create multimodal context
-    let mut mtmd = MtmdContext::new(
-        "llava-v1.5-7b-mmproj-f16.gguf",
-        &model,
-        MtmdParams::default()
-    )?;
+    // Image description
+    let image = ImageInput::from_path("landscape.jpg").await?;
+    let input = MultimodalInput::Image {
+        image,
+        prompt: Some("Describe what you see in detail.".to_string()),
+    };
 
-    // Load image
-    let image = mtmd.bitmap_from_file(image_path)?;
-    println!("Image: {}x{}", image.width(), image.height());
+    let output = processor.process_multimodal(&input).await?;
+    println!("Description: {}", output.text_response);
+    println!("Confidence: {:.2}", output.confidence);
+    println!("Processing time: {}ms", output.processing_time_ms);
 
-    // Tokenize
-    let chunks = mtmd.tokenize(
-        "Describe this image: <__media__>",
-        &[&image]
-    )?;
-
-    // Print chunk info
-    for (i, chunk) in chunks.iter().enumerate() {
-        let type_name = match chunk.chunk_type() {
-            ChunkType::Text => "text",
-            ChunkType::Image => "image",
-            ChunkType::Audio => "audio",
-        };
-        println!("Chunk {}: {} ({} tokens)", i, type_name, chunk.n_tokens());
-    }
-
-    // Evaluate
-    let n_past = mtmd.eval_chunks(&mut ctx, &chunks, 0, 0, 512, true)?;
-
-    // Generate
-    ctx.generate_continue(n_past, 256)
-}
-```
-
----
-
-## Error Handling
-
-```rust
-use mullama::MullamaError;
-
-match mtmd.bitmap_from_file(path) {
-    Ok(bitmap) => { /* use bitmap */ }
-    Err(MullamaError::MultimodalError(msg)) => {
-        eprintln!("Failed to load: {}", msg);
-    }
-    Err(e) => eprintln!("Error: {}", e),
-}
-
-match mtmd.tokenize(text, &bitmaps) {
-    Ok(chunks) => { /* use chunks */ }
-    Err(MullamaError::InvalidInput(msg)) => {
-        // Wrong number of bitmaps for markers
-        eprintln!("Invalid input: {}", msg);
-    }
-    Err(e) => eprintln!("Error: {}", e),
+    Ok(())
 }
 ```
