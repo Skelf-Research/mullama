@@ -89,6 +89,36 @@ let context = Context::new(&model, params)?
 
 ## ✅ Recently Implemented
 
+### Late Interaction / ColBERT Support
+**Status**: Complete | **Since**: v0.1.1
+
+ColBERT-style late interaction for semantic search and retrieval.
+
+**Implemented Features:**
+- Multi-vector embeddings (per-token instead of pooled)
+- MaxSim scoring with normalized and symmetric variants
+- Top-k document retrieval and ranking
+- Token-level similarity analysis (matrices, best matches)
+- Parallel scoring with rayon (when `parallel` feature enabled)
+- Works with any embedding model (ColBERT-trained models optimal)
+
+```rust
+use mullama::late_interaction::{MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer};
+
+let mut generator = MultiVectorGenerator::new(model, MultiVectorConfig::default())?;
+
+// Generate per-token embeddings
+let query = generator.embed_text("What is machine learning?")?;
+let doc = generator.embed_text("Machine learning is...")?;
+
+// Score with MaxSim
+let score = LateInteractionScorer::max_sim(&query, &doc);
+let top_k = LateInteractionScorer::find_top_k(&query, &documents, 10);
+
+// With parallel feature
+let top_k = LateInteractionScorer::find_top_k_parallel(&query, &documents, 10);
+```
+
 ### LoRA (Low-Rank Adaptation) Support
 **Status**: Complete | **Since**: v0.1.0
 
@@ -316,6 +346,7 @@ let sampler = SamplerParams::default()
 | Basic Generation | ⭐⭐⭐⭐⭐ | Highly optimized |
 | GPU Acceleration | ⭐⭐⭐⭐⭐ | Full hardware utilization |
 | Batch Processing | ⭐⭐⭐⭐⭐ | Excellent throughput |
+| Late Interaction | ⭐⭐⭐⭐⭐ | Parallel scoring, efficient MaxSim |
 | Grammar Sampling | ⭐⭐⭐⭐ | Good, optimization ongoing |
 | Control Vectors | ⭐⭐⭐ | Basic implementation |
 | Complex Sampling | ⭐⭐⭐⭐ | Well optimized |
@@ -329,12 +360,13 @@ let sampler = SamplerParams::default()
 
 ## 🗺️ Roadmap
 
-### Version 0.1.x (Current - Dec 2025)
+### Version 0.1.x (Current - Jan 2026)
 - **llama.cpp b7542**: Latest upstream integration
 - **LoRA Support**: Complete LoRA adapter system ✅
 - **Text Generation**: Full generation pipeline with streaming ✅
 - **Flash Attention**: Auto/enabled/disabled modes ✅
 - **23+ Samplers**: Comprehensive sampling chain ✅
+- **Late Interaction**: ColBERT-style multi-vector embeddings with MaxSim ✅
 
 ### Version 0.2.0 (Q1 2026)
 - **Enhanced Grammar**: Performance optimizations and advanced patterns
@@ -424,7 +456,8 @@ We believe in transparent development:
 
 ---
 
-**Last Updated**: December 2025
+**Last Updated**: January 2026
+**Mullama Version**: 0.1.1
 **llama.cpp Version**: b7542
 **Next Review**: With v0.2.0 release
 
