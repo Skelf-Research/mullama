@@ -1,0 +1,389 @@
+# Mullama Model Registry
+# Maps short model names to HuggingFace repositories
+#
+# Usage:
+#   mullama run llama3.2:1b
+#   mullama pull qwen2.5:7b-instruct
+#   mullama serve --model deepseek-r1:7b
+#
+# Format:
+#   [aliases.<name>]
+#   repo = "owner/repo"
+#   default_file = "filename.gguf"  # Optional: default quantization
+#   family = "llama"                # Optional: model family
+#   description = "..."             # Optional: human-readable description
+#   tags = ["chat", "instruct"]     # Optional: capabilities
+
+[meta]
+version = "1.0.0"
+updated = "2026-01-20"
+
+# ==============================================================================
+# Llama Family
+# ==============================================================================
+
+[aliases."llama3.2:1b"]
+repo = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+default_file = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Meta Llama 3.2 1B Instruct - Compact and fast"
+tags = ["chat", "instruct", "fast"]
+
+[aliases."llama3.2:3b"]
+repo = "bartowski/Llama-3.2-3B-Instruct-GGUF"
+default_file = "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Meta Llama 3.2 3B Instruct - Balanced size and capability"
+tags = ["chat", "instruct"]
+
+[aliases."llama3.1:8b"]
+repo = "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
+default_file = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Meta Llama 3.1 8B Instruct - High capability"
+tags = ["chat", "instruct", "coding"]
+
+[aliases."llama3.1:70b"]
+repo = "bartowski/Meta-Llama-3.1-70B-Instruct-GGUF"
+default_file = "Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Meta Llama 3.1 70B Instruct - Frontier capability"
+tags = ["chat", "instruct", "coding", "reasoning"]
+
+[aliases."llama3:8b"]
+repo = "QuantFactory/Meta-Llama-3-8B-Instruct-GGUF"
+default_file = "Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
+family = "llama"
+description = "Meta Llama 3 8B Instruct"
+tags = ["chat", "instruct"]
+
+# ==============================================================================
+# Qwen Family
+# ==============================================================================
+
+[aliases."qwen2.5:0.5b"]
+repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+default_file = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 0.5B - Ultra lightweight"
+tags = ["chat", "instruct", "tiny"]
+
+[aliases."qwen2.5:1.5b"]
+repo = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+default_file = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 1.5B Instruct"
+tags = ["chat", "instruct", "fast"]
+
+[aliases."qwen2.5:3b"]
+repo = "Qwen/Qwen2.5-3B-Instruct-GGUF"
+default_file = "qwen2.5-3b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 3B Instruct"
+tags = ["chat", "instruct"]
+
+[aliases."qwen2.5:7b"]
+repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
+default_file = "qwen2.5-7b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 7B Instruct - Highly capable"
+tags = ["chat", "instruct", "coding"]
+
+[aliases."qwen2.5:7b-instruct"]
+repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
+default_file = "qwen2.5-7b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 7B Instruct"
+tags = ["chat", "instruct", "coding"]
+
+[aliases."qwen2.5:14b"]
+repo = "Qwen/Qwen2.5-14B-Instruct-GGUF"
+default_file = "qwen2.5-14b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 14B Instruct"
+tags = ["chat", "instruct", "coding", "reasoning"]
+
+[aliases."qwen2.5:32b"]
+repo = "Qwen/Qwen2.5-32B-Instruct-GGUF"
+default_file = "qwen2.5-32b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 32B Instruct - Very capable"
+tags = ["chat", "instruct", "coding", "reasoning"]
+
+[aliases."qwen2.5:72b"]
+repo = "Qwen/Qwen2.5-72B-Instruct-GGUF"
+default_file = "qwen2.5-72b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 72B Instruct - Frontier capability"
+tags = ["chat", "instruct", "coding", "reasoning"]
+
+[aliases."qwen2.5-coder:7b"]
+repo = "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"
+default_file = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 Coder 7B - Optimized for code"
+tags = ["coding", "instruct"]
+
+[aliases."qwen2.5-coder:14b"]
+repo = "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF"
+default_file = "qwen2.5-coder-14b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 Coder 14B - Advanced coding"
+tags = ["coding", "instruct"]
+
+[aliases."qwen2.5-coder:32b"]
+repo = "Qwen/Qwen2.5-Coder-32B-Instruct-GGUF"
+default_file = "qwen2.5-coder-32b-instruct-q4_k_m.gguf"
+family = "qwen"
+description = "Qwen 2.5 Coder 32B - Expert coding"
+tags = ["coding", "instruct", "reasoning"]
+
+# ==============================================================================
+# DeepSeek Family
+# ==============================================================================
+
+[aliases."deepseek-r1:1.5b"]
+repo = "bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF"
+default_file = "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek R1 Distill 1.5B - Fast reasoning"
+tags = ["reasoning", "chat", "fast"]
+
+[aliases."deepseek-r1:7b"]
+repo = "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF"
+default_file = "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek R1 Distill 7B - Strong reasoning"
+tags = ["reasoning", "chat", "coding"]
+
+[aliases."deepseek-r1:14b"]
+repo = "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF"
+default_file = "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek R1 Distill 14B - Advanced reasoning"
+tags = ["reasoning", "chat", "coding"]
+
+[aliases."deepseek-r1:32b"]
+repo = "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF"
+default_file = "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek R1 Distill 32B - Expert reasoning"
+tags = ["reasoning", "chat", "coding"]
+
+[aliases."deepseek-coder:7b"]
+repo = "TheBloke/deepseek-coder-6.7B-instruct-GGUF"
+default_file = "deepseek-coder-6.7b-instruct.Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek Coder 6.7B"
+tags = ["coding", "instruct"]
+
+[aliases."deepseek-coder:33b"]
+repo = "TheBloke/deepseek-coder-33B-instruct-GGUF"
+default_file = "deepseek-coder-33b-instruct.Q4_K_M.gguf"
+family = "deepseek"
+description = "DeepSeek Coder 33B - Expert coding"
+tags = ["coding", "instruct"]
+
+# ==============================================================================
+# Mistral Family
+# ==============================================================================
+
+[aliases."mistral:7b"]
+repo = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+default_file = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+family = "mistral"
+description = "Mistral 7B Instruct v0.2"
+tags = ["chat", "instruct"]
+
+[aliases."mistral:7b-instruct"]
+repo = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+default_file = "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+family = "mistral"
+description = "Mistral 7B Instruct v0.2"
+tags = ["chat", "instruct"]
+
+[aliases."mixtral:8x7b"]
+repo = "TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF"
+default_file = "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
+family = "mistral"
+description = "Mixtral 8x7B MoE - High capability"
+tags = ["chat", "instruct", "coding"]
+
+[aliases."codestral:22b"]
+repo = "bartowski/Codestral-22B-v0.1-GGUF"
+default_file = "Codestral-22B-v0.1-Q4_K_M.gguf"
+family = "mistral"
+description = "Codestral 22B - Mistral's code model"
+tags = ["coding", "instruct"]
+
+# ==============================================================================
+# Phi Family (Microsoft)
+# ==============================================================================
+
+[aliases."phi3:mini"]
+repo = "microsoft/Phi-3-mini-4k-instruct-gguf"
+default_file = "Phi-3-mini-4k-instruct-q4.gguf"
+family = "phi"
+description = "Phi-3 Mini 4K - Microsoft's compact model"
+tags = ["chat", "instruct", "fast"]
+
+[aliases."phi3:medium"]
+repo = "bartowski/Phi-3-medium-4k-instruct-GGUF"
+default_file = "Phi-3-medium-4k-instruct-Q4_K_M.gguf"
+family = "phi"
+description = "Phi-3 Medium 4K - Microsoft's medium model"
+tags = ["chat", "instruct"]
+
+[aliases."phi3.5:mini"]
+repo = "bartowski/Phi-3.5-mini-instruct-GGUF"
+default_file = "Phi-3.5-mini-instruct-Q4_K_M.gguf"
+family = "phi"
+description = "Phi-3.5 Mini - Microsoft's latest compact model"
+tags = ["chat", "instruct", "fast"]
+
+# ==============================================================================
+# Gemma Family (Google)
+# ==============================================================================
+
+[aliases."gemma2:2b"]
+repo = "bartowski/gemma-2-2b-it-GGUF"
+default_file = "gemma-2-2b-it-Q4_K_M.gguf"
+family = "gemma"
+description = "Gemma 2 2B Instruct - Google's compact model"
+tags = ["chat", "instruct", "fast"]
+
+[aliases."gemma2:9b"]
+repo = "bartowski/gemma-2-9b-it-GGUF"
+default_file = "gemma-2-9b-it-Q4_K_M.gguf"
+family = "gemma"
+description = "Gemma 2 9B Instruct"
+tags = ["chat", "instruct"]
+
+[aliases."gemma2:27b"]
+repo = "bartowski/gemma-2-27b-it-GGUF"
+default_file = "gemma-2-27b-it-Q4_K_M.gguf"
+family = "gemma"
+description = "Gemma 2 27B Instruct - Google's large model"
+tags = ["chat", "instruct", "coding"]
+
+# ==============================================================================
+# Vision Models (Multimodal)
+# ==============================================================================
+
+[aliases."llava:7b"]
+repo = "mys/ggml_llava-v1.5-7b"
+default_file = "ggml-model-q4_k.gguf"
+mmproj = "mmproj-model-f16.gguf"
+family = "llava"
+description = "LLaVA 1.5 7B - Vision-language model"
+tags = ["vision", "multimodal", "chat"]
+
+[aliases."llava:13b"]
+repo = "mys/ggml_llava-v1.5-13b"
+default_file = "ggml-model-q4_k.gguf"
+mmproj = "mmproj-model-f16.gguf"
+family = "llava"
+description = "LLaVA 1.5 13B - Larger vision model"
+tags = ["vision", "multimodal", "chat"]
+
+[aliases."llava-phi3"]
+repo = "xtuner/llava-phi-3-mini-gguf"
+default_file = "llava-phi-3-mini-int4.gguf"
+mmproj = "llava-phi-3-mini-mmproj-f16.gguf"
+family = "llava"
+description = "LLaVA Phi-3 Mini - Fast vision model"
+tags = ["vision", "multimodal", "chat", "fast"]
+
+[aliases."moondream:2b"]
+repo = "vikhyatk/moondream2"
+default_file = "moondream2-text-model-f16.gguf"
+mmproj = "moondream2-mmproj-f16.gguf"
+family = "moondream"
+description = "Moondream 2B - Tiny vision model"
+tags = ["vision", "multimodal", "tiny"]
+
+# ==============================================================================
+# Embedding Models
+# ==============================================================================
+
+[aliases."nomic-embed"]
+repo = "nomic-ai/nomic-embed-text-v1.5-GGUF"
+default_file = "nomic-embed-text-v1.5.Q4_K_M.gguf"
+family = "nomic"
+description = "Nomic Embed Text 1.5 - High quality embeddings"
+tags = ["embedding"]
+
+[aliases."bge:small"]
+repo = "TaylorAI/bge-small-en-v1.5-gguf"
+default_file = "bge-small-en-v1.5-q4_k_m.gguf"
+family = "bge"
+description = "BGE Small English - Fast embeddings"
+tags = ["embedding", "fast"]
+
+[aliases."bge:large"]
+repo = "TaylorAI/bge-large-en-v1.5-gguf"
+default_file = "bge-large-en-v1.5-q4_k_m.gguf"
+family = "bge"
+description = "BGE Large English - High quality embeddings"
+tags = ["embedding"]
+
+# ==============================================================================
+# Specialized Models
+# ==============================================================================
+
+[aliases."starcoder2:3b"]
+repo = "bartowski/starcoder2-3b-GGUF"
+default_file = "starcoder2-3b-Q4_K_M.gguf"
+family = "starcoder"
+description = "StarCoder2 3B - Code completion"
+tags = ["coding", "completion"]
+
+[aliases."starcoder2:7b"]
+repo = "bartowski/starcoder2-7b-GGUF"
+default_file = "starcoder2-7b-Q4_K_M.gguf"
+family = "starcoder"
+description = "StarCoder2 7B - Code completion"
+tags = ["coding", "completion"]
+
+[aliases."starcoder2:15b"]
+repo = "bartowski/starcoder2-15b-GGUF"
+default_file = "starcoder2-15b-Q4_K_M.gguf"
+family = "starcoder"
+description = "StarCoder2 15B - Advanced code completion"
+tags = ["coding", "completion"]
+
+[aliases."yi:6b"]
+repo = "TheBloke/Yi-6B-Chat-GGUF"
+default_file = "yi-6b-chat.Q4_K_M.gguf"
+family = "yi"
+description = "Yi 6B Chat - 01.AI's model"
+tags = ["chat", "instruct"]
+
+[aliases."yi:34b"]
+repo = "TheBloke/Yi-34B-Chat-GGUF"
+default_file = "yi-34b-chat.Q4_K_M.gguf"
+family = "yi"
+description = "Yi 34B Chat - 01.AI's large model"
+tags = ["chat", "instruct", "reasoning"]
+
+# ==============================================================================
+# Quantization Variants
+# Each model can have multiple quantization levels specified with :q suffix
+# ==============================================================================
+
+# Example: llama3.2:1b-q8 would use Q8_0 quantization
+# The CLI will automatically map these to the appropriate files
+
+[quantizations]
+# Maps quantization suffixes to file patterns
+q2 = ["Q2_K", "IQ2_M", "IQ2_S"]
+q3 = ["Q3_K_M", "Q3_K_S", "IQ3_M", "IQ3_S"]
+q4 = ["Q4_K_M", "Q4_K_S", "Q4_0", "IQ4_NL", "IQ4_XS"]
+q5 = ["Q5_K_M", "Q5_K_S", "Q5_0"]
+q6 = ["Q6_K"]
+q8 = ["Q8_0"]
+f16 = ["F16", "f16"]
+f32 = ["F32", "f32"]
+
+# Default quantization preference order (used when no specific quant requested)
+default_order = ["Q4_K_M", "Q4_K_S", "Q5_K_M", "Q4_0", "Q8_0", "F16"]

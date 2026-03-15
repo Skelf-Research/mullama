@@ -227,6 +227,107 @@ let scores = LateInteractionScorer::batch_score_parallel(&queries, &documents);
 - `LiquidAI/LFM2-ColBERT-350M-GGUF` - Purpose-trained ColBERT model
 - Any GGUF embedding model (functional but suboptimal for retrieval)
 
+### 10. **Daemon Mode** (`daemon` feature)
+- **Multi-Model Server**: Run multiple models simultaneously
+- **OpenAI-Compatible API**: Drop-in replacement for OpenAI endpoints
+- **Anthropic-Compatible API**: Claude Messages API support
+- **Embedded Web UI**: Vue.js management interface
+- **Auto-Spawn**: Daemon starts automatically when needed
+- **Model Aliases**: Simple names that resolve to HuggingFace repos
+- **Modelfile/Mullamafile**: Ollama-compatible model configuration
+- **Prometheus Metrics**: Production monitoring endpoint
+- **TUI Client**: Interactive terminal chat interface
+
+**Example:**
+```bash
+# Auto-spawning - daemon starts automatically
+mullama run llama3.2:1b "Hello!"
+
+# Or start explicitly with multiple models
+mullama serve --model llama3.2:1b --model qwen2.5:7b-instruct
+
+# Use OpenAI-compatible API
+curl http://localhost:8080/v1/chat/completions \
+  -d '{"model": "llama3.2:1b", "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Use Anthropic-compatible API
+curl http://localhost:8080/v1/messages \
+  -d '{"model": "llama3.2:1b", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Access Web UI
+open http://localhost:8080/ui/
+```
+
+**Modelfile Support:**
+```dockerfile
+FROM llama3.2:1b
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+SYSTEM """You are a helpful assistant."""
+GPU_LAYERS 32  # Mullama extension
+```
+
+```bash
+mullama create my-assistant -f ./Modelfile
+mullama run my-assistant "Hello!"
+```
+
+### 11. **Reproducibility & Audit Features**
+- **Content-Addressed Verification**: SHA256 digest verification for model files
+- **Revision Pinning**: Pin HuggingFace models to specific commit hashes
+- **Execution Records**: Structured audit logging for inference operations
+- **Config Hashing**: Deterministic configuration fingerprinting
+- **Thinking Content Separation**: Parse and separate reasoning from output
+
+**Content Verification:**
+```dockerfile
+FROM hf:Qwen/Qwen2.5-7B-Instruct-GGUF@a1b2c3d
+DIGEST sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+**Execution Records (JSON-lines audit log):**
+```rust
+use mullama::modelfile::ExecutionRecord;
+
+let record = ExecutionRecord {
+    id: "exec-12345".to_string(),
+    timestamp: 1705123456,
+    model_digest: "sha256:abc123...".to_string(),
+    model_ref: "hf:Qwen/Qwen2.5-7B-Instruct-GGUF".to_string(),
+    revision: Some("a1b2c3d".to_string()),
+    config_hash: "sha256:config...".to_string(),
+    backend_version: "mullama-0.1.1".to_string(),
+    gpu_info: Some("NVIDIA RTX 4090".to_string()),
+    context_size: 8192,
+    gpu_layers: 35,
+    temperature: 0.7,
+    prompt_tokens: 128,
+    completion_tokens: 256,
+    duration_ms: 1500,
+    success: true,
+    error: None,
+};
+
+// Append to audit log
+let json = serde_json::to_string(&record)?;
+writeln!(audit_file, "{}", json)?;
+```
+
+**Thinking Content Separation:**
+```dockerfile
+FROM deepseek-r1:7b
+
+THINKING start "<think>"
+THINKING end "</think>"
+THINKING enabled true
+```
+
+Streaming responses include separate `thinking` field:
+```json
+{"choices":[{"delta":{"thinking":"Let me reason through this..."}}]}
+{"choices":[{"delta":{"content":"The answer is 42."}}]}
+```
+
 ## 🎯 Advanced Integration Patterns
 
 ### 1. **Complete Workflow Integration**

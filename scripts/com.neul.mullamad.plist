@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mullama Daemon LaunchAgent
+     Install to: ~/Library/LaunchAgents/com.neul.mullamad.plist
+     Load with: launchctl load ~/Library/LaunchAgents/com.neul.mullamad.plist
+     Unload with: launchctl unload ~/Library/LaunchAgents/com.neul.mullamad.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.neul.mullamad</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/mullama</string>
+        <string>serve</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MULLAMA_HOST</key>
+        <string>127.0.0.1</string>
+        <key>MULLAMA_PORT</key>
+        <string>11434</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/mullamad.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/mullamad.err</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>LowPriorityIO</key>
+    <false/>
+
+    <key>Nice</key>
+    <integer>0</integer>
+</dict>
+</plist>

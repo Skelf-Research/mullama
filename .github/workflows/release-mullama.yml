@@ -1,0 +1,265 @@
+name: Release Mullama CLI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (build but do not publish)'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: mullama
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================
+  # Build for all platforms
+  # ============================================
+  build:
+    name: Build - ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x64 (CPU)
+          - name: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: daemon
+            artifact_suffix: ""
+
+          # Linux x64 (CUDA)
+          - name: linux-x64-cuda
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: daemon,cuda
+            artifact_suffix: "-cuda"
+            cuda: true
+
+          # Linux ARM64 (CPU)
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            features: daemon
+            artifact_suffix: ""
+
+          # macOS x64 (CPU)
+          - name: darwin-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            features: daemon
+            artifact_suffix: ""
+
+          # macOS ARM64 (Metal)
+          - name: darwin-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            features: daemon
+            artifact_suffix: ""
+
+          # Windows x64 (CPU)
+          - name: win32-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: daemon
+            artifact_suffix: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install CUDA toolkit
+        if: matrix.cuda == true
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+
+      - name: Set CUDA environment
+        if: matrix.cuda == true
+        run: |
+          echo "LLAMA_CUDA=1" >> $GITHUB_ENV
+
+      - name: Set Metal environment (macOS ARM64)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          echo "LLAMA_METAL=1" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-release-
+
+      - name: Build release binary
+        run: |
+          cargo build --release --features "${{ matrix.features }}" --target ${{ matrix.target }}
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
+          chmod +x dist/${{ env.BINARY_NAME }}
+          cd dist
+          tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.name }}${{ matrix.artifact_suffix }}.tar.gz ${{ env.BINARY_NAME }}
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe dist/
+          cd dist
+          Compress-Archive -Path ${{ env.BINARY_NAME }}.exe -DestinationPath ${{ env.BINARY_NAME }}-${{ matrix.name }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.name }}${{ matrix.artifact_suffix && '-cuda' || '' }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  # ============================================
+  # Create GitHub Release
+  # ============================================
+  release:
+    name: Create Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*.zip" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Mullama v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*
+          body: |
+            ## Mullama v${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            **Linux/macOS (one-liner):**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/neul-labs/mullama/main/scripts/install.sh | sh
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            iwr https://raw.githubusercontent.com/neul-labs/mullama/main/scripts/install.ps1 -useb | iex
+            ```
+
+            **Manual Installation:**
+            Download the appropriate binary for your platform from the assets below.
+
+            ### Platform Binaries
+
+            | Platform | CPU | GPU |
+            |----------|-----|-----|
+            | Linux x64 | `mullama-linux-x64.tar.gz` | `mullama-linux-x64-cuda.tar.gz` |
+            | Linux ARM64 | `mullama-linux-arm64.tar.gz` | - |
+            | macOS x64 | `mullama-darwin-x64.tar.gz` | - |
+            | macOS ARM64 | `mullama-darwin-arm64.tar.gz` | Metal (built-in) |
+            | Windows x64 | `mullama-win32-x64.zip` | - |
+
+            ### Quick Start
+            ```bash
+            # Run a model
+            mullama run llama3.2:1b
+
+            # Start the daemon
+            mullama serve
+
+            # Interactive chat
+            mullama chat
+            ```
+
+            See the [documentation](https://github.com/neul-labs/mullama#readme) for more details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================
+  # Update Homebrew Formula
+  # ============================================
+  homebrew:
+    name: Update Homebrew
+    needs: [release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Placeholder for Homebrew tap update
+        run: |
+          echo "TODO: Update Homebrew tap with new release"
+          echo "This would update the formula in a separate homebrew-mullama repository"

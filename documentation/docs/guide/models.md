@@ -201,3 +201,88 @@ match Model::load("model.gguf") {
 3. **Enable GPU offloading** - Significant speedup when VRAM allows
 4. **Use mmap for large models** - Faster loading, better memory efficiency
 5. **Cache loaded models** - Loading is expensive, reuse when possible
+
+## Modelfile Configuration
+
+When using the daemon, models can be configured using Modelfile (Ollama-compatible) or Mullamafile (extended) formats.
+
+### Basic Modelfile
+
+```dockerfile
+FROM llama3.2:1b
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+
+SYSTEM """
+You are a helpful coding assistant.
+"""
+```
+
+### Reproducibility Features
+
+Pin models to specific versions and verify integrity:
+
+```dockerfile
+# Pin to specific HuggingFace commit
+FROM hf:Qwen/Qwen2.5-7B-Instruct-GGUF@a1b2c3d
+
+# Content-addressed verification
+DIGEST sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+PARAMETER temperature 0.7
+```
+
+### Thinking Models
+
+Configure reasoning models like DeepSeek-R1 or QwQ:
+
+```dockerfile
+FROM deepseek-r1:7b
+
+# Separate thinking from response
+THINKING start "<think>"
+THINKING end "</think>"
+THINKING enabled true
+
+# Model capabilities
+CAPABILITY thinking true
+CAPABILITY tools false
+```
+
+### Stop Sequences
+
+Configure model-specific stop tokens:
+
+```dockerfile
+FROM qwen2.5:7b-instruct
+
+# ChatML format
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
+```
+
+Different model families use different stop tokens:
+
+| Family | Stop Tokens |
+|--------|-------------|
+| Qwen | `<|im_end|>`, `<|endoftext|>` |
+| Llama 3 | `<|eot_id|>`, `<|eom_id|>` |
+| DeepSeek | `<|end▁of▁sentence|>` |
+| Gemma | `<end_of_turn>` |
+| Mistral | `</s>` |
+
+### Using Modelfiles
+
+```bash
+# Create model from configuration
+mullama create my-model -f ./Modelfile
+
+# Run the configured model
+mullama run my-model "Hello!"
+
+# Show model's configuration
+mullama show my-model --modelfile
+```
+
+See `docs/DAEMON.md` for complete directive reference.

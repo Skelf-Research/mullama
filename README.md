@@ -140,59 +140,185 @@ features = ["daemon"]
 
 ## Daemon Mode
 
-Mullama includes a multi-model daemon with OpenAI-compatible HTTP API and TUI client:
+Mullama includes a multi-model daemon with OpenAI and Anthropic-compatible HTTP APIs, embedded Web UI, and TUI client.
+
+### Quick Start
 
 ```bash
 # Build the CLI
 cargo build --release --features daemon
 
-# Start daemon with local model
-mullama serve --model llama:./llama.gguf
+# Run with a model (daemon auto-spawns if not running)
+mullama run llama3.2:1b "What is the meaning of life?"
 
-# Start with HuggingFace model (auto-downloads and caches)
-mullama serve --model hf:TheBloke/Llama-2-7B-GGUF
-
-# Multiple models with custom aliases
-mullama serve \
-  --model llama:hf:TheBloke/Llama-2-7B-GGUF:llama-2-7b.Q4_K_M.gguf \
-  --model mistral:hf:TheBloke/Mistral-7B-v0.1-GGUF
+# Or start daemon explicitly
+mullama serve --model llama3.2:1b
 
 # Interactive TUI chat
 mullama chat
+```
 
-# One-shot generation
-mullama run "What is the meaning of life?"
+### Model Aliases
 
+Use simple aliases instead of full HuggingFace paths:
+
+```bash
+# Short aliases (automatically resolve to HuggingFace)
+mullama run llama3.2:1b "Hello!"
+mullama run qwen2.5:7b-instruct "Explain quantum computing"
+mullama run deepseek-r1:7b "Solve: 2x + 5 = 15"
+mullama run mistral:7b "Write a haiku"
+mullama run phi3:mini "What is Rust?"
+
+# Full HuggingFace paths still work
+mullama run hf:meta-llama/Llama-3.2-1B-Instruct-GGUF "Hello!"
+
+# Multiple models
+mullama serve --model llama3.2:1b --model qwen2.5:7b-instruct
+```
+
+See `configs/models.toml` for the full list of 40+ preconfigured model aliases.
+
+### Modelfile / Mullamafile
+
+Create custom models with configuration (Ollama-compatible):
+
+```dockerfile
+# Modelfile (Ollama-compatible)
+FROM llama3.2:1b
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+
+SYSTEM """
+You are a helpful coding assistant.
+"""
+```
+
+```dockerfile
+# Mullamafile (extended format)
+FROM hf:meta-llama/Llama-3.2-1B-Instruct-GGUF:Q4_K_M
+
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER num_ctx 8192
+
+SYSTEM """
+You are a helpful assistant.
+"""
+
+# Mullama extensions
+GPU_LAYERS 32
+FLASH_ATTENTION true
+ADAPTER ./my-lora.safetensors
+VISION_PROJECTOR ./mmproj.gguf
+
+LICENSE MIT
+AUTHOR "Your Name"
+```
+
+```bash
+# Create model from Modelfile
+mullama create my-assistant -f ./Modelfile
+
+# Show model info
+mullama show my-assistant --modelfile
+
+# Copy/rename models
+mullama cp my-assistant my-assistant-v2
+```
+
+### CLI Commands
+
+```bash
 # Model management
-mullama models            # List loaded models
-mullama load phi:./phi.gguf  # Load a model
-mullama unload phi        # Unload a model
-mullama default llama     # Set default model
+mullama list              # List local models with size
+mullama pull llama3.2:1b  # Download without running
+mullama rm old-model      # Remove a model
+mullama ps                # Show running models with memory
 
-# Search for models on HuggingFace
-mullama search "llama 7b"          # Search GGUF models
-mullama search "mistral" --files   # Show available files
-mullama search "phi" --all         # Include non-GGUF models
-mullama info TheBloke/Llama-2-7B-GGUF  # Show repo details
+# Generation
+mullama run llama3.2:1b "prompt"  # One-shot (auto-spawns daemon)
+mullama chat                       # Interactive TUI
+
+# Daemon management
+mullama daemon start      # Start daemon in background
+mullama daemon stop       # Stop daemon
+mullama daemon restart    # Restart daemon
+mullama daemon status     # Show daemon info
+mullama daemon logs       # View daemon logs
+
+# Search and info
+mullama search "llama 7b"          # Search HuggingFace
+mullama info TheBloke/Llama-2-7B-GGUF
 
 # Cache management
-mullama pull hf:TheBloke/Llama-2-7B-GGUF  # Pre-download model
 mullama cache list        # List cached models
 mullama cache size        # Show cache size
 mullama cache clear       # Clear cache
+```
 
-# Use OpenAI-compatible API
+### API Endpoints
+
+**OpenAI-compatible:**
+```bash
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "llama3.2:1b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-### HuggingFace Model Format
-
+**Anthropic-compatible:**
+```bash
+curl http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama3.2:1b", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
-hf:<owner>/<repo>:<filename>   # Specific file
-hf:<owner>/<repo>              # Auto-detect best GGUF
-<alias>:hf:<owner>/<repo>      # With custom alias
+
+**All endpoints:**
+| Endpoint | Description |
+|----------|-------------|
+| `POST /v1/chat/completions` | OpenAI chat completions |
+| `POST /v1/completions` | OpenAI text completions |
+| `POST /v1/messages` | Anthropic Messages API |
+| `POST /v1/embeddings` | Generate embeddings |
+| `GET /v1/models` | List available models |
+| `GET /api/models` | Model management API |
+| `POST /api/models/pull` | Pull a model |
+| `DELETE /api/models/:name` | Delete a model |
+| `GET /api/system/status` | System status |
+| `GET /metrics` | Prometheus metrics |
+| `GET /ui/` | Web UI |
+
+### Embedded Web UI
+
+Access the management UI at `http://localhost:8080/ui/` when the daemon is running:
+
+- **Dashboard** - System status, uptime, metrics
+- **Models** - Pull, list, delete models
+- **Chat** - Interactive multi-conversation chat
+- **Playground** - API testing with cURL generation
+- **Settings** - Theme, generation defaults
+
+```bash
+# Build with embedded UI
+cd ui && npm install && npm run build
+cargo build --release --features daemon,embedded-ui
+```
+
+### Auto-Spawn Daemon
+
+The daemon automatically starts when you run commands:
+
+```bash
+# First time: daemon starts automatically
+$ mullama run llama3.2:1b "Hello"
+Daemon not running, starting it automatically...
+Daemon started successfully, connecting...
+Hello! How can I assist you today?
+
+# Subsequent uses: instant connection
+$ mullama chat
+Connected to Mullama daemon v0.1.1 (uptime: 42s)
 ```
 
 ### Environment Variables
@@ -201,8 +327,9 @@ hf:<owner>/<repo>              # Auto-detect best GGUF
 |----------|-------------|
 | `HF_TOKEN` | HuggingFace token for gated/private models |
 | `MULLAMA_CACHE_DIR` | Override default cache directory |
+| `MULLAMA_BIN` | Path to mullama binary (for auto-spawn) |
 
-### Cache Locations (Cross-Platform)
+### Cache Locations
 
 | Platform | Default Location |
 |----------|-----------------|
@@ -210,7 +337,8 @@ hf:<owner>/<repo>              # Auto-detect best GGUF
 | macOS | `~/Library/Caches/mullama/models` |
 | Windows | `%LOCALAPPDATA%\mullama\models` |
 
-Architecture:
+### Architecture
+
 ```
                                    ┌──────────────────────────────────┐
                                    │           Daemon                 │
@@ -222,18 +350,21 @@ Architecture:
 │   curl/app  │◄── HTTP/REST ─────►│  └────────────────────────────┘  │
 └─────────────┘   (OpenAI API)     │                                  │
                                    │  Endpoints:                      │
-┌─────────────┐                    │  • /v1/chat/completions          │
-│ Other Client│◄── nng (IPC) ─────►│  • /v1/completions               │
-└─────────────┘                    │  • /v1/models                    │
-                                   │  • /v1/embeddings                │
-                                   └──────────────────────────────────┘
+┌─────────────┐                    │  • /v1/chat/completions (OpenAI) │
+│  Web UI     │◄── HTTP ──────────►│  • /v1/messages (Anthropic)     │
+└─────────────┘                    │  • /v1/embeddings                │
+                                   │  • /ui/* (Web UI)                │
+┌─────────────┐                    │  • /metrics (Prometheus)         │
+│ Claude Apps │◄── HTTP ──────────►│  • /api/* (Management)          │
+└─────────────┘  (Anthropic API)   └──────────────────────────────────┘
 ```
 
-Programmatic usage:
+### Programmatic Usage
+
 ```rust
 use mullama::daemon::{DaemonClient, DaemonBuilder};
 
-// Connect as client
+// Connect as client (auto-spawns daemon if needed)
 let client = DaemonClient::connect_default()?;
 let result = client.chat("Hello, AI!", None, 100, 0.7)?;
 println!("{} ({:.1} tok/s)", result.text, result.tokens_per_second());
@@ -308,6 +439,7 @@ export LLAMA_CLBLAST=1
 |----------|-------------|
 | [Getting Started](./docs/GETTING_STARTED.md) | Installation and first application |
 | [Platform Setup](./docs/PLATFORM_SETUP.md) | OS-specific setup instructions |
+| [Daemon Guide](./docs/DAEMON.md) | Daemon mode, APIs, Web UI, Modelfile |
 | [Features Guide](./docs/FEATURES.md) | Integration features overview |
 | [Use Cases](./docs/USE_CASES.md) | Real-world application examples |
 | [API Reference](./docs/API_REFERENCE.md) | Complete API documentation |

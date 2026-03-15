@@ -131,9 +131,16 @@ pub mod websockets;
 pub mod grammar;
 pub mod huggingface;
 pub mod lora;
+pub mod modelfile;
 
 // Export Hugging Face types at crate root for convenience
 pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
+
+// Export Modelfile types at crate root
+pub use modelfile::{
+    find_modelfile, Message as ModelfileMessage, Modelfile, ModelfileError, ModelfileParser,
+    ParameterValue,
+};
 
 // ==================== System-level Functions ====================
 

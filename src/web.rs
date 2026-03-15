@@ -50,15 +50,13 @@
 
 #[cfg(feature = "web")]
 use axum::{
-    extract::{Json, State},
+    extract::Json,
     http::{header, HeaderMap, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response, Sse},
+    response::{IntoResponse, Response},
     Router,
 };
 
-#[cfg(feature = "web")]
-use tower::ServiceBuilder;
 #[cfg(feature = "web")]
 use tower_http::cors::{Any, CorsLayer};
 
