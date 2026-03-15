@@ -13,6 +13,7 @@ Complete API documentation for all Mullama integration features.
 - [Audio Streaming](#-audio-streaming)
 - [Format Conversion](#-format-conversion)
 - [Parallel Processing](#-parallel-processing)
+- [Late Interaction / ColBERT](#-late-interaction--colbert)
 - [Runtime Management](#-runtime-management)
 - [Configuration System](#-configuration-system)
 - [Error Handling](#-error-handling)
@@ -897,6 +898,184 @@ impl BatchGenerationConfig {
     pub fn top_p(mut self, p: f32) -> Self;
     pub fn timeout_ms(mut self, timeout: u64) -> Self;
     pub fn retry_attempts(mut self, attempts: u32) -> Self;
+}
+```
+
+---
+
+## 🔍 Late Interaction / ColBERT
+
+### MultiVectorEmbedding
+
+Per-token embeddings for late interaction retrieval.
+
+```rust
+use mullama::late_interaction::MultiVectorEmbedding;
+
+impl MultiVectorEmbedding {
+    /// Create from raw data
+    pub fn new(data: Vec<f32>, dimension: usize, token_ids: Option<Vec<TokenId>>) -> Self;
+
+    /// Create empty embedding
+    pub fn empty(dimension: usize) -> Self;
+
+    /// Get embedding for specific token index
+    pub fn get(&self, index: usize) -> Option<&[f32]>;
+
+    /// Get number of token embeddings
+    pub fn len(&self) -> usize;
+
+    /// Get embedding dimension
+    pub fn dimension(&self) -> usize;
+
+    /// Check if L2 normalized
+    pub fn is_normalized(&self) -> bool;
+
+    /// Normalize all token embeddings to unit length
+    pub fn normalize(&mut self);
+
+    /// Create normalized copy
+    pub fn normalized(&self) -> Self;
+
+    /// Iterate over token embeddings
+    pub fn iter(&self) -> impl Iterator<Item = &[f32]>;
+
+    /// Convert to 2D vector
+    pub fn to_vecs(&self) -> Vec<Vec<f32>>;
+
+    /// Get total memory size in bytes
+    pub fn size_bytes(&self) -> usize;
+}
+```
+
+### MultiVectorConfig
+
+Configuration for multi-vector embedding generation.
+
+```rust
+use mullama::late_interaction::MultiVectorConfig;
+
+#[derive(Debug, Clone)]
+pub struct MultiVectorConfig {
+    pub normalize: bool,           // L2 normalize token embeddings (default: true)
+    pub skip_special_tokens: bool, // Skip BOS/EOS/PAD tokens (default: true)
+    pub store_token_ids: bool,     // Store token IDs for debugging (default: false)
+    pub batch_size: usize,         // Batch size for embed_batch (default: 32)
+    pub max_seq_len: u32,          // Max sequence length, 0 = model default
+}
+
+impl MultiVectorConfig {
+    pub fn new() -> Self;
+    pub fn normalize(self, normalize: bool) -> Self;
+    pub fn skip_special_tokens(self, skip: bool) -> Self;
+    pub fn store_token_ids(self, store: bool) -> Self;
+    pub fn batch_size(self, size: usize) -> Self;
+    pub fn max_seq_len(self, len: u32) -> Self;
+}
+```
+
+### MultiVectorGenerator
+
+Generates per-token embeddings using LLAMA_POOLING_TYPE_NONE.
+
+```rust
+use mullama::late_interaction::{MultiVectorGenerator, MultiVectorConfig, MultiVectorEmbedding};
+
+impl MultiVectorGenerator {
+    /// Create new generator
+    pub fn new(model: Arc<Model>, config: MultiVectorConfig) -> Result<Self, MullamaError>;
+
+    /// Generate multi-vector embeddings for text
+    pub fn embed_text(&mut self, text: &str) -> Result<MultiVectorEmbedding, MullamaError>;
+
+    /// Generate from pre-tokenized input
+    pub fn embed_tokens(&mut self, tokens: &[TokenId]) -> Result<MultiVectorEmbedding, MullamaError>;
+
+    /// Batch embed multiple texts
+    pub fn embed_batch(&mut self, texts: &[&str]) -> Result<Vec<MultiVectorEmbedding>, MullamaError>;
+
+    /// Get embedding dimension
+    pub fn embedding_dim(&self) -> usize;
+
+    /// Get underlying model
+    pub fn model(&self) -> &Arc<Model>;
+
+    /// Get current configuration
+    pub fn config(&self) -> &MultiVectorConfig;
+}
+```
+
+### LateInteractionScorer
+
+MaxSim and late interaction scoring functions.
+
+```rust
+use mullama::late_interaction::{LateInteractionScorer, MultiVectorEmbedding};
+
+impl LateInteractionScorer {
+    /// Compute MaxSim score: sum of max similarities per query token
+    pub fn max_sim(query: &MultiVectorEmbedding, document: &MultiVectorEmbedding) -> f32;
+
+    /// MaxSim normalized by query length
+    pub fn max_sim_normalized(query: &MultiVectorEmbedding, document: &MultiVectorEmbedding) -> f32;
+
+    /// Symmetric MaxSim (average both directions)
+    pub fn max_sim_symmetric(a: &MultiVectorEmbedding, b: &MultiVectorEmbedding) -> f32;
+
+    /// Find top-k documents by MaxSim score
+    pub fn find_top_k(
+        query: &MultiVectorEmbedding,
+        documents: &[MultiVectorEmbedding],
+        k: usize
+    ) -> Vec<(usize, f32)>;
+
+    /// Rank all documents by MaxSim
+    pub fn rank_documents(
+        query: &MultiVectorEmbedding,
+        documents: &[MultiVectorEmbedding]
+    ) -> Vec<(usize, f32)>;
+
+    /// Compute similarity matrix [query_len x doc_len]
+    pub fn similarity_matrix(
+        query: &MultiVectorEmbedding,
+        document: &MultiVectorEmbedding
+    ) -> Vec<Vec<f32>>;
+
+    /// Get best matching doc token for each query token
+    pub fn best_matches(
+        query: &MultiVectorEmbedding,
+        document: &MultiVectorEmbedding
+    ) -> Vec<(usize, f32)>;
+
+    /// Score multiple queries against multiple documents
+    pub fn batch_score(
+        queries: &[MultiVectorEmbedding],
+        documents: &[MultiVectorEmbedding]
+    ) -> Vec<Vec<f32>>;
+
+    /// Cosine similarity between two vectors
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32;
+
+    // With `parallel` feature:
+
+    /// Parallel top-k search
+    pub fn find_top_k_parallel(
+        query: &MultiVectorEmbedding,
+        documents: &[MultiVectorEmbedding],
+        k: usize
+    ) -> Vec<(usize, f32)>;
+
+    /// Parallel batch scoring
+    pub fn batch_score_parallel(
+        queries: &[MultiVectorEmbedding],
+        documents: &[MultiVectorEmbedding]
+    ) -> Vec<Vec<f32>>;
+
+    /// Parallel document ranking
+    pub fn rank_documents_parallel(
+        query: &MultiVectorEmbedding,
+        documents: &[MultiVectorEmbedding]
+    ) -> Vec<(usize, f32)>;
 }
 ```
 
