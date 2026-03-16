@@ -43,10 +43,10 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use mullama::daemon::spawn::default_log_path;
 use mullama::daemon::{
-    create_openai_router, daemon_status, ensure_daemon_running, is_daemon_running, registry,
+    create_openai_router, daemon_status, ensure_daemon_running, is_daemon_running,
     resolve_model_name, resolve_model_path, spawn_daemon, stop_daemon, Daemon, DaemonBuilder,
-    DaemonClient, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult, ModelConfig,
-    ResolvedModel, SpawnConfig, SpawnResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
+    DaemonClient, GgufFileInfo, HfDownloader, HfModelSpec, ModelConfig, ResolvedModel, SpawnConfig,
+    SpawnResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
 };
 use mullama::modelfile::{find_modelfile, Modelfile, ModelfileParser};
 use rand::{distributions::Alphanumeric, Rng};
@@ -741,6 +741,7 @@ fn generate_api_key() -> String {
     format!("mullama_{}", suffix)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_server(
     models: Vec<String>,
     mmproj: Option<PathBuf>,
@@ -991,14 +992,14 @@ async fn run_server(
     // Start IPC server
     let ipc_daemon = daemon.clone();
     let ipc_socket = socket.clone();
-    let ipc_handle = tokio::spawn(async move {
+    let _ipc_handle = tokio::spawn(async move {
         if let Err(e) = run_ipc_server(ipc_daemon, &ipc_socket).await {
             eprintln!("IPC server error: {}", e);
         }
     });
 
     // Start HTTP server if enabled
-    let http_handle = if http_port > 0 {
+    let _http_handle = if http_port > 0 {
         let http_daemon = daemon.clone();
         let addr = format!("{}:{}", http_addr, http_port);
         Some(tokio::spawn(async move {
@@ -1040,7 +1041,7 @@ async fn run_ipc_server(
     daemon: std::sync::Arc<Daemon>,
     addr: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use mullama::daemon::{Request, Response};
+    use mullama::daemon::Request;
     use nng::options::{Options, RecvTimeout};
     use nng::{Protocol, Socket};
 
@@ -1098,7 +1099,7 @@ async fn run_ipc_server(
 fn connect(socket: &str) -> Result<DaemonClient, Box<dyn std::error::Error>> {
     // Try to connect first
     match DaemonClient::connect_with_timeout(socket, Duration::from_millis(500)) {
-        Ok(client) => return Ok(client),
+        Ok(client) => Ok(client),
         Err(_) => {
             // Daemon not running, try to auto-spawn it
             eprintln!("Daemon not running, starting it automatically...");
@@ -1153,6 +1154,7 @@ fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error
 }
 
 /// Run a model with a prompt (Ollama-style: auto-starts daemon and loads model)
+#[allow(clippy::too_many_arguments)]
 async fn run_model_with_prompt(
     model_spec: &str,
     prompt: Option<&str>,
@@ -1280,14 +1282,14 @@ async fn run_model_with_prompt(
 
     // Step 4: Run the prompt or enter interactive mode
     if let Some(prompt_text) = prompt {
-        if image.is_some() {
+        if let Some(image_path) = image {
             run_vision_prompt(
                 http_port,
                 prompt_text,
                 Some(&model_alias),
                 max_tokens,
                 temperature,
-                image.unwrap(),
+                image_path,
                 stats,
             )
             .await?;
@@ -1364,6 +1366,7 @@ async fn run_model_with_prompt(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn run_prompt(
     socket: &str,
     prompt: &str,
@@ -1557,7 +1560,7 @@ fn load_model(
     io::stdout().flush()?;
 
     match client.load_model_with_options(&alias, &path, gpu_layers, context_size) {
-        Ok((alias, info)) => {
+        Ok((_alias, info)) => {
             println!("OK");
             println!("  Parameters: {}M", info.parameters / 1_000_000);
             println!("  Context:    {}", info.context_size);
@@ -2178,7 +2181,7 @@ async fn list_all_models(
                         let size = metadata.len();
                         let modified = metadata
                             .modified()
-                            .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
+                            .map(chrono::DateTime::<chrono::Utc>::from)
                             .unwrap_or_else(|_| chrono::Utc::now());
                         custom_models.push((name, path, size, modified));
                     }
@@ -2282,7 +2285,11 @@ async fn list_all_models(
     for model in &cached {
         let name = format!(
             "{}:{}",
-            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model
+                .repo_id
+                .split('/')
+                .next_back()
+                .unwrap_or(&model.repo_id),
             model.filename.trim_end_matches(".gguf")
         );
         let name_display = if name.len() > 40 {
@@ -2363,7 +2370,11 @@ async fn remove_model(name: &str, force: bool) -> Result<(), Box<dyn std::error:
         for model in &cached {
             let short_name = format!(
                 "{}:{}",
-                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model
+                    .repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&model.repo_id),
                 model.filename.trim_end_matches(".gguf")
             );
 
@@ -2518,7 +2529,11 @@ async fn show_model_details(
     for model in &cached {
         let short_name = format!(
             "{}:{}",
-            model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+            model
+                .repo_id
+                .split('/')
+                .next_back()
+                .unwrap_or(&model.repo_id),
             model.filename.trim_end_matches(".gguf")
         );
 
@@ -2781,7 +2796,11 @@ async fn resolve_base_model(
             for model in cached {
                 let short_name = format!(
                     "{}:{}",
-                    model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                    model
+                        .repo_id
+                        .split('/')
+                        .next_back()
+                        .unwrap_or(&model.repo_id),
                     model.filename.trim_end_matches(".gguf")
                 );
 
@@ -2810,8 +2829,6 @@ async fn copy_model(source: &str, destination: &str) -> Result<(), Box<dyn std::
 
     // Find source model
     let source_dir = mullama_dir.join(source);
-    let source_mullamafile = source_dir.join("Mullamafile");
-
     if !source_dir.exists() {
         // Try to find in cache
         let downloader = HfDownloader::new()?;
@@ -2821,7 +2838,11 @@ async fn copy_model(source: &str, destination: &str) -> Result<(), Box<dyn std::
         for model in &cached {
             let short_name = format!(
                 "{}:{}",
-                model.repo_id.split('/').last().unwrap_or(&model.repo_id),
+                model
+                    .repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&model.repo_id),
                 model.filename.trim_end_matches(".gguf")
             );
 
@@ -2961,6 +2982,7 @@ fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn std::error::
 }
 
 /// Start the daemon in background
+#[allow(clippy::too_many_arguments)]
 fn daemon_start(
     socket: &str,
     http_port: u16,
@@ -3082,7 +3104,7 @@ fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (http_port, gpu_layers, context_size) = if let Ok(info) = daemon_status(socket) {
         let port = info
             .http_endpoint
-            .and_then(|e| e.split(':').last().and_then(|p| p.parse().ok()))
+            .and_then(|e| e.split(':').next_back().and_then(|p| p.parse().ok()))
             .unwrap_or(8080);
         (port, 0, 4096) // We don't have these from status
     } else {
@@ -3191,7 +3213,7 @@ fn daemon_logs(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::Err
         // Read last N lines
         let file = std::fs::File::open(&log_path)?;
         let reader = std::io::BufReader::new(file);
-        let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+        let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
 
         let start = if all_lines.len() > lines {
             all_lines.len() - lines

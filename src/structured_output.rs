@@ -364,13 +364,8 @@ impl JsonSchemaConverter {
             } else {
                 // Optional property
                 let opt_rule = self.generate_rule_name("opt");
-                if first {
-                    self.rules
-                        .push(format!("{} ::= ({})? ", opt_rule, prop_pattern));
-                } else {
-                    self.rules
-                        .push(format!("{} ::= ({})? ", opt_rule, prop_pattern));
-                }
+                self.rules
+                    .push(format!("{} ::= ({})? ", opt_rule, prop_pattern));
                 parts.push(opt_rule);
             }
         }
@@ -429,13 +424,8 @@ impl JsonSchemaConverter {
             if let Some(max) = max_length {
                 // Generate rule with max length
                 let content_rule = self.generate_rule_name(&format!("{}_content", name));
-                if min_length == 0 {
-                    self.rules
-                        .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
-                } else {
-                    self.rules
-                        .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
-                }
+                self.rules
+                    .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
                 return Ok(format!("{} ::= \"\\\"\" {} \"\\\"\"", name, content_rule));
             }
         }

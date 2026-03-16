@@ -161,13 +161,17 @@ impl AsyncModel {
 
         task::spawn_blocking(move || {
             // Create context
-            let mut ctx_params = ContextParams::default();
-            ctx_params.n_ctx = 2048;
+            let ctx_params = ContextParams {
+                n_ctx: 2048,
+                ..ContextParams::default()
+            };
             let mut context = Context::new(model.clone(), ctx_params)?;
 
             // Configure sampling
-            let mut sampler_params = SamplerParams::default();
-            sampler_params.temperature = 0.7;
+            let sampler_params = SamplerParams {
+                temperature: 0.7,
+                ..SamplerParams::default()
+            };
             let mut sampler = sampler_params.build_chain(model.clone())?;
 
             // Tokenize prompt
@@ -316,7 +320,7 @@ pub type ProgressCallback = Box<dyn Fn(f32) -> BoxFuture<'static, ()> + Send + S
 
 /// Configuration for async operations
 #[cfg(feature = "async")]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AsyncConfig {
     /// Optional progress callback
     pub progress_callback: Option<Arc<ProgressCallback>>,
@@ -338,14 +342,5 @@ impl std::fmt::Debug for AsyncConfig {
 }
 
 #[cfg(feature = "async")]
-impl Default for AsyncConfig {
-    fn default() -> Self {
-        Self {
-            progress_callback: None,
-            cancellation_token: None,
-        }
-    }
-}
-
 #[cfg(not(feature = "async"))]
 compile_error!("Async support requires the 'async' feature to be enabled");

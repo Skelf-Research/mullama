@@ -518,11 +518,12 @@ pub enum ErrorCode {
 // ==================== JSON Mode Types ====================
 
 /// Response format specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type")]
 pub enum ResponseFormat {
     /// Plain text output
     #[serde(rename = "text")]
+    #[default]
     Text,
     /// JSON object output (model will produce valid JSON)
     #[serde(rename = "json_object")]
@@ -530,12 +531,6 @@ pub enum ResponseFormat {
     /// JSON output conforming to a schema
     #[serde(rename = "json_schema")]
     JsonSchema { json_schema: JsonSchemaSpec },
-}
-
-impl Default for ResponseFormat {
-    fn default() -> Self {
-        ResponseFormat::Text
-    }
 }
 
 /// JSON schema specification for structured output
@@ -622,7 +617,7 @@ pub struct FunctionCall {
 // ==================== Thinking Mode Types ====================
 
 /// Configuration for extended thinking mode
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThinkingConfig {
     /// Enable extended thinking
     #[serde(default)]
@@ -633,16 +628,6 @@ pub struct ThinkingConfig {
     /// Include thinking content in stream
     #[serde(default)]
     pub stream_thinking: bool,
-}
-
-impl Default for ThinkingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            budget_tokens: 0,
-            stream_thinking: false,
-        }
-    }
 }
 
 /// Thinking content returned by models with reasoning capabilities
@@ -691,6 +676,7 @@ impl Response {
 }
 
 /// Generate a unique request ID
+#[allow(dead_code)]
 pub fn generate_request_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()

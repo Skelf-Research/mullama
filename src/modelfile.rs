@@ -532,11 +532,10 @@ impl ModelfileParser {
                 }
 
                 "SYSTEM" => {
-                    if value.starts_with("\"\"\"") {
+                    if let Some(initial) = value.strip_prefix("\"\"\"") {
                         match Self::parse_triple_quoted_inline(value, line_num, "SYSTEM")? {
                             Some(inline) => modelfile.system = Some(inline),
                             None => {
-                                let initial = &value[3..];
                                 current_multiline =
                                     Some(("SYSTEM".to_string(), initial.to_string(), line_num));
                             }
@@ -547,11 +546,10 @@ impl ModelfileParser {
                 }
 
                 "TEMPLATE" => {
-                    if value.starts_with("\"\"\"") {
+                    if let Some(initial) = value.strip_prefix("\"\"\"") {
                         match Self::parse_triple_quoted_inline(value, line_num, "TEMPLATE")? {
                             Some(inline) => modelfile.template = Some(inline),
                             None => {
-                                let initial = &value[3..];
                                 current_multiline =
                                     Some(("TEMPLATE".to_string(), initial.to_string(), line_num));
                             }
@@ -567,11 +565,10 @@ impl ModelfileParser {
                 }
 
                 "LICENSE" => {
-                    if value.starts_with("\"\"\"") {
+                    if let Some(initial) = value.strip_prefix("\"\"\"") {
                         match Self::parse_triple_quoted_inline(value, line_num, "LICENSE")? {
                             Some(inline) => modelfile.license = Some(inline),
                             None => {
-                                let initial = &value[3..];
                                 current_multiline =
                                     Some(("LICENSE".to_string(), initial.to_string(), line_num));
                             }
@@ -1020,14 +1017,12 @@ impl Modelfile {
     pub fn verify_digest(&self, file_path: &Path) -> Result<String, ModelfileError> {
         use std::io::Read;
 
-        let mut file = std::fs::File::open(file_path).map_err(|e| ModelfileError::IoError(e))?;
+        let mut file = std::fs::File::open(file_path).map_err(ModelfileError::IoError)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 8192];
 
         loop {
-            let bytes_read = file
-                .read(&mut buffer)
-                .map_err(|e| ModelfileError::IoError(e))?;
+            let bytes_read = file.read(&mut buffer).map_err(ModelfileError::IoError)?;
             if bytes_read == 0 {
                 break;
             }
@@ -1049,6 +1044,7 @@ impl Modelfile {
     }
 
     /// Serialize to Modelfile format
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         let mut output = String::new();
 

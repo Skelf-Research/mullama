@@ -191,6 +191,7 @@ impl Daemon {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn validate_max_tokens(&self, max_tokens: u32) -> Result<(), Response> {
         if max_tokens == 0 {
             return Err(Response::error(
@@ -350,7 +351,7 @@ impl Daemon {
                 } else {
                     stats.system_used
                 };
-                (used / (1024 * 1024)) as u64
+                used / (1024 * 1024)
             })
             .unwrap_or(0);
 
@@ -476,6 +477,7 @@ impl Daemon {
         with_system
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_sampler_params(
         &self,
         loaded: &super::models::LoadedModel,
@@ -502,6 +504,7 @@ impl Daemon {
     }
 
     /// Handle streaming chat completion - returns receiver for SSE
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_chat_completion_streaming(
         &self,
         model: Option<String>,
@@ -555,6 +558,7 @@ impl Daemon {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_chat_completion(
         &self,
         model: Option<String>,
@@ -659,6 +663,7 @@ impl Daemon {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_completion(
         &self,
         model: Option<String>,
@@ -743,6 +748,7 @@ impl Daemon {
     }
 
     /// Handle streaming text completion - returns receiver for SSE
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_completion_streaming(
         &self,
         model: Option<String>,
@@ -1553,7 +1559,7 @@ impl Daemon {
 
             for _ in 0..max_tokens {
                 // Use -1 to sample from the last token's logits
-                let next_token = sampler.sample(&mut *context, -1);
+                let next_token = sampler.sample(&mut context, -1);
 
                 if model.vocab_is_eog(next_token) {
                     break;
@@ -1650,7 +1656,7 @@ impl Daemon {
                         break;
                     }
 
-                    let next_token = sampler.sample(&mut *context, -1);
+                    let next_token = sampler.sample(&mut context, -1);
 
                     if model.vocab_is_eog(next_token) {
                         break;
@@ -1933,8 +1939,10 @@ mod tests {
     use super::*;
 
     fn test_daemon() -> Daemon {
-        let mut config = DaemonConfig::default();
-        config.enable_memory_monitoring = false;
+        let config = DaemonConfig {
+            enable_memory_monitoring: false,
+            ..DaemonConfig::default()
+        };
         Daemon::new(config)
     }
 
