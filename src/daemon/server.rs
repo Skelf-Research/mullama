@@ -292,8 +292,12 @@ impl Daemon {
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let model_alias = loaded.alias.clone();
 
-        // Get stop sequences from chat template and merge with user-provided ones
-        let mut all_stops = loaded.model.get_chat_stop_sequences();
+        // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
+        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+            loaded.config.stop_sequences.clone()
+        } else {
+            loaded.model.get_chat_stop_sequences()
+        };
         all_stops.extend(stop);
 
         // Start streaming generation
@@ -328,8 +332,12 @@ impl Daemon {
         // Build prompt from messages using model's chat template
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
 
-        // Get stop sequences from chat template and merge with user-provided ones
-        let mut all_stops = loaded.model.get_chat_stop_sequences();
+        // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
+        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+            loaded.config.stop_sequences.clone()
+        } else {
+            loaded.model.get_chat_stop_sequences()
+        };
         all_stops.extend(stop);
 
         // Generate
@@ -512,8 +520,12 @@ impl Daemon {
         // For VLMs, we need to place image markers where images should be processed
         let prompt = self.build_vision_prompt(&loaded.model, &messages);
 
-        // Get stop sequences
-        let mut all_stops = loaded.model.get_chat_stop_sequences();
+        // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
+        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+            loaded.config.stop_sequences.clone()
+        } else {
+            loaded.model.get_chat_stop_sequences()
+        };
         all_stops.extend(stop);
 
         // Process with multimodal context
@@ -776,8 +788,12 @@ impl Daemon {
         let prompt = self.build_vision_prompt(&loaded.model, &messages);
         let model_alias = loaded.alias.clone();
 
-        // Get stop sequences
-        let mut all_stops = loaded.model.get_chat_stop_sequences();
+        // Get stop sequences - prefer model config (from Ollama/Modelfile) over architecture detection
+        let mut all_stops = if !loaded.config.stop_sequences.is_empty() {
+            loaded.config.stop_sequences.clone()
+        } else {
+            loaded.model.get_chat_stop_sequences()
+        };
         all_stops.extend(stop);
 
         // Start streaming generation with vision

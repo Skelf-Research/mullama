@@ -626,6 +626,8 @@ impl Model {
                 "llama" => {
                     stops.push("<|eot_id|>".to_string());
                     stops.push("<|eom_id|>".to_string());
+                    // Also stop on header tokens that indicate new turn
+                    stops.push("<|start_header_id|>".to_string());
                 }
                 // Gemma family
                 "gemma" | "gemma2" | "gemma3" => {

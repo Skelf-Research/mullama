@@ -305,18 +305,26 @@ pub fn registry() -> &'static ModelRegistry {
     })
 }
 
-/// Resolve a model name to an HF spec
+/// Resolve a model name to an HF spec or Ollama reference
 ///
 /// This is the main entry point for model resolution.
-/// Handles aliases, HF specs, and local paths.
+/// Resolution priority (Ollama-first):
+/// 1. Local path (starts with `/`, `.`, ends `.gguf`)
+/// 2. Explicit `hf:` prefix → HuggingFace
+/// 3. Explicit `ollama:` prefix → Ollama registry
+/// 4. Try Ollama registry first (name:tag format)
+/// 5. Fall back to Mullama alias lookup → HuggingFace
+/// 6. Unknown
 pub fn resolve_model_name(name: &str) -> ResolvedModel {
     let reg = registry();
     let spec = reg.parse_spec(name);
 
+    // 1. Local path
     if spec.is_local_path {
         return ResolvedModel::LocalPath(PathBuf::from(&spec.name));
     }
 
+    // 2. Explicit HuggingFace spec
     if spec.is_hf_spec {
         return ResolvedModel::HuggingFace {
             spec: spec.original,
@@ -324,6 +332,33 @@ pub fn resolve_model_name(name: &str) -> ResolvedModel {
         };
     }
 
+    // 3. Explicit Ollama prefix
+    if name.starts_with("ollama:") {
+        let ollama_name = name.strip_prefix("ollama:").unwrap();
+        let (model_name, tag) = ollama_name.split_once(':').unwrap_or((ollama_name, "latest"));
+        return ResolvedModel::Ollama {
+            name: model_name.to_string(),
+            tag: tag.to_string(),
+        };
+    }
+
+    // 4. Try Ollama-style name:tag format (Ollama-first resolution)
+    // Check if it looks like an Ollama model reference
+    if super::ollama::OllamaClient::is_ollama_ref(name) {
+        let (model_name, tag) = if name.contains(':') {
+            let parts: Vec<&str> = name.splitn(2, ':').collect();
+            (parts[0].to_string(), parts.get(1).unwrap_or(&"latest").to_string())
+        } else {
+            (name.to_string(), "latest".to_string())
+        };
+
+        return ResolvedModel::Ollama {
+            name: model_name,
+            tag,
+        };
+    }
+
+    // 5. Fall back to Mullama alias lookup (HuggingFace)
     if let Some(ref alias) = spec.alias {
         let hf_spec = reg.to_hf_spec(&spec).unwrap_or_else(|| {
             format!("hf:{}", alias.repo)
@@ -335,7 +370,7 @@ pub fn resolve_model_name(name: &str) -> ResolvedModel {
         };
     }
 
-    // Unknown alias - treat as potential HF repo
+    // 6. Unknown model
     ResolvedModel::Unknown(name.to_string())
 }
 
@@ -349,6 +384,12 @@ pub enum ResolvedModel {
     HuggingFace {
         spec: String,
         mmproj: Option<String>,
+    },
+
+    /// An Ollama registry model
+    Ollama {
+        name: String,
+        tag: String,
     },
 
     /// Unknown model name (not in registry)
@@ -366,9 +407,22 @@ impl ResolvedModel {
         matches!(self, ResolvedModel::HuggingFace { .. })
     }
 
+    /// Check if this is an Ollama model
+    pub fn is_ollama(&self) -> bool {
+        matches!(self, ResolvedModel::Ollama { .. })
+    }
+
     /// Check if this is unknown
     pub fn is_unknown(&self) -> bool {
         matches!(self, ResolvedModel::Unknown(_))
+    }
+
+    /// Get the Ollama model name if this is an Ollama model
+    pub fn ollama_name(&self) -> Option<String> {
+        match self {
+            ResolvedModel::Ollama { name, tag } => Some(format!("{}:{}", name, tag)),
+            _ => None,
+        }
     }
 }
 

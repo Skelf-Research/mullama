@@ -45,6 +45,8 @@ mod client;
 pub mod defaults;
 mod hf;
 mod models;
+pub mod ollama;
+pub mod ollama_template;
 mod openai;
 mod protocol;
 pub mod registry;
@@ -86,6 +88,14 @@ pub use tui::TuiApp;
 pub use hf::{
     resolve_model_path, CachedModel, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult,
 };
+
+// Ollama registry client
+pub use ollama::{
+    OllamaClient, OllamaManifest, OllamaModel, OllamaModelIndex, OllamaModelRef, OllamaParameters,
+};
+
+// Ollama template conversion
+pub use ollama_template::ChatTemplate;
 
 // Model registry (aliases)
 pub use registry::{

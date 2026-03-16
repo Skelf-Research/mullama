@@ -899,6 +899,20 @@ async fn api_pull_model(
                 }),
             ));
         }
+        ResolvedModel::Ollama { name, tag } => {
+            // For Ollama models, use the CLI: mullama pull model:tag
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ModelOperationResponse {
+                    success: false,
+                    message: format!(
+                        "Ollama model '{}:{}' detected. Use CLI: mullama pull {}:{}",
+                        name, tag, name, tag
+                    ),
+                    model: None,
+                }),
+            ));
+        }
         ResolvedModel::Unknown(name) => {
             // Try as direct HF spec
             if name.starts_with("hf:") || name.contains('/') {
@@ -1123,12 +1137,13 @@ async fn api_load_model(
     Json(request): Json<LoadModelRequest>,
 ) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
     use super::hf::HfDownloader;
+    use super::models::ModelConfig;
     use super::registry::{resolve_model_name, ResolvedModel};
 
     // Resolve the model name to find the actual path
     let resolved = resolve_model_name(&request.name);
 
-    let (path, alias): (String, String) = match resolved {
+    let (path, alias, model_config): (String, String, Option<ModelConfig>) = match resolved {
         ResolvedModel::HuggingFace { spec, .. } => {
             // Check if it's already downloaded
             let downloader = HfDownloader::new().map_err(|e| {
@@ -1154,7 +1169,7 @@ async fn api_load_model(
                 if let Some(model) = found {
                     // Use the alias from the spec or the request name
                     let model_alias = hf_spec.alias.unwrap_or_else(|| request.name.clone());
-                    (model.local_path.display().to_string(), model_alias)
+                    (model.local_path.display().to_string(), model_alias, None)
                 } else {
                     return Err((
                         StatusCode::NOT_FOUND,
@@ -1177,7 +1192,43 @@ async fn api_load_model(
             }
         }
         ResolvedModel::LocalPath(path) => {
-            (path.display().to_string(), request.name.clone())
+            (path.display().to_string(), request.name.clone(), None)
+        }
+        ResolvedModel::Ollama { name, tag } => {
+            // Check if Ollama model is cached
+            let client = super::ollama::OllamaClient::new().map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Failed to initialize Ollama client: {}", e),
+                        model: None,
+                    }),
+                )
+            })?;
+
+            let model_name = format!("{}:{}", name, tag);
+            if let Some(ollama_model) = client.get_cached(&model_name) {
+                // Extract config from OllamaModel
+                let config = ModelConfig {
+                    stop_sequences: ollama_model.get_stop_sequences(),
+                    system_prompt: ollama_model.system_prompt.clone(),
+                    temperature: ollama_model.parameters.temperature,
+                    top_p: ollama_model.parameters.top_p,
+                    top_k: ollama_model.parameters.top_k,
+                    context_size: ollama_model.parameters.num_ctx,
+                };
+                (ollama_model.gguf_path.display().to_string(), model_name, Some(config))
+            } else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ModelOperationResponse {
+                        success: false,
+                        message: format!("Ollama model '{}' not downloaded. Pull it first: mullama pull {}", model_name, model_name),
+                        model: None,
+                    }),
+                ));
+            }
         }
         ResolvedModel::Unknown(name) => {
             // Try to find in cached models
@@ -1211,11 +1262,11 @@ async fn api_load_model(
                     model.repo_id.split('/').last().unwrap_or(&model.repo_id),
                     model.filename.trim_end_matches(".gguf")
                 );
-                (model.local_path.display().to_string(), short_name)
+                (model.local_path.display().to_string(), short_name, None)
             } else {
                 // Check if it's a direct path
                 if std::path::Path::new(&name).exists() {
-                    (name.clone(), name)
+                    (name.clone(), name, None)
                 } else {
                     return Err((
                         StatusCode::NOT_FOUND,
@@ -1241,6 +1292,7 @@ async fn api_load_model(
         context_size,
         threads: num_cpus::get() as i32,
         mmproj_path: None,
+        model_config,
     };
 
     match daemon.models.load(config).await {
@@ -1482,6 +1534,7 @@ async fn api_use_default(
         gpu_layers,
         threads: num_cpus::get() as i32,
         mmproj_path,
+        model_config: None, // TODO: Extract config from Modelfile
     };
 
     daemon.models.load(load_config).await.map_err(|e| {
