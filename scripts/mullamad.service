@@ -5,7 +5,7 @@
 
 [Unit]
 Description=Mullama LLM Daemon
-Documentation=https://github.com/neul-labs/mullama
+Documentation=https://github.com/skelf-research/mullama
 After=network.target
 
 [Service]

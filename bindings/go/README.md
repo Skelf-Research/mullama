@@ -5,7 +5,7 @@ High-performance Go bindings for the Mullama LLM library, enabling fast local in
 ## Installation
 
 ```bash
-go get github.com/neul-labs/mullama
+go get github.com/skelf-research/mullama
 ```
 
 **Note**: This package requires the Mullama FFI library to be built and available. See [Building from Source](#building-from-source) below.
@@ -19,7 +19,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/neul-labs/mullama"
+    "github.com/skelf-research/mullama"
 )
 
 func main() {

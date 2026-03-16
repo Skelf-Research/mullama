@@ -4,7 +4,7 @@ Mullama is a drop-in replacement for Ollama. This guide covers everything you ne
 
 ## Quick Checklist
 
-- [ ] Install Mullama: `curl -fsSL https://mullama.dev/install.sh | sh`
+- [ ] Install Mullama: `curl -fsSL https://skelfresearch.com/mullama/install.sh | sh`
 - [ ] Your CLI commands work unchanged
 - [ ] Your Modelfiles work unchanged
 - [ ] Update API endpoint from `localhost:11434` to `localhost:8080`
@@ -115,6 +115,6 @@ Features not available in Ollama:
 
 ## Need Help?
 
-- [Full documentation](https://docs.neullabs.com/mullama/)
+- [Full documentation](https://docs.skelfresearch.com/mullama/)
 - [Detailed comparison](../documentation/docs/comparison/vs-ollama.md)
-- [GitHub issues](https://github.com/neul-labs/mullama/issues)
+- [GitHub issues](https://github.com/skelf-research/mullama/issues)

@@ -7,13 +7,13 @@ This guide will help you get up and running with Mullama quickly.
 **One-liner (Linux/macOS):**
 
 ```bash
-curl -fsSL https://mullama.dev/install.sh | sh
+curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-iwr -useb https://mullama.dev/install.ps1 | iex
+iwr -useb https://skelfresearch.com/mullama/install.ps1 | iex
 ```
 
 **Then run your first model:**
@@ -172,7 +172,7 @@ Test your setup with a simple build:
 
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/neul-labs/mullama.git
+git clone --recurse-submodules https://github.com/skelf-research/mullama.git
 cd mullama
 
 # Test basic build

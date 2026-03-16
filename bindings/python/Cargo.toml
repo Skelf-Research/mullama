@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Python bindings for Mullama LLM library"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/neul-labs/mullama"
+repository = "https://github.com/skelf-research/mullama"
 readme = "README.md"
 
 [lib]

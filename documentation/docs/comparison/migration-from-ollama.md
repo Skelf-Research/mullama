@@ -546,7 +546,7 @@ mullama pull llama3.2:1b
 
     import (
         "fmt"
-        "github.com/neul-labs/mullama-go"
+        "github.com/skelf-research/mullama-go"
     )
 
     func main() {
@@ -621,7 +621,7 @@ After migrating from Ollama to Mullama, you gain access to:
 
 ```bash
 # Clone and build
-git clone https://github.com/neul-labs/mullama.git
+git clone https://github.com/skelf-research/mullama.git
 cd mullama
 git submodule update --init --recursive
 

@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
 authors = [
-    { name = "Neul Labs", email = "hello@neul.uk" }
+    { name = "Skelf Research", email = "support@skelfresearch.com" }
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -43,10 +43,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/neul-labs/mullama"
+Homepage = "https://github.com/skelf-research/mullama"
 Documentation = "https://docs.rs/mullama"
-Repository = "https://github.com/neul-labs/mullama"
-Issues = "https://github.com/neul-labs/mullama/issues"
+Repository = "https://github.com/skelf-research/mullama"
+Issues = "https://github.com/skelf-research/mullama/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

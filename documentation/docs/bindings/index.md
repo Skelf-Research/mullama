@@ -107,7 +107,7 @@ Pre-built binaries are available for the following platforms:
 === "Go"
 
     ```bash
-    go get github.com/neul-labs/mullama-go
+    go get github.com/skelf-research/mullama-go
     ```
 
     Requires Go >= 1.21 and `CGO_ENABLED=1`. The `libmullama_ffi` shared library must be available at link time.

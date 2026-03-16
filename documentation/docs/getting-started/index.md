@@ -117,7 +117,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 === "Go"
 
     ```bash
-    go get github.com/neul-labs/mullama-go
+    go get github.com/skelf-research/mullama-go
     ```
 
     ```go title="main.go"
@@ -125,7 +125,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 
     import (
         "fmt"
-        "github.com/neul-labs/mullama-go"
+        "github.com/skelf-research/mullama-go"
     )
 
     func main() {
@@ -140,7 +140,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 === "PHP"
 
     ```bash
-    composer require neul-labs/mullama
+    composer require skelf-research/mullama
     ```
 
     ```php title="main.php"
