@@ -261,5 +261,5 @@ jobs:
     steps:
       - name: Placeholder for Homebrew tap update
         run: |
-          echo "TODO: Update Homebrew tap with new release"
+          echo "Update Homebrew tap with new release"
           echo "This would update the formula in a separate homebrew-mullama repository"

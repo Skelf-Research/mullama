@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useModels } from '@/composables/useModels'
 import ModelCard from '@/components/ModelCard.vue'
 import { management, type DefaultModel } from '@/api/client'
@@ -70,11 +70,6 @@ const handleDelete = async (name: string) => {
   } catch (e) {
     // Handle error
   }
-}
-
-const quickPull = (name: string) => {
-  pullModelName.value = name
-  showPullModal.value = true
 }
 
 const handleUseDefault = async (name: string) => {

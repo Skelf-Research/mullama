@@ -41,14 +41,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use mullama::daemon::spawn::default_log_path;
 use mullama::daemon::{
     create_openai_router, daemon_status, ensure_daemon_running, is_daemon_running, registry,
     resolve_model_name, resolve_model_path, spawn_daemon, stop_daemon, Daemon, DaemonBuilder,
-    DaemonClient, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult, ResolvedModel,
-    SpawnConfig, SpawnResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
+    DaemonClient, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult, ModelConfig,
+    ResolvedModel, SpawnConfig, SpawnResult, TuiApp, DEFAULT_HTTP_PORT, DEFAULT_SOCKET,
 };
-use mullama::daemon::spawn::default_log_path;
 use mullama::modelfile::{find_modelfile, Modelfile, ModelfileParser};
+use rand::{distributions::Alphanumeric, Rng};
 
 #[derive(Parser)]
 #[command(name = "mullama")]
@@ -130,8 +131,33 @@ enum Commands {
         http_port: u16,
 
         /// HTTP bind address
-        #[arg(long, default_value = "0.0.0.0")]
+        #[arg(long, default_value = "127.0.0.1")]
         http_addr: String,
+
+        /// API key for HTTP endpoints (Authorization: Bearer <key>)
+        /// If omitted and auth is required, a secure key is generated at startup.
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Always require API key auth, even when bound to localhost.
+        #[arg(long)]
+        require_api_key: bool,
+
+        /// Hard server limit for generation max_tokens
+        #[arg(long, default_value = "4096")]
+        max_tokens_limit: u32,
+
+        /// Maximum HTTP request body size in MB
+        #[arg(long, default_value = "2")]
+        max_request_body_mb: u32,
+
+        /// Maximum number of concurrent HTTP requests
+        #[arg(long, default_value = "64")]
+        max_concurrent_requests: usize,
+
+        /// Maximum HTTP requests per second
+        #[arg(long, default_value = "200")]
+        max_requests_per_second: u64,
 
         /// Default GPU layers to offload
         #[arg(short, long, default_value = "0")]
@@ -140,6 +166,10 @@ enum Commands {
         /// Default context size
         #[arg(short, long, default_value = "4096")]
         context_size: u32,
+
+        /// Number of contexts in each loaded model pool
+        #[arg(long, default_value_t = mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE)]
+        context_pool_size: usize,
 
         /// Threads per model
         #[arg(short, long)]
@@ -402,6 +432,18 @@ enum DaemonAction {
         #[arg(short = 'p', long, default_value = "8080")]
         http_port: u16,
 
+        /// HTTP bind address
+        #[arg(long, default_value = "127.0.0.1")]
+        http_addr: String,
+
+        /// API key for HTTP endpoints (Authorization: Bearer <key>)
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Always require API key auth, even when bound to localhost.
+        #[arg(long)]
+        require_api_key: bool,
+
         /// Default GPU layers to offload
         #[arg(short, long, default_value = "0")]
         gpu_layers: i32,
@@ -409,6 +451,10 @@ enum DaemonAction {
         /// Default context size
         #[arg(short, long, default_value = "4096")]
         context_size: u32,
+
+        /// Number of contexts in each loaded model pool
+        #[arg(long, default_value_t = mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE)]
+        context_pool_size: usize,
 
         /// IPC socket address
         #[arg(short, long, default_value = DEFAULT_SOCKET)]
@@ -520,8 +566,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket,
             http_port,
             http_addr,
+            api_key,
+            require_api_key,
+            max_tokens_limit,
+            max_request_body_mb,
+            max_concurrent_requests,
+            max_requests_per_second,
             gpu_layers,
             context_size,
+            context_pool_size,
             threads,
             verbose,
         } => {
@@ -531,8 +584,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 socket,
                 http_port,
                 http_addr,
+                api_key,
+                require_api_key,
+                max_tokens_limit,
+                max_request_body_mb,
+                max_concurrent_requests,
+                max_requests_per_second,
                 gpu_layers,
                 context_size,
+                context_pool_size,
                 threads,
                 verbose,
             )
@@ -668,17 +728,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // ==================== Server ====================
 
+fn is_loopback_http_addr(addr: &str) -> bool {
+    matches!(addr, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn generate_api_key() -> String {
+    let suffix: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(40)
+        .map(char::from)
+        .collect();
+    format!("mullama_{}", suffix)
+}
+
 async fn run_server(
     models: Vec<String>,
     mmproj: Option<PathBuf>,
     socket: String,
     http_port: u16,
     http_addr: String,
+    api_key: Option<String>,
+    require_api_key: bool,
+    max_tokens_limit: u32,
+    max_request_body_mb: u32,
+    max_concurrent_requests: usize,
+    max_requests_per_second: u64,
     gpu_layers: i32,
     context_size: u32,
+    context_pool_size: usize,
     threads: Option<i32>,
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut resolved_api_key = api_key.or_else(|| std::env::var("MULLAMA_API_KEY").ok());
+    let is_loopback_bind = is_loopback_http_addr(&http_addr);
+    let enforce_api_key =
+        http_port > 0 && (require_api_key || !is_loopback_bind || resolved_api_key.is_some());
+    let mut generated_api_key = false;
+
+    if enforce_api_key && resolved_api_key.is_none() {
+        resolved_api_key = Some(generate_api_key());
+        generated_api_key = true;
+    }
+
     // Initialize backend
     mullama::backend_init();
 
@@ -686,16 +777,31 @@ async fn run_server(
     println!("  IPC Socket: {}", socket);
     if http_port > 0 {
         println!("  HTTP API:   http://{}:{}", http_addr, http_port);
+        if enforce_api_key {
+            if generated_api_key {
+                println!("  HTTP Auth:  enabled (generated API key)");
+            } else {
+                println!("  HTTP Auth:  enabled");
+            }
+            if let Some(ref key) = resolved_api_key {
+                println!("  API Key:    {}", key);
+            }
+        } else {
+            println!("  HTTP Auth:  disabled (localhost compatibility mode)");
+        }
     }
     println!("  GPU Layers: {}", gpu_layers);
     println!("  Context:    {}", context_size);
+    println!("  Ctx Pool:   {}", context_pool_size);
+    println!("  Max Tokens: {}", max_tokens_limit);
+    println!("  Body Limit: {} MB", max_request_body_mb);
     if let Some(ref mmp) = mmproj {
         println!("  MMProj:     {}", mmp.display());
     }
     println!();
 
     // Resolve model paths (download HF/Ollama models if needed)
-    let mut resolved_models: Vec<(String, PathBuf)> = Vec::new();
+    let mut resolved_models: Vec<(String, PathBuf, Option<ModelConfig>)> = Vec::new();
     for spec in &models {
         use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
 
@@ -705,14 +811,14 @@ async fn run_server(
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| "model".to_string());
-                resolved_models.push((alias, path));
+                resolved_models.push((alias, path, None));
             }
             ResolvedModel::HuggingFace { spec: hf_spec, .. } => {
                 println!("Resolving HuggingFace model: {}", hf_spec);
                 match resolve_model_path(&hf_spec, true).await {
                     Ok((alias, path)) => {
                         println!("  -> {} at {}", alias, path.display());
-                        resolved_models.push((alias, path));
+                        resolved_models.push((alias, path, None));
                     }
                     Err(e) => {
                         eprintln!("Failed to resolve {}: {}", spec, e);
@@ -736,13 +842,33 @@ async fn run_server(
                 // Check if cached, if not pull it
                 if let Some(model) = client.get_cached(&model_name) {
                     println!("  -> {} at {}", alias, model.gguf_path.display());
-                    resolved_models.push((alias.clone(), model.gguf_path.clone()));
+                    let config = ModelConfig {
+                        stop_sequences: model.get_stop_sequences(),
+                        system_prompt: model.system_prompt.clone(),
+                        temperature: model.parameters.temperature,
+                        top_p: model.parameters.top_p,
+                        top_k: model.parameters.top_k,
+                        context_size: model.parameters.num_ctx,
+                    };
+                    resolved_models.push((alias.clone(), model.gguf_path.clone(), Some(config)));
                 } else {
                     println!("  Pulling from Ollama registry...");
                     match client.pull(&model_name, true).await {
                         Ok(model) => {
                             println!("  -> {} at {}", alias, model.gguf_path.display());
-                            resolved_models.push((alias.clone(), model.gguf_path.clone()));
+                            let config = ModelConfig {
+                                stop_sequences: model.get_stop_sequences(),
+                                system_prompt: model.system_prompt.clone(),
+                                temperature: model.parameters.temperature,
+                                top_p: model.parameters.top_p,
+                                top_k: model.parameters.top_k,
+                                context_size: model.parameters.num_ctx,
+                            };
+                            resolved_models.push((
+                                alias.clone(),
+                                model.gguf_path.clone(),
+                                Some(config),
+                            ));
                         }
                         Err(e) => {
                             eprintln!("Failed to pull {}: {}", model_name, e);
@@ -759,9 +885,12 @@ async fn run_server(
                         .file_stem()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| "model".to_string());
-                    resolved_models.push((alias, path));
+                    resolved_models.push((alias, path, None));
                 } else {
-                    eprintln!("Unknown model: {} (not found locally or in registries)", name);
+                    eprintln!(
+                        "Unknown model: {} (not found locally or in registries)",
+                        name
+                    );
                     continue;
                 }
             }
@@ -773,7 +902,14 @@ async fn run_server(
     let mut builder = DaemonBuilder::new()
         .ipc_socket(&socket)
         .default_gpu_layers(gpu_layers)
-        .default_context_size(context_size);
+        .default_context_size(context_size)
+        .default_context_pool_size(context_pool_size)
+        .http_api_key(resolved_api_key)
+        .enforce_http_api_key(enforce_api_key)
+        .max_tokens_per_request(max_tokens_limit)
+        .max_request_body_bytes((max_request_body_mb as usize) * 1024 * 1024)
+        .max_concurrent_http_requests(max_concurrent_requests)
+        .max_requests_per_second(max_requests_per_second);
 
     if http_port > 0 {
         builder = builder.http_port(http_port).http_addr(&http_addr);
@@ -786,12 +922,22 @@ async fn run_server(
     }
 
     // Add resolved models
-    for (alias, path) in &resolved_models {
+    for (alias, path, _) in &resolved_models {
         builder = builder.model(format!("{}:{}", alias, path.display()));
     }
 
     let (daemon, mut initial_models) = builder.build();
     let daemon = std::sync::Arc::new(daemon);
+
+    let model_configs_by_alias: std::collections::HashMap<String, ModelConfig> = resolved_models
+        .iter()
+        .filter_map(|(alias, _path, config)| config.clone().map(|c| (alias.clone(), c)))
+        .collect();
+    for config in &mut initial_models {
+        if let Some(model_config) = model_configs_by_alias.get(&config.alias) {
+            config.model_config = Some(model_config.clone());
+        }
+    }
 
     // Apply mmproj to the first model if specified
     if let Some(ref mmp) = mmproj {
@@ -852,7 +998,13 @@ async fn run_server(
         let addr = format!("{}:{}", http_addr, http_port);
         Some(tokio::spawn(async move {
             let router = create_openai_router(http_daemon);
-            let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+            let listener = match tokio::net::TcpListener::bind(&addr).await {
+                Ok(listener) => listener,
+                Err(e) => {
+                    eprintln!("Failed to bind HTTP listener at {}: {}", addr, e);
+                    return;
+                }
+            };
             if let Err(e) = axum::serve(listener, router).await {
                 eprintln!("HTTP server error: {}", e);
             }
@@ -884,10 +1036,12 @@ async fn run_ipc_server(
     addr: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use mullama::daemon::{Request, Response};
+    use nng::options::{Options, RecvTimeout};
     use nng::{Protocol, Socket};
 
     let socket = Socket::new(Protocol::Rep0)?;
     socket.listen(addr)?;
+    socket.set_opt::<RecvTimeout>(Some(Duration::from_millis(250)))?;
 
     loop {
         if daemon.is_shutdown() {
@@ -955,7 +1109,8 @@ fn connect(socket: &str) -> Result<DaemonClient, Box<dyn std::error::Error>> {
                     "Failed to start daemon automatically: {}\n\
                     You can start the daemon manually with: mullama serve",
                     e
-                ).into());
+                )
+                .into());
             }
 
             eprintln!("Daemon started successfully, connecting...");
@@ -1046,7 +1201,11 @@ async fn run_model_with_prompt(
                     .unwrap_or_else(|| "model".to_string());
                 (alias, path)
             } else {
-                return Err(format!("Unknown model: {} (not found locally or in registries)", name).into());
+                return Err(format!(
+                    "Unknown model: {} (not found locally or in registries)",
+                    name
+                )
+                .into());
             }
         }
     };
@@ -1067,6 +1226,7 @@ async fn run_model_with_prompt(
                 startup_timeout: std::time::Duration::from_secs(60),
                 background: true,
                 log_file: Some(default_log_path()),
+                ..Default::default()
             };
 
             match spawn_daemon(&config) {
@@ -1085,7 +1245,8 @@ async fn run_model_with_prompt(
                     break c;
                 }
                 attempts += 1;
-                if attempts > 150 {  // 30 seconds
+                if attempts > 150 {
+                    // 30 seconds
                     return Err("Timed out waiting for daemon to start".into());
                 }
             }
@@ -1280,10 +1441,16 @@ async fn run_vision_prompt(
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/v1/chat/completions", http_port);
 
-    let response = client
+    let mut request = client
         .post(&url)
         .header("Content-Type", "application/json")
-        .json(&request_body)
+        .json(&request_body);
+
+    if let Ok(api_key) = std::env::var("MULLAMA_API_KEY") {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|e| format!("Failed to connect to daemon at {}: {}", url, e))?;
@@ -1611,9 +1778,11 @@ async fn pull_model(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::
             pull_from_huggingface(&hf_spec, show_progress).await
         }
 
-        ResolvedModel::LocalPath(path) => {
-            Err(format!("'{}' is a local path, not a downloadable model", path.display()).into())
-        }
+        ResolvedModel::LocalPath(path) => Err(format!(
+            "'{}' is a local path, not a downloadable model",
+            path.display()
+        )
+        .into()),
 
         ResolvedModel::Unknown(_) => {
             // Not a known alias, try as direct HF spec
@@ -1622,7 +1791,10 @@ async fn pull_model(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::
     }
 }
 
-async fn pull_from_huggingface(spec: &str, show_progress: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn pull_from_huggingface(
+    spec: &str,
+    show_progress: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let hf_spec = HfModelSpec::parse(spec).ok_or_else(|| {
         format!(
             "Unknown model '{}'\n\
@@ -1965,7 +2137,10 @@ fn format_time_ago(time: &chrono::DateTime<chrono::Utc>) -> String {
 }
 
 /// List all local models (cached HuggingFace + Ollama + custom models)
-async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn list_all_models(
+    verbose: bool,
+    json_output: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     use mullama::daemon::OllamaClient;
 
     let downloader = HfDownloader::new()?;
@@ -1991,11 +2166,13 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
                 let path = entry.path();
                 if path.extension().map(|e| e == "gguf").unwrap_or(false) {
                     if let Ok(metadata) = std::fs::metadata(&path) {
-                        let name = path.file_stem()
+                        let name = path
+                            .file_stem()
                             .map(|s| s.to_string_lossy().to_string())
                             .unwrap_or_else(|| "unknown".to_string());
                         let size = metadata.len();
-                        let modified = metadata.modified()
+                        let modified = metadata
+                            .modified()
                             .map(|t| chrono::DateTime::<chrono::Utc>::from(t))
                             .unwrap_or_else(|_| chrono::Utc::now());
                         custom_models.push((name, path, size, modified));
@@ -2076,7 +2253,8 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
             .map(|dt| format_time_ago(&dt.with_timezone(&chrono::Utc)))
             .unwrap_or_else(|_| model.pulled_at.clone());
 
-        println!("{:<42} {:>10} {}",
+        println!(
+            "{:<42} {:>10} {}",
             name_display,
             format_size(model.total_size),
             modified
@@ -2097,9 +2275,11 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
 
     // Print cached HF models
     for model in &cached {
-        let name = format!("{}:{}",
+        let name = format!(
+            "{}:{}",
             model.repo_id.split('/').last().unwrap_or(&model.repo_id),
-            model.filename.trim_end_matches(".gguf"));
+            model.filename.trim_end_matches(".gguf")
+        );
         let name_display = if name.len() > 40 {
             format!("{}...", &name[..37])
         } else {
@@ -2110,7 +2290,8 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
             .map(|dt| format_time_ago(&dt.with_timezone(&chrono::Utc)))
             .unwrap_or_else(|_| model.downloaded_at.clone());
 
-        println!("{:<42} {:>10} {}",
+        println!(
+            "{:<42} {:>10} {}",
             name_display,
             format_size(model.size_bytes),
             modified
@@ -2132,7 +2313,8 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
             name.clone()
         };
 
-        println!("{:<42} {:>10} {}",
+        println!(
+            "{:<42} {:>10} {}",
             name_display,
             format_size(*size),
             format_time_ago(modified)
@@ -2151,7 +2333,11 @@ async fn list_all_models(verbose: bool, json_output: bool) -> Result<(), Box<dyn
         + ollama_models.iter().map(|m| m.total_size).sum::<u64>();
 
     println!();
-    println!("{} model(s), {} total", total_count, format_size(total_size));
+    println!(
+        "{} model(s), {} total",
+        total_count,
+        format_size(total_size)
+    );
 
     Ok(())
 }
@@ -2170,9 +2356,11 @@ async fn remove_model(name: &str, force: bool) -> Result<(), Box<dyn std::error:
     } else {
         // Check cached models
         for model in &cached {
-            let short_name = format!("{}:{}",
+            let short_name = format!(
+                "{}:{}",
                 model.repo_id.split('/').last().unwrap_or(&model.repo_id),
-                model.filename.trim_end_matches(".gguf"));
+                model.filename.trim_end_matches(".gguf")
+            );
 
             if model.filename == name
                 || model.repo_id == name
@@ -2298,12 +2486,9 @@ fn show_running_models(socket: &str, json_output: bool) -> Result<(), Box<dyn st
             "-".to_string()
         };
 
-        println!("{:<20} {:>10} {:>12} {:>10} {:>8}",
-            name_display,
-            size,
-            gpu,
-            model.info.context_size,
-            active
+        println!(
+            "{:<20} {:>10} {:>12} {:>10} {:>8}",
+            name_display, size, gpu, model.info.context_size, active
         );
     }
 
@@ -2314,7 +2499,11 @@ fn show_running_models(socket: &str, json_output: bool) -> Result<(), Box<dyn st
 }
 
 /// Show model details
-async fn show_model_details(name: &str, show_modelfile: bool, json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn show_model_details(
+    name: &str,
+    show_modelfile: bool,
+    json_output: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let downloader = HfDownloader::new()?;
     let cached = downloader.list_cached();
 
@@ -2322,9 +2511,11 @@ async fn show_model_details(name: &str, show_modelfile: bool, json_output: bool)
     let mut found = None;
 
     for model in &cached {
-        let short_name = format!("{}:{}",
+        let short_name = format!(
+            "{}:{}",
             model.repo_id.split('/').last().unwrap_or(&model.repo_id),
-            model.filename.trim_end_matches(".gguf"));
+            model.filename.trim_end_matches(".gguf")
+        );
 
         if model.filename == name
             || model.repo_id == name
@@ -2583,9 +2774,11 @@ async fn resolve_base_model(
             let cached = downloader.list_cached();
 
             for model in cached {
-                let short_name = format!("{}:{}",
+                let short_name = format!(
+                    "{}:{}",
                     model.repo_id.split('/').last().unwrap_or(&model.repo_id),
-                    model.filename.trim_end_matches(".gguf"));
+                    model.filename.trim_end_matches(".gguf")
+                );
 
                 if model.filename == name
                     || short_name == name
@@ -2598,7 +2791,8 @@ async fn resolve_base_model(
             Err(format!(
                 "Unknown model '{}'. Use a local path, HF spec (hf:owner/repo), or a known alias.",
                 name
-            ).into())
+            )
+            .into())
         }
     }
 }
@@ -2620,9 +2814,11 @@ async fn copy_model(source: &str, destination: &str) -> Result<(), Box<dyn std::
 
         let mut found = None;
         for model in &cached {
-            let short_name = format!("{}:{}",
+            let short_name = format!(
+                "{}:{}",
                 model.repo_id.split('/').last().unwrap_or(&model.repo_id),
-                model.filename.trim_end_matches(".gguf"));
+                model.filename.trim_end_matches(".gguf")
+            );
 
             if model.filename == source
                 || short_name == source
@@ -2656,7 +2852,10 @@ async fn copy_model(source: &str, destination: &str) -> Result<(), Box<dyn std::
                 "copied_from": source,
                 "base_model": model.local_path.display().to_string(),
             });
-            std::fs::write(dest_dir.join("metadata.json"), serde_json::to_string_pretty(&metadata)?)?;
+            std::fs::write(
+                dest_dir.join("metadata.json"),
+                serde_json::to_string_pretty(&metadata)?,
+            )?;
 
             println!("Copied '{}' to '{}'", source, destination);
             println!("Model location: {}", dest_dir.display());
@@ -2716,11 +2915,24 @@ fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn std::error::
     match action {
         DaemonAction::Start {
             http_port,
+            http_addr,
+            api_key,
+            require_api_key,
             gpu_layers,
             context_size,
+            context_pool_size,
             socket,
         } => {
-            daemon_start(&socket, http_port, gpu_layers, context_size)?;
+            daemon_start(
+                &socket,
+                http_port,
+                &http_addr,
+                api_key,
+                require_api_key,
+                gpu_layers,
+                context_size,
+                context_pool_size,
+            )?;
         }
 
         DaemonAction::Stop { socket, force: _ } => {
@@ -2747,8 +2959,12 @@ fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn std::error::
 fn daemon_start(
     socket: &str,
     http_port: u16,
+    http_addr: &str,
+    api_key: Option<String>,
+    require_api_key: bool,
     gpu_layers: i32,
     context_size: u32,
+    context_pool_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if already running
     if is_daemon_running(socket) {
@@ -2766,8 +2982,12 @@ fn daemon_start(
     let config = SpawnConfig {
         socket: socket.to_string(),
         http_port,
+        http_addr: http_addr.to_string(),
+        api_key,
+        require_api_key,
         gpu_layers,
         context_size,
+        context_pool_size,
         background: true,
         log_file: Some(default_log_path()),
         ..Default::default()
@@ -2794,7 +3014,7 @@ fn daemon_start(
                         println!("  PID:     {}", pid);
                     }
                     println!("  Socket:  {}", socket);
-                    println!("  HTTP:    http://127.0.0.1:{}", http_port);
+                    println!("  HTTP:    http://{}:{}", http_addr, http_port);
                     println!("  Logs:    {}", default_log_path().display());
                     return Ok(());
                 }
@@ -2872,7 +3092,16 @@ fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start
-    daemon_start(socket, http_port, gpu_layers, context_size)?;
+    daemon_start(
+        socket,
+        http_port,
+        "127.0.0.1",
+        None,
+        false,
+        gpu_layers,
+        context_size,
+        mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE,
+    )?;
 
     Ok(())
 }

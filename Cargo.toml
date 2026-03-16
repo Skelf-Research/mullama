@@ -81,7 +81,7 @@ async-stream = { version = "0.3", optional = true }
 
 # Web framework integration
 axum = { version = "0.7", optional = true }
-tower = { version = "0.4", features = ["timeout"], optional = true }
+tower = { version = "0.4", features = ["timeout", "limit"], optional = true }
 tower-http = { version = "0.5", features = ["cors"], optional = true }
 
 # WebSocket support

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
-import { useChat, type Conversation } from '@/composables/useChat'
+import { useChat } from '@/composables/useChat'
 import { useModels } from '@/composables/useModels'
 import ChatMessage from '@/components/ChatMessage.vue'
 

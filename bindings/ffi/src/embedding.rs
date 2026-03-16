@@ -317,14 +317,14 @@ pub extern "C" fn mullama_embed_batch(
 
 /// Get the embedding dimension for the generator
 #[no_mangle]
-pub extern "C" fn mullama_embedding_generator_n_embd(gen: *const MullamaEmbeddingGenerator) -> c_int {
+pub extern "C" fn mullama_embedding_generator_n_embd(
+    gen: *const MullamaEmbeddingGenerator,
+) -> c_int {
     if gen.is_null() {
         return 0;
     }
 
-    let result = unsafe {
-        MutableHandle::with_ref(gen, |inner| inner.context.model.n_embd())
-    };
+    let result = unsafe { MutableHandle::with_ref(gen, |inner| inner.context.model.n_embd()) };
 
     result.unwrap_or(0)
 }

@@ -59,6 +59,22 @@ use super::server::Daemon;
 /// Shared state for the HTTP server
 pub type AppState = Arc<Daemon>;
 
+fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<String> {
+    let mut merged = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for stop in base.into_iter().chain(additional.into_iter()) {
+        if stop.is_empty() {
+            continue;
+        }
+        if seen.insert(stop.clone()) {
+            merged.push(stop);
+        }
+    }
+
+    merged
+}
+
 // ==================== Request Types ====================
 
 /// Anthropic Messages API request
@@ -132,16 +148,14 @@ impl MessageContent {
     pub fn as_text(&self) -> String {
         match self {
             MessageContent::Text(s) => s.clone(),
-            MessageContent::Blocks(blocks) => {
-                blocks
-                    .iter()
-                    .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            MessageContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
         }
     }
 }
@@ -156,9 +170,7 @@ pub enum ContentBlock {
 
     /// Image content (base64 encoded)
     #[serde(rename = "image")]
-    Image {
-        source: ImageSource,
-    },
+    Image { source: ImageSource },
 
     /// Tool use block (for function calling)
     #[serde(rename = "tool_use")]
@@ -181,8 +193,8 @@ pub enum ContentBlock {
 pub struct ImageSource {
     #[serde(rename = "type")]
     pub source_type: String, // "base64"
-    pub media_type: String,  // "image/jpeg", "image/png", etc.
-    pub data: String,        // base64-encoded image data
+    pub media_type: String, // "image/jpeg", "image/png", etc.
+    pub data: String,       // base64-encoded image data
 }
 
 // ==================== Response Types ====================
@@ -363,9 +375,12 @@ async fn handle_messages(
     // Build prompt
     let prompt = daemon.build_chat_prompt(&loaded.model, &messages);
 
-    // Get stop sequences from chat template
-    let mut all_stops = loaded.model.get_chat_stop_sequences();
-    all_stops.extend(stop);
+    let default_stops = if !loaded.config.stop_sequences.is_empty() {
+        loaded.config.stop_sequences.clone()
+    } else {
+        loaded.model.get_chat_stop_sequences()
+    };
+    let all_stops = merge_stop_sequences(default_stops, stop);
 
     // Generate
     let result = daemon
@@ -421,9 +436,12 @@ async fn handle_messages_streaming(
     // Build prompt
     let prompt = daemon.build_chat_prompt(&loaded.model, &messages);
 
-    // Get stop sequences from chat template
-    let mut all_stops = loaded.model.get_chat_stop_sequences();
-    all_stops.extend(stop);
+    let default_stops = if !loaded.config.stop_sequences.is_empty() {
+        loaded.config.stop_sequences.clone()
+    } else {
+        loaded.model.get_chat_stop_sequences()
+    };
+    let all_stops = merge_stop_sequences(default_stops, stop);
 
     // Start streaming generation
     let (rx, prompt_tokens, _request_id) = daemon

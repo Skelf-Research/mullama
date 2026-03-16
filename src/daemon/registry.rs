@@ -112,8 +112,8 @@ impl ModelRegistry {
             quantizations: QuantizationConfig,
         }
 
-        let raw: RawRegistry = toml::from_str(content)
-            .map_err(|e| RegistryError::ParseError(e.to_string()))?;
+        let raw: RawRegistry =
+            toml::from_str(content).map_err(|e| RegistryError::ParseError(e.to_string()))?;
 
         Ok(Self {
             aliases: raw.aliases,
@@ -146,13 +146,20 @@ impl ModelRegistry {
             .iter()
             .filter(|(name, alias)| {
                 name.to_lowercase().contains(&query_lower)
-                    || alias.description.as_ref()
+                    || alias
+                        .description
+                        .as_ref()
                         .map(|d| d.to_lowercase().contains(&query_lower))
                         .unwrap_or(false)
-                    || alias.family.as_ref()
+                    || alias
+                        .family
+                        .as_ref()
                         .map(|f| f.to_lowercase().contains(&query_lower))
                         .unwrap_or(false)
-                    || alias.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
+                    || alias
+                        .tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
             })
             .map(|(name, alias)| (name.as_str(), alias))
             .collect()
@@ -175,11 +182,7 @@ impl ModelRegistry {
         }
 
         // Check if it's a local path
-        if input.starts_with('/')
-            || input.starts_with('.')
-            || input.contains(std::path::MAIN_SEPARATOR)
-            || input.ends_with(".gguf")
-        {
+        if Self::looks_like_local_path(input) {
             return ParsedModelSpec {
                 original: input.to_string(),
                 name: input.to_string(),
@@ -226,9 +229,25 @@ impl ModelRegistry {
         (input.to_string(), None)
     }
 
+    fn looks_like_local_path(input: &str) -> bool {
+        let looks_like_windows_abs = input.len() >= 3
+            && input.as_bytes()[0].is_ascii_alphabetic()
+            && input.as_bytes()[1] == b':'
+            && (input.as_bytes()[2] == b'\\' || input.as_bytes()[2] == b'/');
+
+        input.starts_with('/')
+            || input.starts_with("./")
+            || input.starts_with("../")
+            || input.starts_with("~/")
+            || looks_like_windows_abs
+            || input.ends_with(".gguf")
+            || input.contains('\\')
+    }
+
     /// Get the preferred quantization file patterns for a given suffix
     pub fn get_quant_patterns(&self, suffix: &str) -> Vec<String> {
-        self.quantizations.mappings
+        self.quantizations
+            .mappings
             .get(suffix)
             .cloned()
             .unwrap_or_default()
@@ -308,12 +327,12 @@ pub fn registry() -> &'static ModelRegistry {
 /// Resolve a model name to an HF spec or Ollama reference
 ///
 /// This is the main entry point for model resolution.
-/// Resolution priority (Ollama-first):
+/// Resolution priority:
 /// 1. Local path (starts with `/`, `.`, ends `.gguf`)
 /// 2. Explicit `hf:` prefix → HuggingFace
 /// 3. Explicit `ollama:` prefix → Ollama registry
-/// 4. Try Ollama registry first (name:tag format)
-/// 5. Fall back to Mullama alias lookup → HuggingFace
+/// 4. Known Mullama alias → HuggingFace
+/// 5. Ollama-style name:tag format
 /// 6. Unknown
 pub fn resolve_model_name(name: &str) -> ResolvedModel {
     let reg = registry();
@@ -335,19 +354,35 @@ pub fn resolve_model_name(name: &str) -> ResolvedModel {
     // 3. Explicit Ollama prefix
     if name.starts_with("ollama:") {
         let ollama_name = name.strip_prefix("ollama:").unwrap();
-        let (model_name, tag) = ollama_name.split_once(':').unwrap_or((ollama_name, "latest"));
+        let (model_name, tag) = ollama_name
+            .split_once(':')
+            .unwrap_or((ollama_name, "latest"));
         return ResolvedModel::Ollama {
             name: model_name.to_string(),
             tag: tag.to_string(),
         };
     }
 
-    // 4. Try Ollama-style name:tag format (Ollama-first resolution)
-    // Check if it looks like an Ollama model reference
+    // 4. Known Mullama aliases resolve to HuggingFace for deterministic behavior.
+    if let Some(ref alias) = spec.alias {
+        let hf_spec = reg
+            .to_hf_spec(&spec)
+            .unwrap_or_else(|| format!("hf:{}", alias.repo));
+
+        return ResolvedModel::HuggingFace {
+            spec: hf_spec,
+            mmproj: alias.mmproj.clone(),
+        };
+    }
+
+    // 5. Try Ollama-style name:tag format
     if super::ollama::OllamaClient::is_ollama_ref(name) {
         let (model_name, tag) = if name.contains(':') {
             let parts: Vec<&str> = name.splitn(2, ':').collect();
-            (parts[0].to_string(), parts.get(1).unwrap_or(&"latest").to_string())
+            (
+                parts[0].to_string(),
+                parts.get(1).unwrap_or(&"latest").to_string(),
+            )
         } else {
             (name.to_string(), "latest".to_string())
         };
@@ -355,18 +390,6 @@ pub fn resolve_model_name(name: &str) -> ResolvedModel {
         return ResolvedModel::Ollama {
             name: model_name,
             tag,
-        };
-    }
-
-    // 5. Fall back to Mullama alias lookup (HuggingFace)
-    if let Some(ref alias) = spec.alias {
-        let hf_spec = reg.to_hf_spec(&spec).unwrap_or_else(|| {
-            format!("hf:{}", alias.repo)
-        });
-
-        return ResolvedModel::HuggingFace {
-            spec: hf_spec,
-            mmproj: alias.mmproj.clone(),
         };
     }
 
@@ -387,10 +410,7 @@ pub enum ResolvedModel {
     },
 
     /// An Ollama registry model
-    Ollama {
-        name: String,
-        tag: String,
-    },
+    Ollama { name: String, tag: String },
 
     /// Unknown model name (not in registry)
     Unknown(String),
@@ -501,5 +521,11 @@ mod tests {
     fn test_resolve_local() {
         let resolved = resolve_model_name("./model.gguf");
         assert!(resolved.is_local());
+    }
+
+    #[test]
+    fn test_resolve_ollama_user_model() {
+        let resolved = resolve_model_name("user/model:tag");
+        assert!(resolved.is_ollama());
     }
 }

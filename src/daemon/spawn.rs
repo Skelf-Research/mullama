@@ -23,11 +23,23 @@ pub struct SpawnConfig {
     /// HTTP port (0 to disable)
     pub http_port: u16,
 
+    /// HTTP bind address
+    pub http_addr: String,
+
+    /// API key for HTTP endpoints
+    pub api_key: Option<String>,
+
+    /// Always require API key auth, even when bound to localhost
+    pub require_api_key: bool,
+
     /// Default GPU layers
     pub gpu_layers: i32,
 
     /// Default context size
     pub context_size: u32,
+
+    /// Number of contexts in each loaded model pool
+    pub context_pool_size: usize,
 
     /// Timeout for waiting for daemon to be ready
     pub startup_timeout: Duration,
@@ -45,8 +57,12 @@ impl Default for SpawnConfig {
             binary_path: None,
             socket: DEFAULT_SOCKET.to_string(),
             http_port: 8080,
+            http_addr: "127.0.0.1".to_string(),
+            api_key: None,
+            require_api_key: false,
             gpu_layers: 0,
             context_size: 4096,
+            context_pool_size: super::models::DEFAULT_CONTEXT_POOL_SIZE,
             startup_timeout: Duration::from_secs(30),
             background: true,
             log_file: None,
@@ -113,8 +129,18 @@ pub fn spawn_daemon(config: &SpawnConfig) -> SpawnResult {
     cmd.arg("serve");
     cmd.arg("--socket").arg(&config.socket);
     cmd.arg("--http-port").arg(config.http_port.to_string());
+    cmd.arg("--http-addr").arg(&config.http_addr);
     cmd.arg("--gpu-layers").arg(config.gpu_layers.to_string());
-    cmd.arg("--context-size").arg(config.context_size.to_string());
+    cmd.arg("--context-size")
+        .arg(config.context_size.to_string());
+    cmd.arg("--context-pool-size")
+        .arg(config.context_pool_size.to_string());
+    if let Some(api_key) = &config.api_key {
+        cmd.arg("--api-key").arg(api_key);
+    }
+    if config.require_api_key {
+        cmd.arg("--require-api-key");
+    }
 
     if config.background {
         // Spawn in background
@@ -128,9 +154,14 @@ pub fn spawn_daemon(config: &SpawnConfig) -> SpawnResult {
 
             match std::fs::File::create(log_file) {
                 Ok(file) => {
-                    cmd.stdout(Stdio::from(file.try_clone().unwrap_or_else(|_| {
-                        std::fs::File::create("/dev/null").unwrap()
-                    })));
+                    match file.try_clone() {
+                        Ok(stdout_file) => {
+                            cmd.stdout(Stdio::from(stdout_file));
+                        }
+                        Err(_) => {
+                            cmd.stdout(Stdio::null());
+                        }
+                    }
                     cmd.stderr(Stdio::from(file));
                 }
                 Err(_) => {
@@ -275,7 +306,9 @@ pub fn daemon_status(socket: &str) -> Result<DaemonInfo, String> {
     let client = DaemonClient::connect_with_timeout(socket, Duration::from_secs(5))
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
-    let (uptime, version) = client.ping().map_err(|e| format!("Failed to ping: {}", e))?;
+    let (uptime, version) = client
+        .ping()
+        .map_err(|e| format!("Failed to ping: {}", e))?;
 
     let status = client
         .status()

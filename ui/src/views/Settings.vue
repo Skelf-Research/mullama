@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 
 const settings = ref({
   defaultModel: '',
+  apiKey: '',
   temperature: 0.7,
   maxTokens: 1024,
   contextSize: 4096,
@@ -24,6 +25,11 @@ onMounted(() => {
     }
   }
 
+  const storedApiKey = localStorage.getItem('mullama-api-key')
+  if (storedApiKey && !settings.value.apiKey) {
+    settings.value.apiKey = storedApiKey
+  }
+
   // Check current theme
   if (document.documentElement.classList.contains('dark')) {
     settings.value.theme = 'dark'
@@ -34,6 +40,11 @@ onMounted(() => {
 
 const saveSettings = () => {
   localStorage.setItem('mullama-settings', JSON.stringify(settings.value))
+  if (settings.value.apiKey?.trim()) {
+    localStorage.setItem('mullama-api-key', settings.value.apiKey.trim())
+  } else {
+    localStorage.removeItem('mullama-api-key')
+  }
 
   // Apply theme
   if (settings.value.theme === 'dark') {
@@ -58,6 +69,7 @@ const saveSettings = () => {
 const resetSettings = () => {
   settings.value = {
     defaultModel: '',
+    apiKey: '',
     temperature: 0.7,
     maxTokens: 1024,
     contextSize: 4096,
@@ -65,6 +77,7 @@ const resetSettings = () => {
     theme: 'system',
   }
   localStorage.removeItem('mullama-settings')
+  localStorage.removeItem('mullama-api-key')
 }
 </script>
 
@@ -112,6 +125,19 @@ const resetSettings = () => {
             placeholder="e.g., llama3.2:1b"
           />
           <p class="text-xs text-gray-500 mt-1">Leave empty to use the first available model</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            API Key
+          </label>
+          <input
+            v-model="settings.apiKey"
+            type="password"
+            class="input"
+            placeholder="mullama_..."
+          />
+          <p class="text-xs text-gray-500 mt-1">Required when HTTP auth is enabled.</p>
         </div>
 
         <div>

@@ -43,7 +43,7 @@
 //! AUTHOR "Your Name"
 //! ```
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -311,7 +311,11 @@ pub enum ModelfileError {
     /// Unknown directive
     UnknownDirective { line: usize, directive: String },
     /// Invalid parameter value
-    InvalidParameter { line: usize, name: String, message: String },
+    InvalidParameter {
+        line: usize,
+        name: String,
+        message: String,
+    },
     /// Digest verification failed
     DigestMismatch { expected: String, computed: String },
 }
@@ -330,11 +334,23 @@ impl std::fmt::Display for ModelfileError {
             ModelfileError::UnknownDirective { line, directive } => {
                 write!(f, "Unknown directive '{}' at line {}", directive, line)
             }
-            ModelfileError::InvalidParameter { line, name, message } => {
-                write!(f, "Invalid parameter '{}' at line {}: {}", name, line, message)
+            ModelfileError::InvalidParameter {
+                line,
+                name,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Invalid parameter '{}' at line {}: {}",
+                    name, line, message
+                )
             }
             ModelfileError::DigestMismatch { expected, computed } => {
-                write!(f, "Digest mismatch: expected {}, computed {}", expected, computed)
+                write!(
+                    f,
+                    "Digest mismatch: expected {}, computed {}",
+                    expected, computed
+                )
             }
         }
     }
@@ -419,7 +435,26 @@ impl ModelfileParser {
 
             // Handle multiline content
             if let Some((ref directive, ref mut content, _start_line)) = current_multiline {
-                if line.trim() == "\"\"\"" {
+                if let Some(close_idx) = line.find("\"\"\"") {
+                    let before_close = &line[..close_idx];
+                    let after_close = &line[close_idx + 3..];
+                    if !after_close.trim().is_empty() {
+                        return Err(ModelfileError::InvalidSyntax {
+                            line: line_num,
+                            message: format!(
+                                "{} has trailing content after closing triple quotes",
+                                directive
+                            ),
+                        });
+                    }
+
+                    if !before_close.is_empty() {
+                        if !content.is_empty() {
+                            content.push('\n');
+                        }
+                        content.push_str(before_close);
+                    }
+
                     // End of multiline
                     let directive = directive.clone();
                     let final_content = content.clone();
@@ -498,9 +533,14 @@ impl ModelfileParser {
 
                 "SYSTEM" => {
                     if value.starts_with("\"\"\"") {
-                        // Start multiline
-                        let initial = value.trim_start_matches("\"\"\"");
-                        current_multiline = Some(("SYSTEM".to_string(), initial.to_string(), line_num));
+                        match Self::parse_triple_quoted_inline(value, line_num, "SYSTEM")? {
+                            Some(inline) => modelfile.system = Some(inline),
+                            None => {
+                                let initial = &value[3..];
+                                current_multiline =
+                                    Some(("SYSTEM".to_string(), initial.to_string(), line_num));
+                            }
+                        }
                     } else {
                         modelfile.system = Some(Self::unquote(value));
                     }
@@ -508,8 +548,14 @@ impl ModelfileParser {
 
                 "TEMPLATE" => {
                     if value.starts_with("\"\"\"") {
-                        let initial = value.trim_start_matches("\"\"\"");
-                        current_multiline = Some(("TEMPLATE".to_string(), initial.to_string(), line_num));
+                        match Self::parse_triple_quoted_inline(value, line_num, "TEMPLATE")? {
+                            Some(inline) => modelfile.template = Some(inline),
+                            None => {
+                                let initial = &value[3..];
+                                current_multiline =
+                                    Some(("TEMPLATE".to_string(), initial.to_string(), line_num));
+                            }
+                        }
                     } else {
                         modelfile.template = Some(Self::unquote(value));
                     }
@@ -522,8 +568,14 @@ impl ModelfileParser {
 
                 "LICENSE" => {
                     if value.starts_with("\"\"\"") {
-                        let initial = value.trim_start_matches("\"\"\"");
-                        current_multiline = Some(("LICENSE".to_string(), initial.to_string(), line_num));
+                        match Self::parse_triple_quoted_inline(value, line_num, "LICENSE")? {
+                            Some(inline) => modelfile.license = Some(inline),
+                            None => {
+                                let initial = &value[3..];
+                                current_multiline =
+                                    Some(("LICENSE".to_string(), initial.to_string(), line_num));
+                            }
+                        }
                     } else {
                         modelfile.license = Some(Self::unquote(value));
                     }
@@ -548,11 +600,14 @@ impl ModelfileParser {
                             directive: directive.to_string(),
                         });
                     }
-                    let layers: i32 = value.parse().map_err(|_| ModelfileError::InvalidParameter {
-                        line: line_num,
-                        name: "GPU_LAYERS".to_string(),
-                        message: "Expected integer".to_string(),
-                    })?;
+                    let layers: i32 =
+                        value
+                            .parse()
+                            .map_err(|_| ModelfileError::InvalidParameter {
+                                line: line_num,
+                                name: "GPU_LAYERS".to_string(),
+                                message: "Expected integer".to_string(),
+                            })?;
                     modelfile.gpu_layers = Some(layers);
                 }
 
@@ -598,12 +653,17 @@ impl ModelfileParser {
                     match key.as_str() {
                         "start" => thinking.start_token = Self::unquote(&val),
                         "end" => thinking.end_token = Self::unquote(&val),
-                        "enabled" => thinking.enabled = Self::parse_bool(&val, line_num, "THINKING enabled")?,
-                        _ => return Err(ModelfileError::InvalidParameter {
-                            line: line_num,
-                            name: format!("THINKING {}", key),
-                            message: "Unknown thinking key. Expected: start, end, enabled".to_string(),
-                        }),
+                        "enabled" => {
+                            thinking.enabled = Self::parse_bool(&val, line_num, "THINKING enabled")?
+                        }
+                        _ => {
+                            return Err(ModelfileError::InvalidParameter {
+                                line: line_num,
+                                name: format!("THINKING {}", key),
+                                message: "Unknown thinking key. Expected: start, end, enabled"
+                                    .to_string(),
+                            })
+                        }
                     }
                 }
 
@@ -649,11 +709,15 @@ impl ModelfileParser {
                         "tools" => modelfile.capabilities.tools = enabled,
                         "thinking" => modelfile.capabilities.thinking = enabled,
                         "vision" => modelfile.capabilities.vision = enabled,
-                        _ => return Err(ModelfileError::InvalidParameter {
-                            line: line_num,
-                            name: format!("CAPABILITY {}", key),
-                            message: "Unknown capability. Expected: json, tools, thinking, vision".to_string(),
-                        }),
+                        _ => {
+                            return Err(ModelfileError::InvalidParameter {
+                                line: line_num,
+                                name: format!("CAPABILITY {}", key),
+                                message:
+                                    "Unknown capability. Expected: json, tools, thinking, vision"
+                                        .to_string(),
+                            })
+                        }
                     }
                 }
 
@@ -715,17 +779,16 @@ impl ModelfileParser {
         }
 
         let directive = parts[0];
-        let value = if parts.len() > 1 {
-            parts[1].trim()
-        } else {
-            ""
-        };
+        let value = if parts.len() > 1 { parts[1].trim() } else { "" };
 
         Ok((directive, value))
     }
 
     /// Parse a PARAMETER directive value
-    fn parse_parameter(value: &str, line_num: usize) -> Result<(String, ParameterValue), ModelfileError> {
+    fn parse_parameter(
+        value: &str,
+        line_num: usize,
+    ) -> Result<(String, ParameterValue), ModelfileError> {
         let parts: Vec<&str> = value.splitn(2, char::is_whitespace).collect();
 
         if parts.len() < 2 {
@@ -779,7 +842,11 @@ impl ModelfileParser {
     }
 
     /// Parse a key-value pair (e.g., "start \"<think>\"")
-    fn parse_key_value(value: &str, line_num: usize, directive: &str) -> Result<(String, String), ModelfileError> {
+    fn parse_key_value(
+        value: &str,
+        line_num: usize,
+        directive: &str,
+    ) -> Result<(String, String), ModelfileError> {
         let parts: Vec<&str> = value.splitn(2, char::is_whitespace).collect();
 
         if parts.len() < 2 {
@@ -806,6 +873,32 @@ impl ModelfileParser {
                 message: "Expected boolean (true/false)".to_string(),
             }),
         }
+    }
+
+    /// Parse an inline triple-quoted value (`"""..."""`) if closing quotes are on the same line.
+    /// Returns `None` when the directive starts a multiline block.
+    fn parse_triple_quoted_inline(
+        value: &str,
+        line_num: usize,
+        directive: &str,
+    ) -> Result<Option<String>, ModelfileError> {
+        let rest = &value[3..];
+        let Some(end_idx) = rest.find("\"\"\"") else {
+            return Ok(None);
+        };
+
+        let after = &rest[end_idx + 3..];
+        if !after.trim().is_empty() {
+            return Err(ModelfileError::InvalidSyntax {
+                line: line_num,
+                message: format!(
+                    "{} has trailing content after closing triple quotes",
+                    directive
+                ),
+            });
+        }
+
+        Ok(Some(rest[..end_idx].to_string()))
     }
 
     /// Remove surrounding quotes from a string
@@ -877,7 +970,8 @@ impl Modelfile {
 
     /// Get repeat_penalty parameter
     pub fn repeat_penalty(&self) -> Option<f64> {
-        self.get_parameter("repeat_penalty").and_then(|v| v.as_f64())
+        self.get_parameter("repeat_penalty")
+            .and_then(|v| v.as_f64())
     }
 
     /// Get seed parameter
@@ -888,9 +982,8 @@ impl Modelfile {
     /// Get stop sequences
     pub fn stop(&self) -> Option<Vec<String>> {
         self.get_parameter("stop").and_then(|v| {
-            v.as_str().map(|s| {
-                s.split(',').map(|x| x.trim().to_string()).collect()
-            })
+            v.as_str()
+                .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
         })
     }
 
@@ -932,7 +1025,9 @@ impl Modelfile {
         let mut buffer = [0u8; 8192];
 
         loop {
-            let bytes_read = file.read(&mut buffer).map_err(|e| ModelfileError::IoError(e))?;
+            let bytes_read = file
+                .read(&mut buffer)
+                .map_err(|e| ModelfileError::IoError(e))?;
             if bytes_read == 0 {
                 break;
             }
@@ -1052,10 +1147,22 @@ impl Modelfile {
             // Tool format
             if let Some(ref tool_format) = self.tool_format {
                 output.push_str(&format!("TOOLFORMAT style \"{}\"\n", tool_format.style));
-                output.push_str(&format!("TOOLFORMAT call_start \"{}\"\n", tool_format.call_start));
-                output.push_str(&format!("TOOLFORMAT call_end \"{}\"\n", tool_format.call_end));
-                output.push_str(&format!("TOOLFORMAT result_start \"{}\"\n", tool_format.result_start));
-                output.push_str(&format!("TOOLFORMAT result_end \"{}\"\n", tool_format.result_end));
+                output.push_str(&format!(
+                    "TOOLFORMAT call_start \"{}\"\n",
+                    tool_format.call_start
+                ));
+                output.push_str(&format!(
+                    "TOOLFORMAT call_end \"{}\"\n",
+                    tool_format.call_end
+                ));
+                output.push_str(&format!(
+                    "TOOLFORMAT result_start \"{}\"\n",
+                    tool_format.result_start
+                ));
+                output.push_str(&format!(
+                    "TOOLFORMAT result_end \"{}\"\n",
+                    tool_format.result_end
+                ));
             }
 
             // Capabilities
@@ -1143,7 +1250,10 @@ SYSTEM "You are a helpful assistant."
         assert_eq!(modelfile.from, "llama3.2:1b");
         assert_eq!(modelfile.temperature(), Some(0.7));
         assert_eq!(modelfile.num_ctx(), Some(4096));
-        assert_eq!(modelfile.system, Some("You are a helpful assistant.".to_string()));
+        assert_eq!(
+            modelfile.system,
+            Some("You are a helpful assistant.".to_string())
+        );
     }
 
     #[test]
@@ -1160,8 +1270,46 @@ You answer questions clearly.
         let modelfile = parser.parse_str(content).unwrap();
 
         assert!(modelfile.system.is_some());
-        assert!(modelfile.system.as_ref().unwrap().contains("You are a helpful assistant."));
-        assert!(modelfile.system.as_ref().unwrap().contains("You answer questions clearly."));
+        assert!(modelfile
+            .system
+            .as_ref()
+            .unwrap()
+            .contains("You are a helpful assistant."));
+        assert!(modelfile
+            .system
+            .as_ref()
+            .unwrap()
+            .contains("You answer questions clearly."));
+    }
+
+    #[test]
+    fn test_parse_single_line_triple_quoted_system() {
+        let content = r#"
+FROM llama3.2:1b
+SYSTEM """You are a helpful assistant."""
+"#;
+
+        let parser = ModelfileParser::new();
+        let modelfile = parser.parse_str(content).unwrap();
+
+        assert_eq!(
+            modelfile.system,
+            Some("You are a helpful assistant.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_multiline_template_with_inline_close() {
+        let content = r#"
+FROM llama3.2:1b
+TEMPLATE """Line one
+Line two"""
+"#;
+
+        let parser = ModelfileParser::new();
+        let modelfile = parser.parse_str(content).unwrap();
+
+        assert_eq!(modelfile.template, Some("Line one\nLine two".to_string()));
     }
 
     #[test]
@@ -1289,7 +1437,9 @@ PARAMETER stop "<|endoftext|>"
 
         assert_eq!(modelfile.stop_sequences.len(), 2);
         assert!(modelfile.stop_sequences.contains(&"<|im_end|>".to_string()));
-        assert!(modelfile.stop_sequences.contains(&"<|endoftext|>".to_string()));
+        assert!(modelfile
+            .stop_sequences
+            .contains(&"<|endoftext|>".to_string()));
     }
 
     #[test]
@@ -1366,7 +1516,10 @@ PARAMETER temperature 0.7
 
         assert_eq!(modelfile.from, "hf:meta-llama/Llama-3.2-1B-Instruct-GGUF");
         assert_eq!(modelfile.revision, Some("abc123def".to_string()));
-        assert_eq!(modelfile.full_model_ref(), "hf:meta-llama/Llama-3.2-1B-Instruct-GGUF@abc123def");
+        assert_eq!(
+            modelfile.full_model_ref(),
+            "hf:meta-llama/Llama-3.2-1B-Instruct-GGUF@abc123def"
+        );
     }
 
     #[test]
@@ -1381,7 +1534,10 @@ DIGEST sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
         assert_eq!(
             modelfile.digest,
-            Some("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string())
+            Some(
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_string()
+            )
         );
     }
 
@@ -1398,7 +1554,10 @@ DIGEST e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
         // Should auto-prefix with sha256:
         assert_eq!(
             modelfile.digest,
-            Some("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string())
+            Some(
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_string()
+            )
         );
     }
 

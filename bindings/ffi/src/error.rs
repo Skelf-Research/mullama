@@ -71,9 +71,8 @@ thread_local! {
 /// This should be called before returning an error code from an FFI function.
 pub fn set_last_error(message: impl AsRef<str>) {
     LAST_ERROR.with(|cell| {
-        let msg = CString::new(message.as_ref()).unwrap_or_else(|_| {
-            CString::new("Error message contained null bytes").unwrap()
-        });
+        let msg = CString::new(message.as_ref())
+            .unwrap_or_else(|_| CString::new("Error message contained null bytes").unwrap());
         *cell.borrow_mut() = Some(msg);
     });
 }
@@ -100,11 +99,9 @@ pub fn clear_last_error() {
 /// be stored long-term as it may be invalidated by subsequent FFI calls.
 #[no_mangle]
 pub extern "C" fn mullama_get_last_error() -> *const c_char {
-    LAST_ERROR.with(|cell| {
-        match cell.borrow().as_ref() {
-            Some(msg) => msg.as_ptr(),
-            None => std::ptr::null(),
-        }
+    LAST_ERROR.with(|cell| match cell.borrow().as_ref() {
+        Some(msg) => msg.as_ptr(),
+        None => std::ptr::null(),
     })
 }
 
