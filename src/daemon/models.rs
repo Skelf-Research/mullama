@@ -333,22 +333,26 @@ impl ModelManager {
         }
 
         // Load the model
-        let mut model_params = ModelParams::default();
-        model_params.n_gpu_layers = config.gpu_layers;
+        let model_params = ModelParams {
+            n_gpu_layers: config.gpu_layers,
+            ..ModelParams::default()
+        };
 
         let model = Arc::new(Model::load_with_params(&config.path, model_params)?);
 
         // Create context parameters (kept for pool creation)
-        let mut ctx_params = ContextParams::default();
-        ctx_params.n_ctx = config.context_size;
-        ctx_params.n_threads = config.threads;
-        ctx_params.n_threads_batch = config.threads;
+        let ctx_params = ContextParams {
+            n_ctx: config.context_size,
+            n_threads: config.threads,
+            n_threads_batch: config.threads,
+            ..ContextParams::default()
+        };
 
         let context = Context::new(model.clone(), ctx_params.clone())?;
 
         let info = ModelInfo {
             path: config.path.clone(),
-            parameters: model.n_params() as u64,
+            parameters: model.n_params(),
             context_size: config.context_size,
             vocab_size: model.n_vocab() as u32,
             gpu_layers: config.gpu_layers,

@@ -75,6 +75,7 @@ pub struct MullamaRuntime {
 #[cfg(feature = "tokio-runtime")]
 impl MullamaRuntime {
     /// Create a new runtime builder
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> MullamaRuntimeBuilder {
         MullamaRuntimeBuilder::new()
     }
@@ -212,6 +213,13 @@ impl MullamaRuntimeBuilder {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
+impl Default for MullamaRuntimeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Runtime metrics
 #[cfg(feature = "tokio-runtime")]
 #[derive(Debug)]
@@ -256,6 +264,13 @@ impl RuntimeMetrics {
             generation_requests: self.generation_requests.load(Ordering::Relaxed),
             average_generation_time: *self.average_generation_time.read().await,
         }
+    }
+}
+
+#[cfg(feature = "tokio-runtime")]
+impl Default for RuntimeMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -365,6 +380,7 @@ pub struct ModelPool {
 
 #[cfg(all(feature = "tokio-runtime", feature = "async"))]
 impl ModelPool {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> ModelPoolBuilder {
         ModelPoolBuilder::new()
     }
@@ -437,6 +453,13 @@ impl ModelPoolBuilder {
             max_size: self.max_size,
             min_idle: self.min_idle,
         })
+    }
+}
+
+#[cfg(all(feature = "tokio-runtime", feature = "async"))]
+impl Default for ModelPoolBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -518,6 +541,13 @@ impl BackgroundCoordinator {
     /// Get running task names
     pub fn running_tasks(&self) -> Vec<String> {
         self.tasks.keys().cloned().collect()
+    }
+}
+
+#[cfg(feature = "tokio-runtime")]
+impl Default for BackgroundCoordinator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

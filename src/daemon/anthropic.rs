@@ -289,6 +289,7 @@ pub struct AnthropicErrorDetail {
 // ==================== Streaming Types ====================
 
 /// Streaming event types for Anthropic SSE
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum StreamEvent {
@@ -634,16 +635,6 @@ fn generate_message_id() -> String {
     format!("msg_{}", chars)
 }
 
-/// Map internal finish reason to Anthropic format
-fn map_finish_reason(reason: &str) -> String {
-    match reason {
-        "stop" | "eos" => "end_turn".to_string(),
-        "length" | "max_tokens" => "max_tokens".to_string(),
-        "tool_use" => "tool_use".to_string(),
-        _ => "end_turn".to_string(),
-    }
-}
-
 // ==================== Error Handling ====================
 
 pub struct ApiError {
@@ -665,14 +656,6 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             error_type: "api_error".to_string(),
-            message,
-        }
-    }
-
-    fn invalid_request(message: String) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            error_type: "invalid_request_error".to_string(),
             message,
         }
     }

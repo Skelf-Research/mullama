@@ -19,7 +19,6 @@
 //! - `{assistant}` - Assistant response
 
 use regex::Regex;
-use std::collections::HashMap;
 
 /// Converted chat template
 #[derive(Debug, Clone)]
@@ -87,28 +86,11 @@ fn remove_conditional_block(s: &str, start_marker: &str, end_marker: &str) -> St
 }
 
 /// Converts Go templates to mullama format
-struct GoTemplateConverter {
-    /// Common token patterns to detect
-    token_patterns: HashMap<&'static str, &'static str>,
-}
+struct GoTemplateConverter;
 
 impl GoTemplateConverter {
     fn new() -> Self {
-        let mut token_patterns = HashMap::new();
-        // Common special tokens across models
-        token_patterns.insert("<|system|>", "<|system|>");
-        token_patterns.insert("<|user|>", "<|user|>");
-        token_patterns.insert("<|assistant|>", "<|assistant|>");
-        token_patterns.insert("<|end|>", "<|end|>");
-        token_patterns.insert("<|eot_id|>", "<|eot_id|>");
-        token_patterns.insert("<|im_start|>", "<|im_start|>");
-        token_patterns.insert("<|im_end|>", "<|im_end|>");
-        token_patterns.insert("[INST]", "[INST]");
-        token_patterns.insert("[/INST]", "[/INST]");
-        token_patterns.insert("<<SYS>>", "<<SYS>>");
-        token_patterns.insert("<</SYS>>", "<</SYS>>");
-
-        Self { token_patterns }
+        Self
     }
 
     fn convert(&self, go_template: &str) -> ChatTemplate {

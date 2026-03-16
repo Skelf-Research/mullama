@@ -31,6 +31,8 @@ include = [
 
 [features]
 default = []
+serde = []
+llama-cpp-tests = []
 multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio", "tokio-util"]
 format-conversion = ["multimodal", "ffmpeg-next"]
 streaming-audio = ["multimodal", "cpal", "ringbuf"]
