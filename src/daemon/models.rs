@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use tokio::sync::RwLock as TokioRwLock;
+use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 
 use super::protocol::ModelInfo;
 use crate::{Context, ContextParams, Model, ModelParams, MullamaError};
@@ -26,9 +26,29 @@ use crate::{Context, ContextParams, Model, ModelParams, MullamaError};
 #[cfg(feature = "multimodal")]
 use crate::{MtmdContext, MtmdParams};
 
-/// Number of contexts in the pool per model
-/// This allows N concurrent requests to the same model without blocking
-const CONTEXT_POOL_SIZE: usize = 4;
+/// Default number of contexts in the pool per model.
+/// This allows N concurrent requests to the same model without blocking.
+pub const DEFAULT_CONTEXT_POOL_SIZE: usize = 4;
+
+fn detect_quantization_from_path(path: &str) -> Option<String> {
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())?
+        .to_ascii_uppercase();
+
+    let known = [
+        "Q2_K", "Q3_K", "Q4_0", "Q4_1", "Q4_K_M", "Q4_K_S", "Q5_0", "Q5_1", "Q5_K_M", "Q5_K_S",
+        "Q6_K", "Q8_0", "F16", "F32",
+    ];
+
+    for q in known {
+        if filename.contains(q) {
+            return Some(q.to_string());
+        }
+    }
+
+    None
+}
 
 /// Runtime configuration for a loaded model (from Ollama, Modelfile, or defaults)
 ///
@@ -90,13 +110,15 @@ impl LoadedModel {
         mtmd_context: Option<MtmdContext>,
         ctx_params: ContextParams,
         config: ModelConfig,
+        context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
+        let context_pool_size = context_pool_size.max(1);
         // Create the context pool (first context is the one passed in)
-        let mut contexts = Vec::with_capacity(CONTEXT_POOL_SIZE);
+        let mut contexts = Vec::with_capacity(context_pool_size);
         contexts.push(TokioRwLock::new(context));
 
         // Create additional contexts for the pool
-        for _ in 1..CONTEXT_POOL_SIZE {
+        for _ in 1..context_pool_size {
             let ctx = Context::new(model.clone(), ctx_params.clone())?;
             contexts.push(TokioRwLock::new(ctx));
         }
@@ -122,13 +144,15 @@ impl LoadedModel {
         info: ModelInfo,
         ctx_params: ContextParams,
         config: ModelConfig,
+        context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
+        let context_pool_size = context_pool_size.max(1);
         // Create the context pool (first context is the one passed in)
-        let mut contexts = Vec::with_capacity(CONTEXT_POOL_SIZE);
+        let mut contexts = Vec::with_capacity(context_pool_size);
         contexts.push(TokioRwLock::new(context));
 
         // Create additional contexts for the pool
-        for _ in 1..CONTEXT_POOL_SIZE {
+        for _ in 1..context_pool_size {
             let ctx = Context::new(model.clone(), ctx_params.clone())?;
             contexts.push(TokioRwLock::new(ctx));
         }
@@ -148,7 +172,7 @@ impl LoadedModel {
     ///
     /// This is the key optimization: instead of blocking all requests on a single
     /// RwLock<Context>, we rotate through multiple contexts. This allows N concurrent
-    /// requests where N = CONTEXT_POOL_SIZE.
+    /// requests where N = the configured context pool size.
     ///
     /// Uses Relaxed ordering because exact fairness isn't required - we just want
     /// reasonable distribution without the overhead of SeqCst.
@@ -203,6 +227,8 @@ pub struct ModelLoadConfig {
     pub gpu_layers: i32,
     pub context_size: u32,
     pub threads: i32,
+    /// Number of contexts to keep in the per-model pool.
+    pub context_pool_size: usize,
     /// Path to multimodal projector file (mmproj) for vision/audio models
     pub mmproj_path: Option<String>,
     /// Runtime configuration from Ollama registry or Modelfile
@@ -217,6 +243,7 @@ impl ModelLoadConfig {
             gpu_layers: 0,
             context_size: 4096,
             threads: num_cpus::get() as i32,
+            context_pool_size: DEFAULT_CONTEXT_POOL_SIZE,
             mmproj_path: None,
             model_config: None,
         }
@@ -234,6 +261,11 @@ impl ModelLoadConfig {
 
     pub fn threads(mut self, threads: i32) -> Self {
         self.threads = threads;
+        self
+    }
+
+    pub fn context_pool_size(mut self, size: usize) -> Self {
+        self.context_pool_size = size.max(1);
         self
     }
 
@@ -271,6 +303,8 @@ pub struct ModelManager {
     default_model: RwLock<Option<String>>,
     /// Total tokens generated across all models
     total_tokens: AtomicU64,
+    /// Serialize mutating operations (load/unload/default changes) to avoid alias races.
+    mutation_lock: TokioMutex<()>,
 }
 
 impl ModelManager {
@@ -280,6 +314,7 @@ impl ModelManager {
             models: DashMap::new(),
             default_model: RwLock::new(None),
             total_tokens: AtomicU64::new(0),
+            mutation_lock: TokioMutex::new(()),
         }
     }
 
@@ -287,6 +322,8 @@ impl ModelManager {
     ///
     /// Creates a context pool for concurrent request handling.
     pub async fn load(&self, config: ModelLoadConfig) -> Result<ModelInfo, MullamaError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+
         // Check if alias already exists (lock-free read via DashMap)
         if self.models.contains_key(&config.alias) {
             return Err(MullamaError::OperationFailed(format!(
@@ -315,7 +352,7 @@ impl ModelManager {
             context_size: config.context_size,
             vocab_size: model.n_vocab() as u32,
             gpu_layers: config.gpu_layers,
-            quantization: None, // TODO: detect from model
+            quantization: detect_quantization_from_path(&config.path),
         };
 
         // Create multimodal context if mmproj path provided
@@ -353,6 +390,7 @@ impl ModelManager {
             mtmd_context,
             ctx_params,
             model_config,
+            config.context_pool_size,
         )?);
 
         #[cfg(not(feature = "multimodal"))]
@@ -363,6 +401,7 @@ impl ModelManager {
             info.clone(),
             ctx_params,
             model_config,
+            config.context_pool_size,
         )?);
 
         // Add to models (DashMap handles locking internally per-shard)
@@ -381,6 +420,8 @@ impl ModelManager {
 
     /// Unload a model by alias
     pub async fn unload(&self, alias: &str) -> Result<(), MullamaError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+
         // Check for active requests before removal
         if let Some(model_ref) = self.models.get(alias) {
             if model_ref.active_count() > 0 {
@@ -435,6 +476,8 @@ impl ModelManager {
 
     /// Set the default model
     pub async fn set_default(&self, alias: &str) -> Result<(), MullamaError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+
         if !self.models.contains_key(alias) {
             return Err(MullamaError::OperationFailed(format!(
                 "Model '{}' not found",

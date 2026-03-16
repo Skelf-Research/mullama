@@ -3,9 +3,7 @@
 //! This module provides PyO3-based Python bindings for the Mullama library,
 //! enabling high-performance LLM inference from Python.
 
-use mullama::{
-    Context, ContextParams, Model, ModelParams, SamplerParams,
-};
+use mullama::{Context, ContextParams, Model, ModelParams, SamplerParams};
 use numpy::{PyArray1, PyArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -73,7 +71,9 @@ impl PyModel {
     ///     list[int]: List of token IDs
     #[pyo3(signature = (text, add_bos=true, special=false))]
     fn tokenize(&self, text: &str, add_bos: bool, special: bool) -> PyResult<Vec<i32>> {
-        self.inner.tokenize(text, add_bos, special).map_err(to_py_err)
+        self.inner
+            .tokenize(text, add_bos, special)
+            .map_err(to_py_err)
     }
 
     /// Detokenize token IDs back to text
@@ -477,9 +477,7 @@ impl PyContext {
             ));
         };
 
-        let sampler_params = params
-            .map(SamplerParams::from)
-            .unwrap_or_default();
+        let sampler_params = params.map(SamplerParams::from).unwrap_or_default();
 
         self.inner
             .generate_with_params(&tokens, max_tokens, &sampler_params)
@@ -515,10 +513,7 @@ impl PyContext {
             ));
         };
 
-        let sampler_params = params
-            .as_ref()
-            .map(SamplerParams::from)
-            .unwrap_or_default();
+        let sampler_params = params.as_ref().map(SamplerParams::from).unwrap_or_default();
 
         let mut pieces: Vec<String> = Vec::new();
 
@@ -570,7 +565,11 @@ impl PyContext {
     }
 
     fn __repr__(&self) -> String {
-        format!("Context(n_ctx={}, n_batch={})", self.n_ctx(), self.n_batch())
+        format!(
+            "Context(n_ctx={}, n_batch={})",
+            self.n_ctx(),
+            self.n_batch()
+        )
     }
 }
 
@@ -649,11 +648,7 @@ impl PyEmbeddingGenerator {
     ///
     /// Returns:
     ///     list[numpy.ndarray]: List of embedding vectors
-    fn embed_batch<'py>(
-        &mut self,
-        py: Python<'py>,
-        texts: Vec<String>,
-    ) -> PyResult<Py<PyList>> {
+    fn embed_batch<'py>(&mut self, py: Python<'py>, texts: Vec<String>) -> PyResult<Py<PyList>> {
         let mut embeddings = Vec::new();
 
         for text in texts {

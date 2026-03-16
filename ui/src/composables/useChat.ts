@@ -1,5 +1,5 @@
-import { ref, reactive } from 'vue'
-import { openai, type ChatMessage, type ChatResponse } from '@/api/client'
+import { ref } from 'vue'
+import { openai, type ChatMessage } from '@/api/client'
 
 export interface Message extends ChatMessage {
   id: string

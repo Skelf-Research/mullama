@@ -1,9 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Dashboard from '@/views/Dashboard.vue'
-import Models from '@/views/Models.vue'
-import Chat from '@/views/Chat.vue'
-import Playground from '@/views/Playground.vue'
-import Settings from '@/views/Settings.vue'
 
 const router = createRouter({
   history: createWebHistory('/ui/'),
@@ -16,22 +12,22 @@ const router = createRouter({
     {
       path: '/models',
       name: 'models',
-      component: Models,
+      component: () => import('@/views/Models.vue'),
     },
     {
       path: '/chat',
       name: 'chat',
-      component: Chat,
+      component: () => import('@/views/Chat.vue'),
     },
     {
       path: '/playground',
       name: 'playground',
-      component: Playground,
+      component: () => import('@/views/Playground.vue'),
     },
     {
       path: '/settings',
       name: 'settings',
-      component: Settings,
+      component: () => import('@/views/Settings.vue'),
     },
   ],
 })

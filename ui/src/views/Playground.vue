@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useModels } from '@/composables/useModels'
 
-const { models, selectedModel, fetchModels } = useModels()
+const { selectedModel, fetchModels } = useModels()
 
 const apiType = ref<'openai' | 'anthropic'>('openai')
 const requestBody = ref('')
@@ -42,10 +42,30 @@ const endpoint = computed(() => {
   return apiType.value === 'openai' ? '/v1/chat/completions' : '/v1/messages'
 })
 
+const storedApiKey = computed(() => {
+  try {
+    const rawSettings = localStorage.getItem('mullama-settings')
+    if (rawSettings) {
+      const parsed = JSON.parse(rawSettings) as { apiKey?: string }
+      if (parsed.apiKey && parsed.apiKey.trim()) {
+        return parsed.apiKey.trim()
+      }
+    }
+    const direct = localStorage.getItem('mullama-api-key')
+    return direct?.trim() || ''
+  } catch {
+    return ''
+  }
+})
+
 const curlCommand = computed(() => {
   const body = requestBody.value.replace(/\n/g, ' ').replace(/\s+/g, ' ')
+  const authLine = storedApiKey.value
+    ? ` \\\n  -H "Authorization: Bearer ${storedApiKey.value}" \\\n  -H "X-API-Key: ${storedApiKey.value}"`
+    : ''
   return `curl -X POST ${window.location.origin}${endpoint.value} \\
   -H "Content-Type: application/json" \\
+${authLine}
   -d '${body}'`
 })
 
@@ -57,9 +77,15 @@ const sendRequest = async () => {
   const start = performance.now()
 
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (storedApiKey.value) {
+      headers.Authorization = `Bearer ${storedApiKey.value}`
+      headers['X-API-Key'] = storedApiKey.value
+    }
+
     const res = await fetch(endpoint.value, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: requestBody.value,
     })
 

@@ -263,6 +263,7 @@ impl DaemonClient {
                 max_tokens,
                 temperature,
                 stream: false,
+                stop: vec![],
             },
             generation_timeout,
         )? {

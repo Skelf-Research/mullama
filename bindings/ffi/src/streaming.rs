@@ -80,25 +80,20 @@ pub extern "C" fn mullama_generate_streaming(
 
     let result = unsafe {
         MutableHandle::with_mut(ctx, |context| {
-            context.generate_streaming(
-                token_slice,
-                max_tokens as usize,
-                &sampler_params,
-                |piece| {
-                    // Convert piece to C string
-                    match CString::new(piece) {
-                        Ok(c_str) => {
-                            let should_continue = callback(c_str.as_ptr(), user_data);
-                            token_count += 1;
-                            should_continue
-                        }
-                        Err(_) => {
-                            // Skip tokens that can't be converted (shouldn't happen)
-                            true
-                        }
+            context.generate_streaming(token_slice, max_tokens as usize, &sampler_params, |piece| {
+                // Convert piece to C string
+                match CString::new(piece) {
+                    Ok(c_str) => {
+                        let should_continue = callback(c_str.as_ptr(), user_data);
+                        token_count += 1;
+                        should_continue
                     }
-                },
-            )
+                    Err(_) => {
+                        // Skip tokens that can't be converted (shouldn't happen)
+                        true
+                    }
+                }
+            })
         })
     };
 
@@ -137,8 +132,7 @@ impl MullamaCancelToken {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.cancelled
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -240,28 +234,23 @@ pub extern "C" fn mullama_generate_streaming_cancellable(
 
     let result = unsafe {
         MutableHandle::with_mut(ctx, |context| {
-            context.generate_streaming(
-                token_slice,
-                max_tokens as usize,
-                &sampler_params,
-                |piece| {
-                    // Check cancellation
-                    if !cancel_token.is_null() && (*cancel_token).is_cancelled() {
-                        was_cancelled = true;
-                        return false;
-                    }
+            context.generate_streaming(token_slice, max_tokens as usize, &sampler_params, |piece| {
+                // Check cancellation
+                if !cancel_token.is_null() && (*cancel_token).is_cancelled() {
+                    was_cancelled = true;
+                    return false;
+                }
 
-                    // Convert piece to C string and invoke callback
-                    match CString::new(piece) {
-                        Ok(c_str) => {
-                            let should_continue = callback(c_str.as_ptr(), user_data);
-                            token_count += 1;
-                            should_continue
-                        }
-                        Err(_) => true,
+                // Convert piece to C string and invoke callback
+                match CString::new(piece) {
+                    Ok(c_str) => {
+                        let should_continue = callback(c_str.as_ptr(), user_data);
+                        token_count += 1;
+                        should_continue
                     }
-                },
-            )
+                    Err(_) => true,
+                }
+            })
         })
     };
 

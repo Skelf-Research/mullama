@@ -29,8 +29,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::MullamaError;
 use super::ollama_template::ChatTemplate;
+use crate::MullamaError;
 
 /// Ollama registry URL
 const OLLAMA_REGISTRY_URL: &str = "https://registry.ollama.ai";
@@ -250,13 +250,8 @@ impl OllamaParameters {
 
     /// Get max tokens (-1 or None means unlimited)
     pub fn max_tokens(&self) -> Option<u32> {
-        self.num_predict.and_then(|n| {
-            if n < 0 {
-                None
-            } else {
-                Some(n as u32)
-            }
-        })
+        self.num_predict
+            .and_then(|n| if n < 0 { None } else { Some(n as u32) })
     }
 
     /// Get context size
@@ -411,8 +406,9 @@ impl OllamaClient {
         // Create storage directories
         let manifests_dir = storage_dir.join("manifests");
         let blobs_dir = storage_dir.join("blobs");
-        fs::create_dir_all(&manifests_dir)
-            .map_err(|e| MullamaError::OllamaError(format!("Failed to create manifests dir: {}", e)))?;
+        fs::create_dir_all(&manifests_dir).map_err(|e| {
+            MullamaError::OllamaError(format!("Failed to create manifests dir: {}", e))
+        })?;
         fs::create_dir_all(&blobs_dir)
             .map_err(|e| MullamaError::OllamaError(format!("Failed to create blobs dir: {}", e)))?;
 
@@ -532,7 +528,10 @@ impl OllamaClient {
         let response = self
             .client
             .get(&url)
-            .header("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+            .header(
+                "Accept",
+                "application/vnd.docker.distribution.manifest.v2+json",
+            )
             .send()
             .await
             .map_err(|e| MullamaError::OllamaError(format!("Failed to fetch manifest: {}", e)))?;
@@ -545,9 +544,10 @@ impl OllamaClient {
             )));
         }
 
-        let manifest: OllamaManifest = response.json().await.map_err(|e| {
-            MullamaError::OllamaError(format!("Failed to parse manifest: {}", e))
-        })?;
+        let manifest: OllamaManifest = response
+            .json()
+            .await
+            .map_err(|e| MullamaError::OllamaError(format!("Failed to parse manifest: {}", e)))?;
 
         Ok(manifest)
     }
@@ -625,8 +625,8 @@ impl OllamaClient {
         let mut downloaded: u64 = 0;
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|e| MullamaError::OllamaError(format!("Download error: {}", e)))?;
+            let chunk =
+                chunk.map_err(|e| MullamaError::OllamaError(format!("Download error: {}", e)))?;
 
             file.write_all(&chunk)
                 .map_err(|e| MullamaError::OllamaError(format!("Write error: {}", e)))?;
@@ -708,8 +708,13 @@ impl OllamaClient {
         if show_progress {
             println!("Downloading config...");
         }
-        self.download_blob(&model_ref, &manifest.config.digest, manifest.config.size, false)
-            .await?;
+        self.download_blob(
+            &model_ref,
+            &manifest.config.digest,
+            manifest.config.size,
+            false,
+        )
+        .await?;
 
         // Download each layer
         for (i, layer) in manifest.layers.iter().enumerate() {
@@ -723,7 +728,12 @@ impl OllamaClient {
             }
 
             let blob_path = self
-                .download_blob(&model_ref, &layer.digest, layer.size, show_progress && layer.size > 1_000_000)
+                .download_blob(
+                    &model_ref,
+                    &layer.digest,
+                    layer.size,
+                    show_progress && layer.size > 1_000_000,
+                )
                 .await?;
 
             total_size += layer.size;
@@ -811,6 +821,11 @@ impl OllamaClient {
 
     /// Check if a name looks like an Ollama model reference
     pub fn is_ollama_ref(name: &str) -> bool {
+        let looks_like_windows_abs = name.len() >= 3
+            && name.as_bytes()[0].is_ascii_alphabetic()
+            && name.as_bytes()[1] == b':'
+            && (name.as_bytes()[2] == b'\\' || name.as_bytes()[2] == b'/');
+
         // Explicit ollama: prefix
         if name.starts_with("ollama:") {
             return true;
@@ -823,9 +838,12 @@ impl OllamaClient {
 
         // Don't match local paths
         if name.starts_with('/')
-            || name.starts_with('.')
+            || name.starts_with("./")
+            || name.starts_with("../")
+            || name.starts_with("~/")
+            || looks_like_windows_abs
             || name.ends_with(".gguf")
-            || name.contains(std::path::MAIN_SEPARATOR)
+            || name.contains('\\')
         {
             return false;
         }

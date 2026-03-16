@@ -306,7 +306,8 @@ impl MemoryMonitor {
         let stats = self.stats();
         let usage = stats.max_usage();
         let pressure = self.calculate_pressure(usage);
-        self.current_pressure.store(pressure as u8, Ordering::Relaxed);
+        self.current_pressure
+            .store(pressure as u8, Ordering::Relaxed);
     }
 
     /// Calculate pressure level from usage ratio

@@ -366,10 +366,7 @@ impl JsContext {
             .tokenize(&prompt, true, false)
             .map_err(|e| Error::from_reason(format!("Tokenization failed: {}", e)))?;
 
-        let sampler_params = params
-            .as_ref()
-            .map(SamplerParams::from)
-            .unwrap_or_default();
+        let sampler_params = params.as_ref().map(SamplerParams::from).unwrap_or_default();
 
         self.inner
             .generate_with_params(&tokens, max_tokens.unwrap_or(100) as usize, &sampler_params)
@@ -384,10 +381,7 @@ impl JsContext {
         max_tokens: Option<u32>,
         params: Option<JsSamplerParams>,
     ) -> Result<String> {
-        let sampler_params = params
-            .as_ref()
-            .map(SamplerParams::from)
-            .unwrap_or_default();
+        let sampler_params = params.as_ref().map(SamplerParams::from).unwrap_or_default();
 
         self.inner
             .generate_with_params(&tokens, max_tokens.unwrap_or(100) as usize, &sampler_params)
@@ -407,10 +401,7 @@ impl JsContext {
             .tokenize(&prompt, true, false)
             .map_err(|e| Error::from_reason(format!("Tokenization failed: {}", e)))?;
 
-        let sampler_params = params
-            .as_ref()
-            .map(SamplerParams::from)
-            .unwrap_or_default();
+        let sampler_params = params.as_ref().map(SamplerParams::from).unwrap_or_default();
 
         let mut pieces: Vec<String> = Vec::new();
 

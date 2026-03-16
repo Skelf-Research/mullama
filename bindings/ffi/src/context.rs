@@ -150,9 +150,7 @@ pub extern "C" fn mullama_decode(
 
     let token_slice = unsafe { std::slice::from_raw_parts(tokens, n_tokens as usize) };
 
-    let result = unsafe {
-        MutableHandle::with_mut(ctx, |context| context.decode(token_slice))
-    };
+    let result = unsafe { MutableHandle::with_mut(ctx, |context| context.decode(token_slice)) };
 
     match result {
         Some(Ok(())) => MullamaErrorCode::Ok.to_i32(),
@@ -449,19 +447,17 @@ pub extern "C" fn mullama_context_get_embeddings(
     }
 
     let result = unsafe {
-        MutableHandle::with_ref(ctx, |context| {
-            match context.get_embeddings() {
-                Some(embeddings) => {
-                    let len = embeddings.len();
-                    if max_output < len {
-                        return Err("Buffer too small");
-                    }
-
-                    std::ptr::copy_nonoverlapping(embeddings.as_ptr(), output, len);
-                    Ok(len)
+        MutableHandle::with_ref(ctx, |context| match context.get_embeddings() {
+            Some(embeddings) => {
+                let len = embeddings.len();
+                if max_output < len {
+                    return Err("Buffer too small");
                 }
-                None => Err("No embeddings available - enable embeddings mode"),
+
+                std::ptr::copy_nonoverlapping(embeddings.as_ptr(), output, len);
+                Ok(len)
             }
+            None => Err("No embeddings available - enable embeddings mode"),
         })
     };
 
@@ -549,8 +545,7 @@ pub extern "C" fn mullama_context_load_state(
 
     let data_slice = unsafe { std::slice::from_raw_parts(data, data_size) };
 
-    let result =
-        unsafe { MutableHandle::with_mut(ctx, |context| context.load_state(data_slice)) };
+    let result = unsafe { MutableHandle::with_mut(ctx, |context| context.load_state(data_slice)) };
 
     match result {
         Some(Ok(read)) => read as c_int,
