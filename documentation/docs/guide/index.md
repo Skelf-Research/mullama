@@ -1,6 +1,13 @@
 # Library Guide
 
-Welcome to the Mullama Library Guide. This section covers everything you need to know to build applications with Mullama, from loading models to advanced inference techniques.
+This guide covers **library-first** LLM inference with Mullama. Embed a high-performance inference engine directly in your application -- no daemon, no HTTP, no separate process.
+
+!!! info "Library vs Daemon"
+    This guide is for **library usage** (direct function calls in your code). If you need a server with OpenAI-compatible APIs, see the [Daemon & CLI](../daemon/index.md) docs.
+
+    **Library advantages:** Zero HTTP overhead, in-process inference, microsecond latency.
+
+The APIs documented here work across all 6 supported languages: **Node.js, Python, Rust, Go, PHP, and C/C++**.
 
 ## Architecture Overview
 

@@ -41,11 +41,12 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 
     ---
 
-    Mullama is a drop-in replacement for Ollama with better performance, embeddable library bindings, and full API compatibility.
+    Drop-in replacement: same CLI commands, same Modelfile format, same GGUF models. **Zero changes required.**
 
-    **1.** Install Mullama (same commands, same API)<br>
-    **2.** Use your existing Modelfiles and scripts<br>
-    **3.** Access native bindings for deeper integration
+    **What you gain:**<br>
+    :material-lightning-bolt: Native bindings (no HTTP overhead)<br>
+    :material-api: Anthropic API + Web UI + TUI<br>
+    :material-code-braces: Embed in your app (6 languages)
 
     [:octicons-arrow-right-24: Migration Guide](../comparison/migration-from-ollama.md)
 
