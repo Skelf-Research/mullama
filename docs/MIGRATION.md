@@ -467,8 +467,8 @@ let ctx_params = ContextParams::default()
 
 ## Getting Help
 
-- **Migration Questions**: [GitHub Discussions](https://github.com/username/mullama/discussions)
-- **Bug Reports**: [GitHub Issues](https://github.com/username/mullama/issues)
+- **Migration Questions**: [GitHub Discussions](https://github.com/neul-labs/mullama/discussions)
+- **Bug Reports**: [GitHub Issues](https://github.com/neul-labs/mullama/issues)
 - **Performance Help**: Share your use case in discussions
 - **Feature Requests**: Check our [Feature Status](FEATURE_STATUS.md) first
 

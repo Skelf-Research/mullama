@@ -5,7 +5,7 @@ Thank you for your interest in contributing to Mullama! We welcome contributions
 ## 🚀 Quick Start
 
 1. **Fork** the repository
-2. **Clone** your fork: `git clone --recurse-submodules https://github.com/yourusername/mullama.git`
+2. **Clone** your fork: `git clone --recurse-submodules https://github.com/neul-labs/mullama.git`
 3. **Create** a feature branch: `git checkout -b feature/amazing-feature`
 4. **Make** your changes
 5. **Test** your changes: `cargo test`
@@ -39,7 +39,7 @@ cargo install mdbook
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/yourusername/mullama.git
+git clone --recurse-submodules https://github.com/neul-labs/mullama.git
 cd mullama
 
 # Build
@@ -422,8 +422,8 @@ For new features, please:
 
 ## 📞 Getting Help
 
-- **💬 Discussions**: [GitHub Discussions](https://github.com/username/mullama/discussions)
-- **🐛 Issues**: [GitHub Issues](https://github.com/username/mullama/issues)
+- **💬 Discussions**: [GitHub Discussions](https://github.com/neul-labs/mullama/discussions)
+- **🐛 Issues**: [GitHub Issues](https://github.com/neul-labs/mullama/issues)
 - **📚 Documentation**: [docs.rs/mullama](https://docs.rs/mullama)
 - **📧 Email**: maintainers@mullama.dev
 
