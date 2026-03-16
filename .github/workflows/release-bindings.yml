@@ -391,7 +391,7 @@ jobs:
 
             **Go:**
             ```bash
-            go get github.com/neul-labs/mullama-go@v${{ needs.prepare.outputs.version }}
+            go get github.com/skelf-research/mullama-go@v${{ needs.prepare.outputs.version }}
             ```
 
             ### Pre-built Libraries

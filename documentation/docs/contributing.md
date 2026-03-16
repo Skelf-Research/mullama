@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Mullama. This guide covers the de
 Fork the repository on GitHub, then clone with submodules (required for llama.cpp):
 
 ```bash
-git clone --recursive https://github.com/neul-labs/mullama.git
+git clone --recursive https://github.com/skelf-research/mullama.git
 cd mullama
 ```
 
@@ -486,7 +486,7 @@ Key points:
 
 ## Getting Help
 
-- Open a [GitHub Issue](https://github.com/neul-labs/mullama/issues) for bugs or feature requests
+- Open a [GitHub Issue](https://github.com/skelf-research/mullama/issues) for bugs or feature requests
 - Check existing issues before creating new ones
 - For usage questions, refer to the [Examples](examples/index.md) section
 - Review the [API Reference](api/index.md) for type details

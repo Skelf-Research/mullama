@@ -502,4 +502,4 @@ We believe in transparent development:
 **llama.cpp Version**: b7542
 **Next Review**: With v0.2.0 release
 
-For the most current information, check our [GitHub Issues](https://github.com/neul-labs/mullama/issues) and [Discussions](https://github.com/neul-labs/mullama/discussions).
+For the most current information, check our [GitHub Issues](https://github.com/skelf-research/mullama/issues) and [Discussions](https://github.com/skelf-research/mullama/discussions).

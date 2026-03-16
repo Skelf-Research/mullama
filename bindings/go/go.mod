@@ -1,3 +1,3 @@
-module github.com/neul-labs/mullama
+module github.com/skelf-research/mullama
 
 go 1.21

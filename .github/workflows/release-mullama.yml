@@ -213,12 +213,12 @@ jobs:
 
             **Linux/macOS (one-liner):**
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/neul-labs/mullama/main/scripts/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/skelf-research/mullama/main/scripts/install.sh | sh
             ```
 
             **Windows (PowerShell):**
             ```powershell
-            iwr https://raw.githubusercontent.com/neul-labs/mullama/main/scripts/install.ps1 -useb | iex
+            iwr https://raw.githubusercontent.com/skelf-research/mullama/main/scripts/install.ps1 -useb | iex
             ```
 
             **Manual Installation:**
@@ -246,7 +246,7 @@ jobs:
             mullama chat
             ```
 
-            See the [documentation](https://github.com/neul-labs/mullama#readme) for more details.
+            See the [documentation](https://github.com/skelf-research/mullama#readme) for more details.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

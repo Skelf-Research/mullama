@@ -1,11 +1,11 @@
 #!/bin/sh
 # Mullama installer script for Linux and macOS
-# Usage: curl -fsSL https://mullama.dev/install.sh | sh
+# Usage: curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
 
 set -e
 
 # Configuration
-REPO="neul-labs/mullama"
+REPO="skelf-research/mullama"
 BINARY_NAME="mullama"
 INSTALL_DIR="${MULLAMA_INSTALL_DIR:-$HOME/.local/bin}"
 
