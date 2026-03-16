@@ -936,6 +936,11 @@ async fn run_server(
     for config in &mut initial_models {
         if let Some(model_config) = model_configs_by_alias.get(&config.alias) {
             config.model_config = Some(model_config.clone());
+            if let Some(ctx) = model_config.context_size {
+                if config.context_size == context_size {
+                    config.context_size = ctx;
+                }
+            }
         }
     }
 

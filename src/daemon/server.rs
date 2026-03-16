@@ -259,6 +259,10 @@ impl Daemon {
                 messages,
                 max_tokens,
                 temperature,
+                top_p,
+                top_k,
+                frequency_penalty,
+                presence_penalty,
                 stream,
                 stop,
                 response_format,
@@ -271,6 +275,10 @@ impl Daemon {
                     messages,
                     max_tokens,
                     temperature,
+                    top_p,
+                    top_k,
+                    frequency_penalty,
+                    presence_penalty,
                     stream,
                     stop,
                     response_format,
@@ -283,11 +291,26 @@ impl Daemon {
                 prompt,
                 max_tokens,
                 temperature,
+                top_p,
+                top_k,
+                frequency_penalty,
+                presence_penalty,
                 stream,
                 stop,
             } => {
-                self.handle_completion(model, prompt, max_tokens, temperature, stream, stop)
-                    .await
+                self.handle_completion(
+                    model,
+                    prompt,
+                    max_tokens,
+                    temperature,
+                    top_p,
+                    top_k,
+                    frequency_penalty,
+                    presence_penalty,
+                    stream,
+                    stop,
+                )
+                .await
             }
 
             Request::Embeddings { model, input } => self.handle_embeddings(model, input).await,
@@ -373,21 +396,29 @@ impl Daemon {
         gpu_layers: i32,
         context_size: u32,
     ) -> Response {
+        let mut resolved_context_size = if context_size == 0 {
+            self.config.default_context_size
+        } else {
+            context_size
+        };
+
         let mut config = ModelLoadConfig::new(&alias, &path)
             .gpu_layers(if gpu_layers == 0 {
                 self.config.default_gpu_layers
             } else {
                 gpu_layers
             })
-            .context_size(if context_size == 0 {
-                self.config.default_context_size
-            } else {
-                context_size
-            })
+            .context_size(resolved_context_size)
             .context_pool_size(self.config.default_context_pool_size)
             .threads(self.config.threads_per_model);
 
         if let Some(ollama_config) = infer_ollama_model_config(&path) {
+            if context_size == 0 {
+                if let Some(ctx) = ollama_config.context_size {
+                    resolved_context_size = ctx;
+                }
+                config = config.context_size(resolved_context_size);
+            }
             config = config.with_config(ollama_config);
         }
 
@@ -415,13 +446,72 @@ impl Daemon {
         }
     }
 
+    fn apply_default_system_prompt(
+        &self,
+        messages: Vec<ChatMessage>,
+        system_prompt: Option<&str>,
+    ) -> Vec<ChatMessage> {
+        let Some(system_prompt) = system_prompt else {
+            return messages;
+        };
+        if system_prompt.trim().is_empty() {
+            return messages;
+        }
+        if messages
+            .iter()
+            .any(|m| m.role.eq_ignore_ascii_case("system"))
+        {
+            return messages;
+        }
+
+        let mut with_system = Vec::with_capacity(messages.len() + 1);
+        with_system.push(ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt.to_string().into(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        with_system.extend(messages);
+        with_system
+    }
+
+    fn build_sampler_params(
+        &self,
+        loaded: &super::models::LoadedModel,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        default_temperature: f32,
+    ) -> SamplerParams {
+        let mut sampler = SamplerParams::default();
+        sampler.temperature = temperature
+            .or(loaded.config.temperature)
+            .unwrap_or(default_temperature);
+        sampler.top_p = top_p.or(loaded.config.top_p).unwrap_or(sampler.top_p);
+        sampler.top_k = top_k.or(loaded.config.top_k).unwrap_or(sampler.top_k);
+        if let Some(v) = frequency_penalty {
+            sampler.penalty_freq = v;
+        }
+        if let Some(v) = presence_penalty {
+            sampler.penalty_present = v;
+        }
+        sampler
+    }
+
     /// Handle streaming chat completion - returns receiver for SSE
     pub async fn handle_chat_completion_streaming(
         &self,
         model: Option<String>,
         messages: Vec<ChatMessage>,
         max_tokens: u32,
-        temperature: f32,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
         stop: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String, String), Response> {
         self.validate_max_tokens(max_tokens)?;
@@ -432,9 +522,8 @@ impl Daemon {
             Err(e) => return Err(Response::error(ErrorCode::ModelNotFound, e.to_string())),
         };
 
-        let _guard = RequestGuard::new(loaded.clone());
-        self.active_requests.fetch_add(1, Ordering::Relaxed);
-
+        let messages =
+            self.apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
         // Build prompt from messages using model's chat template
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let model_alias = loaded.alias.clone();
@@ -446,17 +535,23 @@ impl Daemon {
             loaded.model.get_chat_stop_sequences()
         };
         let all_stops = merge_stop_sequences(default_stops, stop);
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
 
         // Start streaming generation
         match self
-            .generate_text_streaming(loaded, prompt, max_tokens, temperature, all_stops)
+            .generate_text_streaming(loaded, prompt, max_tokens, sampler_params, all_stops)
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
-            Err(e) => {
-                self.active_requests.fetch_sub(1, Ordering::Relaxed);
-                Err(Response::error(ErrorCode::GenerationFailed, e.to_string()))
-            }
+            Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
         }
     }
 
@@ -465,11 +560,21 @@ impl Daemon {
         model: Option<String>,
         messages: Vec<ChatMessage>,
         max_tokens: u32,
-        temperature: f32,
-        _stream: bool,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        stream: bool,
         stop: Vec<String>,
         response_format: Option<ResponseFormat>,
     ) -> Response {
+        if stream {
+            return Response::error(
+                ErrorCode::InvalidRequest,
+                "Streaming chat over IPC Request::ChatCompletion is not supported; use streaming HTTP endpoints",
+            );
+        }
         if let Err(resp) = self.validate_max_tokens(max_tokens) {
             return resp;
         }
@@ -483,6 +588,8 @@ impl Daemon {
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::Relaxed);
 
+        let messages =
+            self.apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
         // Build prompt from messages using model's chat template
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
 
@@ -493,6 +600,15 @@ impl Daemon {
             loaded.model.get_chat_stop_sequences()
         };
         let all_stops = merge_stop_sequences(default_stops, stop);
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
 
         // Generate
         let result = self
@@ -500,7 +616,7 @@ impl Daemon {
                 &loaded,
                 &prompt,
                 max_tokens,
-                temperature,
+                sampler_params,
                 &all_stops,
                 response_format.as_ref(),
             )
@@ -548,10 +664,20 @@ impl Daemon {
         model: Option<String>,
         prompt: String,
         max_tokens: u32,
-        temperature: f32,
-        _stream: bool,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        stream: bool,
         stop: Vec<String>,
     ) -> Response {
+        if stream {
+            return Response::error(
+                ErrorCode::InvalidRequest,
+                "Streaming completion over IPC Request::Completion is not supported; use /v1/completions with stream=true",
+            );
+        }
         if let Err(resp) = self.validate_max_tokens(max_tokens) {
             return resp;
         }
@@ -564,10 +690,26 @@ impl Daemon {
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::Relaxed);
 
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
         let default_stops = loaded.config.stop_sequences.clone();
         let all_stops = merge_stop_sequences(default_stops, stop);
         let result = self
-            .generate_text(&loaded, &prompt, max_tokens, temperature, &all_stops, None)
+            .generate_text(
+                &loaded,
+                &prompt,
+                max_tokens,
+                sampler_params,
+                &all_stops,
+                None,
+            )
             .await;
 
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
@@ -600,6 +742,48 @@ impl Daemon {
         }
     }
 
+    /// Handle streaming text completion - returns receiver for SSE
+    pub async fn handle_completion_streaming(
+        &self,
+        model: Option<String>,
+        prompt: String,
+        max_tokens: u32,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        stop: Vec<String>,
+    ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String, String), Response> {
+        self.validate_max_tokens(max_tokens)?;
+
+        let loaded = match self.models.get(model.as_deref()).await {
+            Ok(m) => m,
+            Err(e) => return Err(Response::error(ErrorCode::ModelNotFound, e.to_string())),
+        };
+
+        let model_alias = loaded.alias.clone();
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
+        let default_stops = loaded.config.stop_sequences.clone();
+        let all_stops = merge_stop_sequences(default_stops, stop);
+
+        match self
+            .generate_text_streaming(loaded, prompt, max_tokens, sampler_params, all_stops)
+            .await
+        {
+            Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
+            Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
+        }
+    }
+
     /// Handle vision chat completion (images + text)
     #[cfg(feature = "multimodal")]
     pub async fn handle_vision_chat_completion(
@@ -607,7 +791,11 @@ impl Daemon {
         model: Option<String>,
         messages: Vec<ChatMessage>,
         max_tokens: u32,
-        temperature: f32,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
         stop: Vec<String>,
     ) -> Response {
         if let Err(resp) = self.validate_max_tokens(max_tokens) {
@@ -633,6 +821,9 @@ impl Daemon {
 
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::Relaxed);
+
+        let messages =
+            self.apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
 
         // Extract images from messages and decode base64
         let mut bitmaps: Vec<Bitmap> = Vec::new();
@@ -692,6 +883,15 @@ impl Daemon {
             loaded.model.get_chat_stop_sequences()
         };
         let all_stops = merge_stop_sequences(default_stops, stop);
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
 
         // Process with multimodal context
         let result = self
@@ -700,7 +900,7 @@ impl Daemon {
                 &prompt,
                 &bitmaps,
                 max_tokens,
-                temperature,
+                sampler_params,
                 &all_stops,
             )
             .await;
@@ -800,7 +1000,7 @@ impl Daemon {
         prompt: &str,
         bitmaps: &[crate::Bitmap],
         max_tokens: u32,
-        temperature: f32,
+        sampler_params: SamplerParams,
         stop_sequences: &[String],
     ) -> Result<(String, u32, u32), MullamaError> {
         // Get locks on context and mtmd_context (uses context pool for concurrent requests)
@@ -834,10 +1034,6 @@ impl Daemon {
             let prompt_tokens = n_past as u32;
 
             // Set up sampler
-            let mut sampler_params = SamplerParams::default();
-            sampler_params.temperature = temperature;
-            sampler_params.top_p = 0.9;
-            sampler_params.top_k = 40;
             let mut sampler = sampler_params.build_chain(model.clone())?;
 
             // Generate tokens
@@ -890,7 +1086,11 @@ impl Daemon {
         model: Option<String>,
         messages: Vec<ChatMessage>,
         max_tokens: u32,
-        temperature: f32,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
         stop: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String, String), Response> {
         self.validate_max_tokens(max_tokens)?;
@@ -912,8 +1112,8 @@ impl Daemon {
             ));
         }
 
-        let _guard = RequestGuard::new(loaded.clone());
-        self.active_requests.fetch_add(1, Ordering::Relaxed);
+        let messages =
+            self.apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
 
         // Extract and decode images
         let mut bitmaps: Vec<Bitmap> = Vec::new();
@@ -931,7 +1131,6 @@ impl Daemon {
                             Ok(image_bytes) => match mtmd_guard.bitmap_from_buffer(&image_bytes) {
                                 Ok(bitmap) => bitmaps.push(bitmap),
                                 Err(e) => {
-                                    self.active_requests.fetch_sub(1, Ordering::Relaxed);
                                     return Err(Response::error(
                                         ErrorCode::InvalidRequest,
                                         format!("Failed to load image: {}", e),
@@ -939,7 +1138,6 @@ impl Daemon {
                                 }
                             },
                             Err(e) => {
-                                self.active_requests.fetch_sub(1, Ordering::Relaxed);
                                 return Err(Response::error(
                                     ErrorCode::InvalidRequest,
                                     format!("Invalid base64 image data: {}", e),
@@ -947,7 +1145,6 @@ impl Daemon {
                             }
                         }
                     } else {
-                        self.active_requests.fetch_sub(1, Ordering::Relaxed);
                         return Err(Response::error(
                             ErrorCode::InvalidRequest,
                             "Image URL must be a base64 data URI",
@@ -968,6 +1165,15 @@ impl Daemon {
             loaded.model.get_chat_stop_sequences()
         };
         let all_stops = merge_stop_sequences(default_stops, stop);
+        let sampler_params = self.build_sampler_params(
+            &loaded,
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            presence_penalty,
+            0.7,
+        );
 
         // Start streaming generation with vision
         match self
@@ -976,16 +1182,13 @@ impl Daemon {
                 prompt,
                 bitmaps,
                 max_tokens,
-                temperature,
+                sampler_params,
                 all_stops,
             )
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
-            Err(e) => {
-                self.active_requests.fetch_sub(1, Ordering::Relaxed);
-                Err(Response::error(ErrorCode::GenerationFailed, e.to_string()))
-            }
+            Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
         }
     }
 
@@ -997,7 +1200,7 @@ impl Daemon {
         prompt: String,
         bitmaps: Vec<crate::Bitmap>,
         max_tokens: u32,
-        temperature: f32,
+        sampler_params: SamplerParams,
         stop_sequences: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String), MullamaError> {
         // Generate request ID - use Arc<str> for zero-copy sharing across all chunks
@@ -1016,11 +1219,13 @@ impl Daemon {
         let cancellations = Arc::clone(&self.cancellations);
         let active_requests = Arc::clone(&self.active_requests);
         let request_id_cleanup = request_id.clone();
+        self.active_requests.fetch_add(1, Ordering::Relaxed);
 
         // Process image chunks first, then spawn streaming task
         // We need to get both locks, process images, then stream text generation
 
         tokio::spawn(async move {
+            let _guard = RequestGuard::new(loaded.clone());
             let mut context = loaded.acquire_context().await;
             let mut mtmd_context = loaded.mtmd_context.as_ref().unwrap().write().await;
 
@@ -1038,10 +1243,6 @@ impl Daemon {
                     mtmd_context.eval_chunks(&mut context, &chunks, 0, 0, n_batch, true)?;
 
                 // Set up sampler
-                let mut sampler_params = SamplerParams::default();
-                sampler_params.temperature = temperature;
-                sampler_params.top_p = 0.9;
-                sampler_params.top_k = 40;
                 let mut sampler = sampler_params.build_chain(model.clone())?;
 
                 let mut generated = String::new();
@@ -1282,7 +1483,7 @@ impl Daemon {
         loaded: &super::models::LoadedModel,
         prompt: &str,
         max_tokens: u32,
-        temperature: f32,
+        sampler_params: SamplerParams,
         stop_sequences: &[String],
         response_format: Option<&ResponseFormat>,
     ) -> Result<(String, u32, u32), crate::MullamaError> {
@@ -1334,10 +1535,6 @@ impl Daemon {
             context.kv_cache_clear();
 
             // Setup sampler
-            let mut sampler_params = SamplerParams::default();
-            sampler_params.temperature = temperature;
-            sampler_params.top_p = 0.9;
-            sampler_params.top_k = 40;
             let mut sampler = sampler_params.build_chain(model.clone())?;
 
             // Add grammar sampler if response_format requires it
@@ -1397,7 +1594,7 @@ impl Daemon {
         loaded: Arc<super::models::LoadedModel>,
         prompt: String,
         max_tokens: u32,
-        temperature: f32,
+        sampler_params: SamplerParams,
         stop_sequences: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String), MullamaError> {
         // Tokenize - respect model's BOS token setting
@@ -1425,9 +1622,11 @@ impl Daemon {
         let cancellations = Arc::clone(&self.cancellations);
         let active_requests = Arc::clone(&self.active_requests);
         let request_id_cleanup = request_id.clone();
+        self.active_requests.fetch_add(1, Ordering::Relaxed);
 
         // Spawn the generation task
         tokio::spawn(async move {
+            let _guard = RequestGuard::new(loaded.clone());
             // Acquire context from pool (enables concurrent streaming to same model)
             let mut context = loaded.acquire_context().await;
 
@@ -1435,10 +1634,6 @@ impl Daemon {
             let result = tokio::task::block_in_place(|| {
                 context.kv_cache_clear();
 
-                let mut sampler_params = SamplerParams::default();
-                sampler_params.temperature = temperature;
-                sampler_params.top_p = 0.9;
-                sampler_params.top_k = 40;
                 let mut sampler = sampler_params.build_chain(model.clone())?;
 
                 context.decode(&tokens)?;
@@ -1730,5 +1925,64 @@ impl DaemonBuilder {
 impl Default for DaemonBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_daemon() -> Daemon {
+        let mut config = DaemonConfig::default();
+        config.enable_memory_monitoring = false;
+        Daemon::new(config)
+    }
+
+    #[test]
+    fn merge_stop_sequences_deduplicates_and_filters_empty() {
+        let merged = merge_stop_sequences(
+            vec!["</s>".to_string(), "".to_string()],
+            vec!["<|eot_id|>".to_string(), "</s>".to_string()],
+        );
+        assert_eq!(merged, vec!["</s>", "<|eot_id|>"]);
+    }
+
+    #[test]
+    fn find_stop_in_recent_window_detects_cross_token_boundary() {
+        let generated = "hello<|eot_id|>";
+        let previous_len = "hello<|eo".len();
+        let stop_sequences = vec!["<|eot_id|>".to_string()];
+        let pos = find_stop_in_recent_window(generated, previous_len, &stop_sequences, 10);
+        assert_eq!(pos, Some("hello".len()));
+    }
+
+    #[test]
+    fn apply_default_system_prompt_only_when_missing() {
+        let daemon = test_daemon();
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "hello".to_string().into(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let with_system =
+            daemon.apply_default_system_prompt(messages.clone(), Some("You are helpful."));
+        assert_eq!(with_system.len(), 2);
+        assert_eq!(with_system[0].role, "system");
+
+        let with_existing = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "existing".to_string().into(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            messages[0].clone(),
+        ];
+        let unchanged = daemon.apply_default_system_prompt(with_existing.clone(), Some("ignored"));
+        assert_eq!(unchanged.len(), with_existing.len());
+        assert_eq!(unchanged[0].content.text(), "existing");
     }
 }
