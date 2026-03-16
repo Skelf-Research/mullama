@@ -177,8 +177,8 @@ pub struct ChatCompletionRequest {
     pub messages: Vec<ChatMessage>,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
     #[serde(default)]
     pub top_p: Option<f32>,
     #[serde(default)]
@@ -248,8 +248,16 @@ pub struct CompletionRequest {
     pub prompt: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub n: Option<u32>,
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
+    #[serde(default)]
+    pub frequency_penalty: Option<f32>,
     #[serde(default)]
     pub stream: bool,
     #[serde(default)]
@@ -269,6 +277,22 @@ pub struct CompletionResponse {
 
 #[derive(Debug, Serialize)]
 pub struct CompletionChoice {
+    pub index: u32,
+    pub text: String,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletionChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<CompletionChunkChoice>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletionChunkChoice {
     pub index: u32,
     pub text: String,
     pub finish_reason: Option<String>,
@@ -331,15 +355,22 @@ pub struct ErrorDetail {
 fn default_max_tokens() -> u32 {
     512
 }
-fn default_temperature() -> f32 {
-    0.7
-}
 
 fn unix_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn validate_n_parameter(n: Option<u32>, endpoint: &str) -> Result<(), ApiError> {
+    if n.unwrap_or(1) != 1 {
+        return Err(ApiError::bad_request(format!(
+            "Only n=1 is currently supported for {}",
+            endpoint
+        )));
+    }
+    Ok(())
 }
 
 // ==================== Handlers ====================
@@ -349,6 +380,8 @@ async fn chat_completions(
     State(daemon): State<AppState>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
+    validate_n_parameter(req.n, "chat completions")?;
+
     // Check if any message contains images (vision request)
     let has_images = req.messages.iter().any(|m| m.content.has_images());
 
@@ -373,6 +406,10 @@ async fn chat_completions(
                     req.messages,
                     req.max_tokens,
                     req.temperature,
+                    req.top_p,
+                    None,
+                    req.frequency_penalty,
+                    req.presence_penalty,
                     req.stop.unwrap_or_default(),
                 )
                 .await
@@ -412,6 +449,10 @@ async fn chat_completions(
         messages: req.messages,
         max_tokens: req.max_tokens,
         temperature: req.temperature,
+        top_p: req.top_p,
+        top_k: None,
+        frequency_penalty: req.frequency_penalty,
+        presence_penalty: req.presence_penalty,
         stream: false,
         stop: req.stop.unwrap_or_default(),
         response_format: req.response_format,
@@ -462,6 +503,10 @@ async fn chat_completions_stream(
             req.messages,
             req.max_tokens,
             req.temperature,
+            req.top_p,
+            None,
+            req.frequency_penalty,
+            req.presence_penalty,
             req.stop.unwrap_or_default(),
         )
         .await
@@ -549,6 +594,10 @@ async fn chat_completions_vision_stream(
             req.messages,
             req.max_tokens,
             req.temperature,
+            req.top_p,
+            None,
+            req.frequency_penalty,
+            req.presence_penalty,
             req.stop.unwrap_or_default(),
         )
         .await
@@ -622,12 +671,22 @@ async fn chat_completions_vision_stream(
 async fn completions(
     State(daemon): State<AppState>,
     Json(req): Json<CompletionRequest>,
-) -> Result<Json<CompletionResponse>, ApiError> {
+) -> Result<Response, ApiError> {
+    validate_n_parameter(req.n, "text completions")?;
+
+    if req.stream {
+        return completions_stream(daemon, req).await;
+    }
+
     let request = super::protocol::Request::Completion {
         model: req.model,
         prompt: req.prompt,
         max_tokens: req.max_tokens,
         temperature: req.temperature,
+        top_p: req.top_p,
+        top_k: None,
+        frequency_penalty: req.frequency_penalty,
+        presence_penalty: req.presence_penalty,
         stream: req.stream,
         stop: req.stop.unwrap_or_default(),
     };
@@ -648,12 +707,89 @@ async fn completions(
                 })
                 .collect(),
             usage: resp.usage,
-        })),
+        })
+        .into_response()),
         super::protocol::Response::Error { code, message, .. } => {
             Err(ApiError::from_protocol_error(code, message))
         }
         _ => Err(ApiError::new("Unexpected response")),
     }
+}
+
+async fn completions_stream(
+    daemon: AppState,
+    req: CompletionRequest,
+) -> Result<Response, ApiError> {
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let (rx, _prompt_tokens, request_id, model_alias) = daemon
+        .handle_completion_streaming(
+            req.model,
+            req.prompt,
+            req.max_tokens,
+            req.temperature,
+            req.top_p,
+            None,
+            req.frequency_penalty,
+            req.presence_penalty,
+            req.stop.unwrap_or_default(),
+        )
+        .await
+        .map_err(|resp| {
+            if let super::protocol::Response::Error { message, .. } = resp {
+                ApiError::new(message)
+            } else {
+                ApiError::new("Failed to start completion streaming")
+            }
+        })?;
+
+    let stream = ReceiverStream::new(rx);
+    let request_id_clone = request_id.clone();
+    let model_clone = model_alias.clone();
+
+    let sse_stream = stream
+        .map(move |chunk| {
+            let sse_chunk = CompletionChunk {
+                id: request_id_clone.clone(),
+                object: "text_completion".to_string(),
+                created,
+                model: model_clone.clone(),
+                choices: vec![CompletionChunkChoice {
+                    index: chunk.index,
+                    text: chunk.delta,
+                    finish_reason: None,
+                }],
+            };
+
+            Event::default().data(serde_json::to_string(&sse_chunk).unwrap_or_default())
+        })
+        .chain(stream::once(async move {
+            let final_chunk = CompletionChunk {
+                id: request_id,
+                object: "text_completion".to_string(),
+                created,
+                model: model_alias,
+                choices: vec![CompletionChunkChoice {
+                    index: 0,
+                    text: String::new(),
+                    finish_reason: Some("stop".to_string()),
+                }],
+            };
+            Event::default().data(serde_json::to_string(&final_chunk).unwrap_or_default())
+        }))
+        .chain(stream::once(async { Event::default().data("[DONE]") }))
+        .map(Ok::<_, Infallible>);
+
+    Ok(Sse::new(sse_stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response())
 }
 
 /// GET /v1/models
@@ -1439,6 +1575,7 @@ async fn api_load_model(
         .unwrap_or(daemon.config.default_gpu_layers);
     let context_size = request
         .context_size
+        .or_else(|| model_config.as_ref().and_then(|c| c.context_size))
         .unwrap_or(daemon.config.default_context_size);
 
     let config = super::models::ModelLoadConfig {
@@ -1446,7 +1583,7 @@ async fn api_load_model(
         path: path.clone(),
         gpu_layers,
         context_size,
-        threads: num_cpus::get() as i32,
+        threads: daemon.config.threads_per_model,
         context_pool_size: daemon.config.default_context_pool_size,
         mmproj_path: None,
         model_config,
@@ -1519,6 +1656,13 @@ impl ApiError {
         }
     }
 
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            status: StatusCode::BAD_REQUEST,
+        }
+    }
+
     fn from_protocol_error(code: ErrorCode, message: impl Into<String>) -> Self {
         let message = message.into();
         let status = match code {
@@ -1553,6 +1697,24 @@ impl IntoResponse for ApiError {
             },
         });
         (self.status, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_n_parameter_accepts_default_and_one() {
+        assert!(validate_n_parameter(None, "chat completions").is_ok());
+        assert!(validate_n_parameter(Some(1), "chat completions").is_ok());
+    }
+
+    #[test]
+    fn validate_n_parameter_rejects_multiple_choices() {
+        let err = validate_n_parameter(Some(2), "chat completions").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("n=1"));
     }
 }
 

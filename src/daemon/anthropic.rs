@@ -41,6 +41,7 @@
 //! }
 //! ```
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use axum::{
@@ -53,6 +54,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt as _;
 
+use super::models::RequestGuard;
 use super::protocol::ChatMessage;
 use super::server::Daemon;
 
@@ -73,6 +75,35 @@ fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<Strin
     }
 
     merged
+}
+
+fn apply_default_system_prompt(
+    messages: Vec<ChatMessage>,
+    system_prompt: Option<&str>,
+) -> Vec<ChatMessage> {
+    let Some(system_prompt) = system_prompt else {
+        return messages;
+    };
+    if system_prompt.trim().is_empty() {
+        return messages;
+    }
+    if messages
+        .iter()
+        .any(|m| m.role.eq_ignore_ascii_case("system"))
+    {
+        return messages;
+    }
+
+    let mut with_system = Vec::with_capacity(messages.len() + 1);
+    with_system.push(ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string().into(),
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
+    });
+    with_system.extend(messages);
+    with_system
 }
 
 // ==================== Request Types ====================
@@ -98,8 +129,8 @@ pub struct MessagesRequest {
     pub stream: bool,
 
     /// Temperature for sampling (0.0 to 1.0)
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
 
     /// Top-p sampling
     #[serde(default)]
@@ -116,10 +147,6 @@ pub struct MessagesRequest {
     /// Metadata (ignored but accepted for compatibility)
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
-}
-
-fn default_temperature() -> f32 {
-    1.0
 }
 
 /// A message in the Anthropic format
@@ -358,7 +385,7 @@ async fn handle_messages(
     request: MessagesRequest,
 ) -> Result<MessagesResponse, ApiError> {
     // Convert Anthropic messages to internal format
-    let messages = convert_messages(&request)?;
+    let mut messages = convert_messages(&request)?;
 
     // Get stop sequences
     let stop = request.stop_sequences.unwrap_or_default();
@@ -369,6 +396,9 @@ async fn handle_messages(
         .get(request.model.as_deref())
         .await
         .map_err(|e| ApiError::model_not_found(e.to_string()))?;
+    let _guard = RequestGuard::new(loaded.clone());
+    daemon.active_requests.fetch_add(1, Ordering::Relaxed);
+    messages = apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
 
     let model_alias = loaded.alias.clone();
 
@@ -381,6 +411,19 @@ async fn handle_messages(
         loaded.model.get_chat_stop_sequences()
     };
     let all_stops = merge_stop_sequences(default_stops, stop);
+    let mut sampler_params = crate::SamplerParams::default();
+    sampler_params.temperature = request
+        .temperature
+        .or(loaded.config.temperature)
+        .unwrap_or(1.0);
+    sampler_params.top_p = request
+        .top_p
+        .or(loaded.config.top_p)
+        .unwrap_or(sampler_params.top_p);
+    sampler_params.top_k = request
+        .top_k
+        .or(loaded.config.top_k)
+        .unwrap_or(sampler_params.top_k);
 
     // Generate
     let result = daemon
@@ -388,12 +431,14 @@ async fn handle_messages(
             &loaded,
             &prompt,
             request.max_tokens,
-            request.temperature,
+            sampler_params,
             &all_stops,
             None, // Anthropic API doesn't support response_format yet
         )
-        .await
-        .map_err(|e| ApiError::generation_failed(e.to_string()))?;
+        .await;
+    daemon.active_requests.fetch_sub(1, Ordering::Relaxed);
+
+    let result = result.map_err(|e| ApiError::generation_failed(e.to_string()))?;
 
     let (text, prompt_tokens, completion_tokens) = result;
 
@@ -418,7 +463,7 @@ async fn handle_messages_streaming(
     request: MessagesRequest,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     // Convert Anthropic messages to internal format
-    let messages = convert_messages(&request)?;
+    let mut messages = convert_messages(&request)?;
 
     // Get stop sequences
     let stop = request.stop_sequences.unwrap_or_default();
@@ -429,6 +474,7 @@ async fn handle_messages_streaming(
         .get(request.model.as_deref())
         .await
         .map_err(|e| ApiError::model_not_found(e.to_string()))?;
+    messages = apply_default_system_prompt(messages, loaded.config.system_prompt.as_deref());
 
     let model_alias = loaded.alias.clone();
     let message_id = generate_message_id();
@@ -442,6 +488,19 @@ async fn handle_messages_streaming(
         loaded.model.get_chat_stop_sequences()
     };
     let all_stops = merge_stop_sequences(default_stops, stop);
+    let mut sampler_params = crate::SamplerParams::default();
+    sampler_params.temperature = request
+        .temperature
+        .or(loaded.config.temperature)
+        .unwrap_or(1.0);
+    sampler_params.top_p = request
+        .top_p
+        .or(loaded.config.top_p)
+        .unwrap_or(sampler_params.top_p);
+    sampler_params.top_k = request
+        .top_k
+        .or(loaded.config.top_k)
+        .unwrap_or(sampler_params.top_k);
 
     // Start streaming generation
     let (rx, prompt_tokens, _request_id) = daemon
@@ -449,7 +508,7 @@ async fn handle_messages_streaming(
             loaded,
             prompt,
             request.max_tokens,
-            request.temperature,
+            sampler_params,
             all_stops,
         )
         .await
