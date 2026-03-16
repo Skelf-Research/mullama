@@ -1,5 +1,12 @@
 # Why Mullama
 
+!!! tip "TL;DR"
+    **Mullama = Ollama's features + native language bindings + zero HTTP overhead**
+
+    - **Drop-in Ollama replacement:** Same CLI commands, same Modelfile format, same GGUF models
+    - **Native bindings:** Python, Node.js, Go, PHP, Rust, C/C++ -- direct function calls, not HTTP
+    - **All-in-one toolkit:** Library + daemon + CLI + Web UI + TUI + OpenAI/Anthropic APIs
+
 Mullama takes a fundamentally different approach to local LLM inference. Where traditional tools like Ollama operate as standalone servers that applications communicate with over HTTP, Mullama is designed from the ground up as an **embeddable library** that integrates directly into your application -- with native bindings for multiple languages and an optional daemon when server functionality is needed.
 
 ## Library-First vs Server-First

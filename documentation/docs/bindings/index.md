@@ -5,7 +5,14 @@ description: Use Mullama from Node.js, Python, Go, PHP, and C/C++ with native pe
 
 # Language Bindings
 
-Mullama provides official language bindings for **Node.js**, **Python**, **Go**, **PHP**, and **C/C++**, enabling you to integrate high-performance local LLM inference into applications written in your preferred language. All bindings call directly into the Rust core through a stable C ABI, providing near-zero overhead compared to using Rust directly.
+**This is Mullama's key differentiator: native LLM inference in 6 languages with near-zero overhead.**
+
+!!! success "In-process. Zero IPC. Zero HTTP."
+    Unlike Ollama (HTTP-only), Mullama bindings call directly into compiled Rust code. No serialization, no network calls, no separate process.
+
+    **Result:** 100-1000x faster call initiation. Microseconds instead of milliseconds.
+
+Mullama provides official bindings for **Node.js**, **Python**, **Go**, **PHP**, **Rust**, and **C/C++**. All bindings share the same high-performance Rust core through a stable C ABI.
 
 ## Architecture
 
