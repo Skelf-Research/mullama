@@ -49,6 +49,26 @@ pub enum Request {
         gpu_layers: i32,
         #[serde(default)]
         context_size: u32,
+        #[serde(default)]
+        use_mmap: Option<bool>,
+        #[serde(default)]
+        use_mlock: bool,
+        #[serde(default)]
+        flash_attn: bool,
+        #[serde(default)]
+        cache_type_k: Option<String>,
+        #[serde(default)]
+        cache_type_v: Option<String>,
+        #[serde(default)]
+        rope_freq_base: Option<f32>,
+        #[serde(default)]
+        rope_freq_scale: Option<f32>,
+        #[serde(default)]
+        n_batch: Option<u32>,
+        #[serde(default)]
+        defrag_thold: Option<f32>,
+        #[serde(default)]
+        split_mode: Option<String>,
     },
 
     /// Unload a model by alias
@@ -327,6 +347,32 @@ pub struct DaemonStats {
     pub active_requests: u32,
     pub memory_used_mb: u64,
     pub gpu_available: bool,
+    #[serde(default)]
+    pub memory_total_mb: u64,
+    #[serde(default)]
+    pub memory_available_mb: u64,
+    #[serde(default)]
+    pub memory_pressure: String,
+    #[serde(default)]
+    pub model_details: Vec<ModelDetailedStats>,
+}
+
+/// Detailed per-model statistics
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
+#[archive(check_bytes)]
+pub struct ModelDetailedStats {
+    pub alias: String,
+    pub requests_total: u64,
+    pub tokens_generated: u64,
+    pub tokens_prompt: u64,
+    pub avg_tokens_per_sec: f32,
+    pub memory_bytes: u64,
+    pub active_requests: u32,
+    pub last_used_secs_ago: u64,
+    pub load_time_ms: u64,
+    pub pool_size: usize,
 }
 
 /// Model status

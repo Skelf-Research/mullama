@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt as _;
 use tower::limit::ConcurrencyLimitLayer;
+use tower_http::trace::TraceLayer;
 
 use super::anthropic::messages_handler;
 use super::protocol::{
@@ -80,6 +81,9 @@ pub fn create_openai_router(daemon: Arc<Daemon>) -> Router {
         }
     }
 
+    // Create Ollama-compatible API router
+    let ollama_router = super::ollama_api::create_ollama_router(daemon.clone());
+
     Router::new()
         .route("/health", get(health))
         // Embedded Web UI
@@ -88,6 +92,8 @@ pub fn create_openai_router(daemon: Arc<Daemon>) -> Router {
         .route("/ui/*path", get(serve_ui_handler))
         .with_state(daemon)
         .merge(protected)
+        .merge(ollama_router)
+        .layer(TraceLayer::new_for_http())
 }
 
 #[derive(Clone)]
@@ -1006,6 +1012,26 @@ pub struct LoadModelRequest {
     /// Context size (optional, uses daemon default if not specified)
     #[serde(default)]
     pub context_size: Option<u32>,
+    #[serde(default)]
+    pub flash_attn: bool,
+    #[serde(default)]
+    pub cache_type_k: Option<String>,
+    #[serde(default)]
+    pub cache_type_v: Option<String>,
+    #[serde(default)]
+    pub use_mmap: Option<bool>,
+    #[serde(default)]
+    pub use_mlock: bool,
+    #[serde(default)]
+    pub rope_freq_base: Option<f32>,
+    #[serde(default)]
+    pub rope_freq_scale: Option<f32>,
+    #[serde(default)]
+    pub n_batch: Option<u32>,
+    #[serde(default)]
+    pub defrag_thold: Option<f32>,
+    #[serde(default)]
+    pub split_mode: Option<String>,
 }
 
 /// Response for model operations
@@ -1604,6 +1630,16 @@ async fn api_load_model(
         context_pool_size: daemon.config.default_context_pool_size,
         mmproj_path: None,
         model_config,
+        use_mmap: request.use_mmap.or(daemon.config.default_use_mmap),
+        use_mlock: request.use_mlock || daemon.config.default_use_mlock,
+        flash_attn: request.flash_attn || daemon.config.default_flash_attn,
+        cache_type_k: request.cache_type_k.or_else(|| daemon.config.default_cache_type_k.clone()),
+        cache_type_v: request.cache_type_v.or_else(|| daemon.config.default_cache_type_v.clone()),
+        rope_freq_base: request.rope_freq_base.or(daemon.config.default_rope_freq_base),
+        rope_freq_scale: request.rope_freq_scale.or(daemon.config.default_rope_freq_scale),
+        n_batch: request.n_batch.or(daemon.config.default_n_batch),
+        defrag_thold: request.defrag_thold.or(daemon.config.default_defrag_thold),
+        split_mode: request.split_mode.or_else(|| daemon.config.default_split_mode.clone()),
     };
 
     match daemon.models.load(config).await {
@@ -1889,6 +1925,16 @@ async fn api_use_default(
         context_pool_size: daemon.config.default_context_pool_size,
         mmproj_path,
         model_config: Some(model_config_from_modelfile(&default.modelfile)),
+        use_mmap: daemon.config.default_use_mmap,
+        use_mlock: daemon.config.default_use_mlock,
+        flash_attn: daemon.config.default_flash_attn,
+        cache_type_k: daemon.config.default_cache_type_k.clone(),
+        cache_type_v: daemon.config.default_cache_type_v.clone(),
+        rope_freq_base: daemon.config.default_rope_freq_base,
+        rope_freq_scale: daemon.config.default_rope_freq_scale,
+        n_batch: daemon.config.default_n_batch,
+        defrag_thold: daemon.config.default_defrag_thold,
+        split_mode: daemon.config.default_split_mode.clone(),
     };
 
     daemon.models.load(load_config).await.map_err(|e| {

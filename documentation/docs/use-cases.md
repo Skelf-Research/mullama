@@ -486,23 +486,23 @@ Use this guide to determine which features to enable based on your use case:
 
 ```toml
 # Chatbot
-mullama = { version = "0.1", features = ["streaming"] }
+mullama = { version = "0.3", features = ["streaming"] }
 
 # RAG / Semantic search
-mullama = { version = "0.1" }  # Core is sufficient
+mullama = { version = "0.3" }  # Core is sufficient
 
 # Voice assistant
-mullama = { version = "0.1", features = ["multimodal", "streaming-audio"] }
+mullama = { version = "0.3", features = ["multimodal", "streaming-audio"] }
 
 # API server
-mullama = { version = "0.1", features = ["web", "streaming"] }
+mullama = { version = "0.3", features = ["web", "streaming"] }
 
 # Edge deployment (minimal binary)
-mullama = { version = "0.1", default-features = false }
+mullama = { version = "0.3", default-features = false }
 
 # Batch processing
-mullama = { version = "0.1", features = ["parallel"] }
+mullama = { version = "0.3", features = ["parallel"] }
 
 # Everything
-mullama = { version = "0.1", features = ["full"] }
+mullama = { version = "0.3", features = ["full"] }
 ```

@@ -7,7 +7,7 @@ Accelerate batch inference and embedding generation with Rayon-powered work-stea
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["parallel"] }
+    mullama = { version = "0.3", features = ["parallel"] }
     ```
 
 ## Overview

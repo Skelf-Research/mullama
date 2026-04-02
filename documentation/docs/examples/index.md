@@ -157,7 +157,7 @@ Before starting any tutorial, ensure you have:
     === "Rust"
         ```toml
         [dependencies]
-        mullama = { version = "0.1", features = ["full"] }
+        mullama = { version = "0.3", features = ["full"] }
         ```
 
 2. **A GGUF model file** -- Download or pull via the daemon:

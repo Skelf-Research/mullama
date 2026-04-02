@@ -10,7 +10,7 @@ The multimodal module provides a unified processing pipeline for text, images, a
 !!! info "Feature Gate"
     This module requires the `multimodal` feature flag:
     ```toml
-    mullama = { version = "0.1", features = ["multimodal"] }
+    mullama = { version = "0.3", features = ["multimodal"] }
     ```
 
 ## MultimodalProcessor

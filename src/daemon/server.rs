@@ -15,6 +15,25 @@ use crate::embedding::{EmbeddingConfig, EmbeddingGenerator};
 use crate::memory_monitor::{MemoryConfig, MemoryMonitor, MemoryPressure, RecoveryManager};
 use crate::{MullamaError, SamplerParams};
 
+use super::store::DaemonStore;
+
+/// Policy for handling model eviction when resource limits are reached
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvictionPolicy {
+    /// Evict least-recently-used model when at limit
+    Lru,
+    /// Never auto-evict, return error at limit
+    Manual,
+    /// No limits enforced
+    None,
+}
+
+impl Default for EvictionPolicy {
+    fn default() -> Self {
+        Self::Lru
+    }
+}
+
 /// Daemon server configuration
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
@@ -48,6 +67,38 @@ pub struct DaemonConfig {
     pub memory_config: MemoryConfig,
     /// Enable memory monitoring
     pub enable_memory_monitoring: bool,
+    /// TLS certificate file path (enables HTTPS when set)
+    pub tls_cert_path: Option<String>,
+    /// TLS private key file path
+    pub tls_key_path: Option<String>,
+    /// Default flash attention setting for new models
+    pub default_flash_attn: bool,
+    /// Default use_mmap setting for new models
+    pub default_use_mmap: Option<bool>,
+    /// Default use_mlock setting for new models
+    pub default_use_mlock: bool,
+    /// Default KV cache type for keys
+    pub default_cache_type_k: Option<String>,
+    /// Default KV cache type for values
+    pub default_cache_type_v: Option<String>,
+    /// Default batch size for prompt processing
+    pub default_n_batch: Option<u32>,
+    /// Default RoPE frequency base
+    pub default_rope_freq_base: Option<f32>,
+    /// Default RoPE frequency scale
+    pub default_rope_freq_scale: Option<f32>,
+    /// Default KV cache defragmentation threshold
+    pub default_defrag_thold: Option<f32>,
+    /// Default tensor split mode
+    pub default_split_mode: Option<String>,
+    /// Maximum number of concurrently loaded models
+    pub max_loaded_models: Option<usize>,
+    /// Maximum total memory for all loaded models (bytes)
+    pub max_memory_bytes: Option<u64>,
+    /// Model eviction policy
+    pub eviction_policy: EvictionPolicy,
+    /// Auto-unload models idle for this many seconds
+    pub idle_unload_secs: Option<u64>,
 }
 
 impl Default for DaemonConfig {
@@ -68,6 +119,22 @@ impl Default for DaemonConfig {
             max_requests_per_second: 200,
             memory_config: MemoryConfig::default(),
             enable_memory_monitoring: true,
+            tls_cert_path: None,
+            tls_key_path: None,
+            default_flash_attn: false,
+            default_use_mmap: None,
+            default_use_mlock: false,
+            default_cache_type_k: None,
+            default_cache_type_v: None,
+            default_n_batch: None,
+            default_rope_freq_base: None,
+            default_rope_freq_scale: None,
+            default_defrag_thold: None,
+            default_split_mode: None,
+            max_loaded_models: None,
+            max_memory_bytes: None,
+            eviction_policy: EvictionPolicy::default(),
+            idle_unload_secs: None,
         }
     }
 }
@@ -157,6 +224,8 @@ pub struct Daemon {
     pub memory_monitor: Option<Arc<MemoryMonitor>>,
     /// Recovery manager for handling OOM situations
     pub recovery_manager: RecoveryManager,
+    /// Persistent store for daemon state
+    pub store: Arc<DaemonStore>,
 }
 
 impl Daemon {
@@ -178,6 +247,16 @@ impl Daemon {
             RecoveryManager::new()
         };
 
+        let store = match DaemonStore::open_default() {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                eprintln!("Warning: Failed to open persistent store: {}. Using in-memory fallback.", e);
+                // Create a temporary store
+                let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+                Arc::new(DaemonStore::open(&tmp.path().join("mullama.db")).expect("Failed to create temp store"))
+            }
+        };
+
         Self {
             config,
             models: Arc::new(ModelManager::new()),
@@ -188,6 +267,7 @@ impl Daemon {
             cancellations: Arc::new(DashMap::new()),
             memory_monitor,
             recovery_manager,
+            store,
         }
     }
 
@@ -247,9 +327,25 @@ impl Daemon {
                 path,
                 gpu_layers,
                 context_size,
+                use_mmap,
+                use_mlock,
+                flash_attn,
+                cache_type_k,
+                cache_type_v,
+                rope_freq_base,
+                rope_freq_scale,
+                n_batch,
+                defrag_thold,
+                split_mode,
             } => {
-                self.handle_load_model(alias, path, gpu_layers, context_size)
-                    .await
+                self.handle_load_model(
+                    alias, path, gpu_layers, context_size,
+                    use_mmap, use_mlock, flash_attn,
+                    cache_type_k, cache_type_v,
+                    rope_freq_base, rope_freq_scale,
+                    n_batch, defrag_thold, split_mode,
+                )
+                .await
             }
 
             Request::UnloadModel { alias } => self.handle_unload_model(&alias).await,
@@ -371,6 +467,10 @@ impl Daemon {
                 active_requests: self.active_requests.load(Ordering::Relaxed),
                 memory_used_mb,
                 gpu_available: crate::supports_gpu_offload(),
+                memory_total_mb: 0,
+                memory_available_mb: 0,
+                memory_pressure: String::new(),
+                model_details: Vec::new(),
             },
         })
     }
@@ -390,12 +490,23 @@ impl Daemon {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_load_model(
         &self,
         alias: String,
         path: String,
         gpu_layers: i32,
         context_size: u32,
+        use_mmap: Option<bool>,
+        use_mlock: bool,
+        flash_attn: bool,
+        cache_type_k: Option<String>,
+        cache_type_v: Option<String>,
+        rope_freq_base: Option<f32>,
+        rope_freq_scale: Option<f32>,
+        n_batch: Option<u32>,
+        defrag_thold: Option<f32>,
+        split_mode: Option<String>,
     ) -> Response {
         let mut resolved_context_size = if context_size == 0 {
             self.config.default_context_size
@@ -412,6 +523,38 @@ impl Daemon {
             .context_size(resolved_context_size)
             .context_pool_size(self.config.default_context_pool_size)
             .threads(self.config.threads_per_model);
+
+        // Apply advanced model loading parameters
+        if let Some(mmap) = use_mmap.or(self.config.default_use_mmap) {
+            config = config.use_mmap(mmap);
+        }
+        if use_mlock || self.config.default_use_mlock {
+            config = config.use_mlock(true);
+        }
+        if flash_attn || self.config.default_flash_attn {
+            config = config.flash_attn(true);
+        }
+        if let Some(ref k) = cache_type_k.as_ref().or(self.config.default_cache_type_k.as_ref()) {
+            config = config.cache_type_k(k.as_str());
+        }
+        if let Some(ref v) = cache_type_v.as_ref().or(self.config.default_cache_type_v.as_ref()) {
+            config = config.cache_type_v(v.as_str());
+        }
+        if let Some(base) = rope_freq_base.or(self.config.default_rope_freq_base) {
+            config = config.rope_freq_base(base);
+        }
+        if let Some(scale) = rope_freq_scale.or(self.config.default_rope_freq_scale) {
+            config = config.rope_freq_scale(scale);
+        }
+        if let Some(batch) = n_batch.or(self.config.default_n_batch) {
+            config = config.n_batch(batch);
+        }
+        if let Some(thold) = defrag_thold.or(self.config.default_defrag_thold) {
+            config = config.defrag_thold(thold);
+        }
+        if let Some(ref mode) = split_mode.as_ref().or(self.config.default_split_mode.as_ref()) {
+            config = config.split_mode(mode.as_str());
+        }
 
         if let Some(ollama_config) = infer_ollama_model_config(&path) {
             if context_size == 0 {
@@ -833,7 +976,16 @@ impl Daemon {
 
         // Extract images from messages and decode base64
         let mut bitmaps: Vec<Bitmap> = Vec::new();
-        let mtmd_guard = loaded.mtmd_context.as_ref().unwrap().read().await;
+        let mtmd_ref = match loaded.mtmd_context.as_ref() {
+            Some(r) => r,
+            None => {
+                return Response::error(
+                    ErrorCode::InvalidRequest,
+                    "No multimodal context available. Load with --mmproj to enable vision.",
+                );
+            }
+        };
+        let mtmd_guard = mtmd_ref.read().await;
 
         for msg in &messages {
             for img_url in msg.content.images() {
@@ -1011,7 +1163,10 @@ impl Daemon {
     ) -> Result<(String, u32, u32), MullamaError> {
         // Get locks on context and mtmd_context (uses context pool for concurrent requests)
         let mut ctx_guard = loaded.acquire_context().await;
-        let mut mtmd_guard = loaded.mtmd_context.as_ref().unwrap().write().await;
+        let mtmd_ref = loaded.mtmd_context.as_ref().ok_or_else(|| {
+            MullamaError::MultimodalError("No multimodal context available".to_string())
+        })?;
+        let mut mtmd_guard = mtmd_ref.write().await;
 
         let model = loaded.model.clone();
         let stop_sequences: Vec<String> = stop_sequences
@@ -1124,7 +1279,13 @@ impl Daemon {
         // Extract and decode images
         let mut bitmaps: Vec<Bitmap> = Vec::new();
         {
-            let mtmd_guard = loaded.mtmd_context.as_ref().unwrap().read().await;
+            let mtmd_ref = loaded.mtmd_context.as_ref().ok_or_else(|| {
+                Response::error(
+                    ErrorCode::InvalidRequest,
+                    "No multimodal context available. Load with --mmproj to enable vision.",
+                )
+            })?;
+            let mtmd_guard = mtmd_ref.read().await;
 
             for msg in &messages {
                 for img_url in msg.content.images() {
@@ -1233,7 +1394,14 @@ impl Daemon {
         tokio::spawn(async move {
             let _guard = RequestGuard::new(loaded.clone());
             let mut context = loaded.acquire_context().await;
-            let mut mtmd_context = loaded.mtmd_context.as_ref().unwrap().write().await;
+            let mtmd_ref = match loaded.mtmd_context.as_ref() {
+                Some(r) => r,
+                None => {
+                    tracing::error!("No multimodal context available for streaming vision");
+                    return;
+                }
+            };
+            let mut mtmd_context = mtmd_ref.write().await;
 
             let result = tokio::task::block_in_place(|| {
                 // Clear KV cache
@@ -1452,8 +1620,8 @@ impl Daemon {
             Ok(formatted) => formatted,
             Err(e) => {
                 // Log warning about template fallback
-                eprintln!(
-                    "[WARN] Chat template failed: {}. Using generic format. \
+                tracing::warn!(
+                    "Chat template failed: {}. Using generic format. \
                     Model may produce suboptimal output.",
                     e
                 );
@@ -1505,7 +1673,7 @@ impl Daemon {
                 match crate::structured_output::JsonSchemaConverter::convert(&json_schema.schema) {
                     Ok(grammar) => Some(grammar.to_gbnf()),
                     Err(e) => {
-                        eprintln!("[WARN] Failed to convert JSON schema to grammar: {}", e);
+                        tracing::warn!("Failed to convert JSON schema to grammar: {}", e);
                         None
                     }
                 }
@@ -1515,7 +1683,7 @@ impl Daemon {
                 match crate::grammar::presets::json() {
                     Ok(grammar) => Some(grammar.to_gbnf()),
                     Err(e) => {
-                        eprintln!("[WARN] Failed to create JSON grammar: {}", e);
+                        tracing::warn!("Failed to create JSON grammar: {}", e);
                         None
                     }
                 }
@@ -1771,24 +1939,24 @@ impl Daemon {
 
             match pressure {
                 MemoryPressure::Warning => {
-                    eprintln!(
-                        "[WARN] Memory pressure elevated: {:.1}% GPU, {:.1}% system",
-                        stats.gpu_usage() * 100.0,
-                        stats.system_usage() * 100.0
+                    tracing::warn!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory pressure elevated"
                     );
                 }
                 MemoryPressure::Critical => {
-                    eprintln!(
-                        "[ERROR] Memory pressure CRITICAL: {:.1}% GPU, {:.1}% system",
-                        stats.gpu_usage() * 100.0,
-                        stats.system_usage() * 100.0
+                    tracing::error!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory pressure CRITICAL"
                     );
                 }
                 MemoryPressure::Emergency => {
-                    eprintln!(
-                        "[ERROR] Memory EMERGENCY: {:.1}% GPU, {:.1}% system - recovery needed",
-                        stats.gpu_usage() * 100.0,
-                        stats.system_usage() * 100.0
+                    tracing::error!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory EMERGENCY - recovery needed"
                     );
                 }
                 MemoryPressure::Normal => {}

@@ -8,6 +8,16 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::sync::Arc;
 
+/// Result from streaming generation
+#[napi(object)]
+#[derive(Clone)]
+pub struct StreamResult {
+    /// Individual token pieces
+    pub pieces: Vec<String>,
+    /// Full generated text (pieces joined)
+    pub text: String,
+}
+
 /// Model loading parameters
 #[napi(object)]
 #[derive(Clone, Default)]
@@ -420,6 +430,41 @@ impl JsContext {
         Ok(pieces)
     }
 
+    /// Generate text with streaming, returning both pieces and the full text
+    ///
+    /// Returns an object with `pieces` (array of token strings) and `text` (joined result).
+    #[napi]
+    pub fn generate_stream_full(
+        &mut self,
+        prompt: String,
+        max_tokens: Option<u32>,
+        params: Option<JsSamplerParams>,
+    ) -> Result<StreamResult> {
+        let tokens = self
+            .model
+            .tokenize(&prompt, true, false)
+            .map_err(|e| Error::from_reason(format!("Tokenization failed: {}", e)))?;
+
+        let sampler_params = params.as_ref().map(SamplerParams::from).unwrap_or_default();
+
+        let mut pieces: Vec<String> = Vec::new();
+
+        self.inner
+            .generate_streaming(
+                &tokens,
+                max_tokens.unwrap_or(100) as usize,
+                &sampler_params,
+                |piece| {
+                    pieces.push(piece.to_string());
+                    true
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Streaming failed: {}", e)))?;
+
+        let text = pieces.join("");
+        Ok(StreamResult { pieces, text })
+    }
+
     /// Clear the KV cache
     #[napi]
     pub fn clear_cache(&mut self) {
@@ -588,5 +633,58 @@ pub fn max_devices() -> u32 {
 /// Get the library version
 #[napi]
 pub fn version() -> String {
-    "0.1.0".to_string()
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Hardware preset information
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsHardwarePresetInfo {
+    /// Human-readable name
+    pub name: String,
+    /// Short description
+    pub description: String,
+    /// Recommended quantization format
+    pub recommended_quant: String,
+    /// Recommended GPU layers (-1 = all)
+    pub gpu_layers: i32,
+    /// Recommended context size
+    pub context_size: u32,
+    /// Whether flash attention is enabled
+    pub flash_attn: bool,
+}
+
+fn preset_to_info(p: &mullama::presets::HardwarePreset) -> JsHardwarePresetInfo {
+    JsHardwarePresetInfo {
+        name: p.name().to_string(),
+        description: p.description().to_string(),
+        recommended_quant: p.recommended_quant().to_string(),
+        gpu_layers: p.model_params().n_gpu_layers,
+        context_size: p.context_params().n_ctx,
+        flash_attn: p.flash_attn(),
+    }
+}
+
+/// Get all available hardware presets
+#[napi]
+pub fn get_hardware_presets() -> Vec<JsHardwarePresetInfo> {
+    mullama::presets::HardwarePreset::all()
+        .iter()
+        .map(|p| preset_to_info(p))
+        .collect()
+}
+
+/// Detect the best hardware preset for the current system
+#[napi]
+pub fn detect_hardware_preset() -> JsHardwarePresetInfo {
+    let p = mullama::presets::HardwarePreset::detect();
+    preset_to_info(&p)
+}
+
+/// Get a hardware preset by name (e.g., "cpu", "gpu", "apple-silicon", "max", "auto")
+///
+/// Returns null if the name is not recognized.
+#[napi]
+pub fn get_hardware_preset_by_name(name: String) -> Option<JsHardwarePresetInfo> {
+    mullama::presets::HardwarePreset::from_name(&name).map(|p| preset_to_info(&p))
 }

@@ -131,6 +131,16 @@ impl DaemonClient {
             path,
             gpu_layers: 0,
             context_size: 0,
+            use_mmap: None,
+            use_mlock: false,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
         })? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
@@ -138,7 +148,7 @@ impl DaemonClient {
         }
     }
 
-    /// Load a model with full options
+    /// Load a model with basic options
     pub fn load_model_with_options(
         &self,
         alias: &str,
@@ -151,6 +161,51 @@ impl DaemonClient {
             path: path.to_string(),
             gpu_layers,
             context_size,
+            use_mmap: None,
+            use_mlock: false,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
+        })? {
+            Response::ModelLoaded { alias, info } => Ok((alias, info)),
+            Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
+            _ => Err(MullamaError::DaemonError("Unexpected response".into())),
+        }
+    }
+
+    /// Load a model with full configuration options
+    pub fn load_model_full(
+        &self,
+        alias: &str,
+        path: &str,
+        gpu_layers: i32,
+        context_size: u32,
+        flash_attn: bool,
+        cache_type_k: Option<String>,
+        cache_type_v: Option<String>,
+        use_mmap: Option<bool>,
+        use_mlock: bool,
+    ) -> Result<(String, ModelInfo), MullamaError> {
+        match self.request(&Request::LoadModel {
+            alias: alias.to_string(),
+            path: path.to_string(),
+            gpu_layers,
+            context_size,
+            use_mmap,
+            use_mlock,
+            flash_attn,
+            cache_type_k,
+            cache_type_v,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
         })? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),

@@ -19,6 +19,29 @@
 //! - `{assistant}` - Assistant response
 
 use regex::Regex;
+use std::sync::LazyLock;
+
+// Pre-compiled regex patterns (compile once, never panic at call site)
+static RE_SYSTEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.System\s*\}\}").unwrap());
+static RE_PROMPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Prompt\s*\}\}").unwrap());
+static RE_RESPONSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Response\s*\}\}").unwrap());
+static RE_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.First\s*\}\}").unwrap());
+static RE_CONTENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Content\s*\}\}").unwrap());
+static RE_ROLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Role\s*\}\}").unwrap());
+static RE_TRIM_SYSTEM1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.System\s*-?\}\}").unwrap());
+static RE_TRIM_SYSTEM2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.System\s*-\}\}").unwrap());
+static RE_TRIM_PROMPT1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.Prompt\s*-?\}\}").unwrap());
+static RE_TRIM_PROMPT2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Prompt\s*-\}\}").unwrap());
+static RE_TRIM_RESPONSE1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.Response\s*-?\}\}").unwrap());
+static RE_TRIM_RESPONSE2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Response\s*-\}\}").unwrap());
+static RE_IF_SYSTEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.System\s*-?\}\}").unwrap());
+static RE_IF_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.First\s*-?\}\}").unwrap());
+static RE_IF_NOT_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+not\s+\.First\s*-?\}\}").unwrap());
+static RE_ELSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*else\s*-?\}\}").unwrap());
+static RE_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*end\s*-?\}\}").unwrap());
+static RE_RANGE_MESSAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*range\s+\.Messages\s*-?\}\}").unwrap());
+static RE_REMAINING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?[^}]*-?\}\}").unwrap());
+static RE_MULTI_NEWLINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 
 /// Converted chat template
 #[derive(Debug, Clone)]
@@ -128,36 +151,21 @@ impl GoTemplateConverter {
     fn convert_variables(&self, template: &str) -> String {
         let mut result = template.to_string();
 
-        // Main variable mappings
-        let mappings = [
-            (r"\{\{\s*\.System\s*\}\}", "{system}"),
-            (r"\{\{\s*\.Prompt\s*\}\}", "{user}"),
-            (r"\{\{\s*\.Response\s*\}\}", "{assistant}"),
-            (r"\{\{\s*\.First\s*\}\}", ""), // Loop index, usually not needed
-            // Handle .Content in message loops
-            (r"\{\{\s*\.Content\s*\}\}", "{content}"),
-            (r"\{\{\s*\.Role\s*\}\}", "{role}"),
-        ];
-
-        for (pattern, replacement) in mappings {
-            let re = Regex::new(pattern).unwrap();
-            result = re.replace_all(&result, replacement).to_string();
-        }
+        // Main variable mappings using pre-compiled regexes
+        result = RE_SYSTEM.replace_all(&result, "{system}").to_string();
+        result = RE_PROMPT.replace_all(&result, "{user}").to_string();
+        result = RE_RESPONSE.replace_all(&result, "{assistant}").to_string();
+        result = RE_FIRST.replace_all(&result, "").to_string();
+        result = RE_CONTENT.replace_all(&result, "{content}").to_string();
+        result = RE_ROLE.replace_all(&result, "{role}").to_string();
 
         // Handle whitespace-trimming variants
-        let trimming_mappings = [
-            (r"\{\{-\s*\.System\s*-?\}\}", "{system}"),
-            (r"\{\{-?\s*\.System\s*-\}\}", "{system}"),
-            (r"\{\{-\s*\.Prompt\s*-?\}\}", "{user}"),
-            (r"\{\{-?\s*\.Prompt\s*-\}\}", "{user}"),
-            (r"\{\{-\s*\.Response\s*-?\}\}", "{assistant}"),
-            (r"\{\{-?\s*\.Response\s*-\}\}", "{assistant}"),
-        ];
-
-        for (pattern, replacement) in trimming_mappings {
-            let re = Regex::new(pattern).unwrap();
-            result = re.replace_all(&result, replacement).to_string();
-        }
+        result = RE_TRIM_SYSTEM1.replace_all(&result, "{system}").to_string();
+        result = RE_TRIM_SYSTEM2.replace_all(&result, "{system}").to_string();
+        result = RE_TRIM_PROMPT1.replace_all(&result, "{user}").to_string();
+        result = RE_TRIM_PROMPT2.replace_all(&result, "{user}").to_string();
+        result = RE_TRIM_RESPONSE1.replace_all(&result, "{assistant}").to_string();
+        result = RE_TRIM_RESPONSE2.replace_all(&result, "{assistant}").to_string();
 
         result
     }
@@ -166,30 +174,24 @@ impl GoTemplateConverter {
     fn convert_conditionals(&self, template: &str) -> String {
         let mut result = template.to_string();
 
-        // Convert if .System conditionals
-        // {{- if .System }}...{{- end }}
-        let if_system_re = Regex::new(r"\{\{-?\s*if\s+\.System\s*-?\}\}").unwrap();
-        result = if_system_re.replace_all(&result, "{if_system}").to_string();
+        // Convert if .System conditionals using pre-compiled regexes
+        result = RE_IF_SYSTEM.replace_all(&result, "{if_system}").to_string();
 
         // Convert if .First conditionals (for message loops)
-        let if_first_re = Regex::new(r"\{\{-?\s*if\s+\.First\s*-?\}\}").unwrap();
-        result = if_first_re.replace_all(&result, "{if_first}").to_string();
+        result = RE_IF_FIRST.replace_all(&result, "{if_first}").to_string();
 
         // Convert if not .First
-        let if_not_first_re = Regex::new(r"\{\{-?\s*if\s+not\s+\.First\s*-?\}\}").unwrap();
-        result = if_not_first_re
+        result = RE_IF_NOT_FIRST
             .replace_all(&result, "{if_not_first}")
             .to_string();
 
         // Convert else
-        let else_re = Regex::new(r"\{\{-?\s*else\s*-?\}\}").unwrap();
-        result = else_re.replace_all(&result, "{else}").to_string();
+        result = RE_ELSE.replace_all(&result, "{else}").to_string();
 
         // Convert end
-        let end_re = Regex::new(r"\{\{-?\s*end\s*-?\}\}").unwrap();
         // Try to match end markers to their corresponding if markers
         // For simplicity, just use a generic marker
-        result = end_re.replace_all(&result, "{end_if_system}").to_string();
+        result = RE_END.replace_all(&result, "{end_if_system}").to_string();
 
         result
     }
@@ -199,8 +201,7 @@ impl GoTemplateConverter {
         let mut result = template.to_string();
 
         // {{ range .Messages }}...{{ end }}
-        let range_re = Regex::new(r"\{\{-?\s*range\s+\.Messages\s*-?\}\}").unwrap();
-        result = range_re
+        result = RE_RANGE_MESSAGES
             .replace_all(&result, "{foreach_message}")
             .to_string();
 
@@ -219,12 +220,10 @@ impl GoTemplateConverter {
         let mut result = template.to_string();
 
         // Remove any remaining Go template markers
-        let remaining_re = Regex::new(r"\{\{-?[^}]*-?\}\}").unwrap();
-        result = remaining_re.replace_all(&result, "").to_string();
+        result = RE_REMAINING.replace_all(&result, "").to_string();
 
         // Normalize multiple newlines
-        let multi_newline_re = Regex::new(r"\n{3,}").unwrap();
-        result = multi_newline_re.replace_all(&result, "\n\n").to_string();
+        result = RE_MULTI_NEWLINE.replace_all(&result, "\n\n").to_string();
 
         result.trim().to_string()
     }

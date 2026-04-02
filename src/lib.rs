@@ -88,6 +88,10 @@
 //! # }
 //! ```
 
+#[cfg(feature = "use-mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod arena;
 pub mod batch;
 pub mod capabilities;
@@ -132,10 +136,13 @@ pub mod websockets;
 
 // Advanced features
 pub mod grammar;
+pub mod gpu_advanced;
 pub mod huggingface;
 pub mod lora;
 pub mod modelfile;
+pub mod speculative;
 pub mod structured_output;
+pub mod presets;
 
 // Export Hugging Face types at crate root for convenience
 pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
@@ -148,6 +155,9 @@ pub use modelfile::{
 
 // Export structured output types
 pub use structured_output::{JsonSchemaConverter, StructuredOutputError};
+
+// Export presets
+pub use presets::HardwarePreset;
 
 // ==================== System-level Functions ====================
 
@@ -426,14 +436,13 @@ pub use websockets::{
     WebSocketServer,
 };
 
-// Re-export advanced features (commented out for now)
-// pub use lora::{LoRAAdapter, LoRAManager};
-// pub use grammar::{Grammar, GrammarRule};
-// pub use control_vector::{ControlVector, ControlVectorManager};
-// pub use speculative::{SpeculativeDecoder, SpeculativeConfig};
-// pub use quantization::{QuantizationEngine, QuantizationParams, QuantizationType};
-// pub use gpu_advanced::{GpuManager, GpuDevice, AllocationStrategy};
-// pub use multimodal::{MultimodalProcessor, MultimodalInput, MultimodalConfig};
+// Re-export advanced features
+pub use lora::{LoRAAdapter, LoRAManager};
+pub use grammar::{Grammar, GrammarRule};
+pub use control_vector::{ControlVector, ControlVectorManager};
+pub use speculative::{SpeculativeConfig, SpeculativeDecoder};
+pub use quantization::{QuantizationEngine, QuantizationParams, QuantizationType as QuantizationKind};
+pub use gpu_advanced::{AllocationStrategy, GpuDevice, GpuManager};
 
 // Re-export sys types for advanced users
 pub use sys::{
@@ -448,6 +457,13 @@ pub mod prelude {
     pub use crate::{
         Batch, Context, ContextBuilder, ContextParams, Model, ModelBuilder, ModelParams,
         MullamaConfig, MullamaError, SamplerBuilder, SamplerChain, SamplerParams,
+    };
+
+    // Advanced features
+    pub use crate::{
+        AllocationStrategy, ControlVector, ControlVectorManager, GpuDevice, GpuManager, Grammar,
+        GrammarRule, HardwarePreset, LoRAAdapter, LoRAManager, QuantizationEngine,
+        QuantizationKind, QuantizationParams, SpeculativeConfig, SpeculativeDecoder,
     };
 
     #[cfg(feature = "async")]

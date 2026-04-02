@@ -7,7 +7,7 @@ Steer model behavior at inference time using control vectors -- modifying genera
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["control-vectors"] }
+    mullama = { version = "0.3", features = ["control-vectors"] }
     ```
 
 ## Overview

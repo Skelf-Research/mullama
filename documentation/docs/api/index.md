@@ -187,7 +187,7 @@ Mullama follows [Semantic Versioning](https://semver.org/):
 
 ```toml
 [dependencies.mullama]
-version = "0.1"
+version = "0.3"
 features = [
     "async",            # AsyncModel, AsyncContext
     "streaming",        # TokenStream, StreamConfig (requires "async")

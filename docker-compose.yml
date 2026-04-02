@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  mullama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - models:/models
+    environment:
+      - MULLAMA_LOG=info
+    restart: unless-stopped
+
+volumes:
+  models:
+    driver: local

@@ -16,6 +16,27 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_HIPBLAS");
     println!("cargo:rerun-if-env-changed=LLAMA_CLBLAST");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_PATH");
+    println!("cargo:rerun-if-env-changed=LLAMA_VULKAN");
+    println!("cargo:rerun-if-env-changed=LLAMA_SYCL");
+    println!("cargo:rerun-if-env-changed=LLAMA_RPC");
+    println!("cargo:rerun-if-env-changed=LLAMA_PORTABLE");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX2");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX512");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX512_VNNI");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX512_BF16");
+    println!("cargo:rerun-if-env-changed=LLAMA_AVX_VNNI");
+    println!("cargo:rerun-if-env-changed=LLAMA_FMA");
+    println!("cargo:rerun-if-env-changed=LLAMA_F16C");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA_ARCHS");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA_FORCE_MMQ");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA_NO_PEER_COPY");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA_FA_ALL_QUANTS");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA_GRAPHS");
+    println!("cargo:rerun-if-env-changed=LLAMA_BLAS");
+    println!("cargo:rerun-if-env-changed=LLAMA_BLAS_VENDOR");
+    println!("cargo:rerun-if-env-changed=LLAMA_NO_ACCELERATE");
+    println!("cargo:rerun-if-env-changed=VULKAN_SDK");
 
     // Track UI assets for embedded-ui feature
     // This ensures Cargo rebuilds when UI files change
@@ -242,6 +263,7 @@ fn setup_macos(target_arch: &str) {
         println!("cargo:rustc-cfg=target_arch_apple_silicon");
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rustc-link-lib=framework=MetalKit");
+        println!("cargo:rustc-link-lib=framework=Foundation");
 
         // Enable Metal by default on Apple Silicon
         if env::var("LLAMA_METAL").is_err() {
@@ -336,7 +358,23 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     if env::var("LLAMA_CUDA").is_ok() {
         println!("cargo:rustc-cfg=feature=\"cuda\"");
         cmake_config.define("GGML_CUDA", "ON");
-        cmake_config.define("CMAKE_CUDA_ARCHITECTURES", "61;70;75;80;86;89");
+        let cuda_archs = env::var("LLAMA_CUDA_ARCHS")
+            .unwrap_or_else(|_| "60;61;70;75;80;86;89;90;90a".to_string());
+        cmake_config.define("CMAKE_CUDA_ARCHITECTURES", &cuda_archs);
+
+        // Additional CUDA options
+        if env::var("LLAMA_CUDA_FORCE_MMQ").is_ok() {
+            cmake_config.define("GGML_CUDA_FORCE_MMQ", "ON");
+        }
+        if env::var("LLAMA_CUDA_NO_PEER_COPY").is_ok() {
+            cmake_config.define("GGML_CUDA_NO_PEER_COPY", "ON");
+        }
+        if env::var("LLAMA_CUDA_FA_ALL_QUANTS").is_ok() {
+            cmake_config.define("GGML_CUDA_FA_ALL_QUANTS", "ON");
+        }
+        if env::var("LLAMA_CUDA_GRAPHS").is_ok() {
+            cmake_config.define("GGML_CUDA_GRAPHS", "ON");
+        }
         configure_cuda_linking();
     } else {
         cmake_config.define("GGML_CUDA", "OFF");
@@ -365,14 +403,85 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         cmake_config.define("GGML_OPENCL", "OFF");
     }
 
-    // General optimizations (using new GGML_* naming)
-    cmake_config.define("GGML_NATIVE", "ON");
+    // Vulkan backend
+    if env::var("LLAMA_VULKAN").is_ok() {
+        println!("cargo:rustc-cfg=feature=\"vulkan\"");
+        cmake_config.define("GGML_VULKAN", "ON");
+        configure_vulkan_linking();
+    } else {
+        cmake_config.define("GGML_VULKAN", "OFF");
+    }
+
+    // SYCL backend (Intel Arc GPUs)
+    if env::var("LLAMA_SYCL").is_ok() {
+        println!("cargo:rustc-cfg=feature=\"sycl\"");
+        cmake_config.define("GGML_SYCL", "ON");
+        if let Ok(target) = env::var("LLAMA_SYCL_TARGET") {
+            cmake_config.define("GGML_SYCL_TARGET", &target);
+        }
+        if env::var("LLAMA_SYCL_F16").is_ok() {
+            cmake_config.define("GGML_SYCL_F16", "ON");
+        }
+    } else {
+        cmake_config.define("GGML_SYCL", "OFF");
+    }
+
+    // RPC backend (distributed inference)
+    if env::var("LLAMA_RPC").is_ok() {
+        println!("cargo:rustc-cfg=feature=\"rpc\"");
+        cmake_config.define("GGML_RPC", "ON");
+    } else {
+        cmake_config.define("GGML_RPC", "OFF");
+    }
+
+    // BLAS configuration
+    if env::var("LLAMA_BLAS").is_ok() {
+        cmake_config.define("GGML_BLAS", "ON");
+        if let Ok(vendor) = env::var("LLAMA_BLAS_VENDOR") {
+            cmake_config.define("GGML_BLAS_VENDOR", &vendor);
+        }
+    }
+
+    // Disable Apple Accelerate if requested
+    if env::var("LLAMA_NO_ACCELERATE").is_ok() {
+        cmake_config.define("GGML_ACCELERATE", "OFF");
+    }
+
+    // CPU feature configuration (configurable via env vars)
+    if env::var("LLAMA_PORTABLE").is_ok() {
+        cmake_config.define("GGML_NATIVE", "OFF");
+    } else {
+        cmake_config.define("GGML_NATIVE", "ON");
+    }
     cmake_config.define("GGML_LTO", "ON");
-    cmake_config.define("GGML_AVX", "ON");
-    cmake_config.define("GGML_AVX2", "ON");
-    cmake_config.define("GGML_FMA", "ON");
-    cmake_config.define("GGML_F16C", "ON");
     cmake_config.define("GGML_OPENMP", "ON");
+
+    // AVX/FMA/F16C: ON by default, disable with =0
+    let avx = env::var("LLAMA_AVX").map(|v| v != "0").unwrap_or(true);
+    cmake_config.define("GGML_AVX", if avx { "ON" } else { "OFF" });
+
+    let avx2 = env::var("LLAMA_AVX2").map(|v| v != "0").unwrap_or(true);
+    cmake_config.define("GGML_AVX2", if avx2 { "ON" } else { "OFF" });
+
+    let fma = env::var("LLAMA_FMA").map(|v| v != "0").unwrap_or(true);
+    cmake_config.define("GGML_FMA", if fma { "ON" } else { "OFF" });
+
+    let f16c = env::var("LLAMA_F16C").map(|v| v != "0").unwrap_or(true);
+    cmake_config.define("GGML_F16C", if f16c { "ON" } else { "OFF" });
+
+    // AVX-512 variants: OFF by default, enable with =1
+    if env::var("LLAMA_AVX512").is_ok() {
+        cmake_config.define("GGML_AVX512", "ON");
+    }
+    if env::var("LLAMA_AVX512_VNNI").is_ok() {
+        cmake_config.define("GGML_AVX512_VNNI", "ON");
+    }
+    if env::var("LLAMA_AVX512_BF16").is_ok() {
+        cmake_config.define("GGML_AVX512_BF16", "ON");
+    }
+    if env::var("LLAMA_AVX_VNNI").is_ok() {
+        cmake_config.define("GGML_AVX_VNNI", "ON");
+    }
 
     // Build configuration
     cmake_config.define("LLAMA_BUILD_TESTS", "OFF");
@@ -403,6 +512,21 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         // On macOS, use +whole-archive,-bundle for proper symbol inclusion
         println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-base");
         println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-cpu");
+        // Link GPU/accelerator backend libraries when enabled
+        if env::var("LLAMA_METAL").is_ok() {
+            println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-metal");
+        }
+        // Link BLAS backend (Accelerate framework on macOS)
+        let blas_lib = dst.join("lib").join("libggml-blas.a");
+        if blas_lib.exists() {
+            println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-blas");
+        }
+        if env::var("LLAMA_VULKAN").is_ok() {
+            let vulkan_lib = dst.join("lib").join("libggml-vulkan.a");
+            if vulkan_lib.exists() {
+                println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml-vulkan");
+            }
+        }
         println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=ggml");
         println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=llama");
         // Link mtmd for multimodal support
@@ -415,6 +539,35 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         println!("cargo:rustc-link-lib=static:+whole-archive=llama");
         println!("cargo:rustc-link-lib=static:+whole-archive=mtmd");
         println!("cargo:rustc-link-lib=static:+whole-archive=ggml");
+        // Link GPU/accelerator backend libraries when enabled
+        if env::var("LLAMA_CUDA").is_ok() {
+            let cuda_lib = dst.join("lib").join("libggml-cuda.a");
+            if cuda_lib.exists() {
+                println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cuda");
+            }
+        }
+        let blas_lib = dst.join("lib").join("libggml-blas.a");
+        if blas_lib.exists() {
+            println!("cargo:rustc-link-lib=static:+whole-archive=ggml-blas");
+        }
+        if env::var("LLAMA_VULKAN").is_ok() {
+            let vulkan_lib = dst.join("lib").join("libggml-vulkan.a");
+            if vulkan_lib.exists() {
+                println!("cargo:rustc-link-lib=static:+whole-archive=ggml-vulkan");
+            }
+        }
+        if env::var("LLAMA_RPC").is_ok() {
+            let rpc_lib = dst.join("lib").join("libggml-rpc.a");
+            if rpc_lib.exists() {
+                println!("cargo:rustc-link-lib=static:+whole-archive=ggml-rpc");
+            }
+        }
+        if env::var("LLAMA_SYCL").is_ok() {
+            let sycl_lib = dst.join("lib").join("libggml-sycl.a");
+            if sycl_lib.exists() {
+                println!("cargo:rustc-link-lib=static:+whole-archive=ggml-sycl");
+            }
+        }
         println!("cargo:rustc-link-lib=static:+whole-archive=ggml-cpu");
         println!("cargo:rustc-link-lib=static:+whole-archive=ggml-base");
         println!("cargo:rustc-link-arg=-Wl,--end-group");
@@ -489,6 +642,28 @@ fn configure_opencl_linking() {
     // CLBlast for improved OpenCL performance
     if pkg_config::probe_library("clblast").is_ok() {
         println!("cargo:rustc-link-lib=clblast");
+    }
+}
+
+fn configure_vulkan_linking() {
+    // Try VULKAN_SDK environment variable first
+    if let Ok(vulkan_sdk) = env::var("VULKAN_SDK") {
+        if cfg!(target_os = "windows") {
+            println!("cargo:rustc-link-search=native={}\\Lib", vulkan_sdk);
+        } else {
+            println!("cargo:rustc-link-search=native={}/lib", vulkan_sdk);
+        }
+    }
+
+    if cfg!(target_os = "windows") {
+        println!("cargo:rustc-link-lib=vulkan-1");
+    } else if cfg!(target_os = "macos") {
+        // MoltenVK on macOS
+        println!("cargo:rustc-link-lib=MoltenVK");
+        println!("cargo:rustc-link-lib=framework=IOSurface");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
+    } else {
+        println!("cargo:rustc-link-lib=vulkan");
     }
 }
 

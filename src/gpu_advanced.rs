@@ -325,14 +325,15 @@ impl GpuManager {
     /// Deallocate GPU memory
     pub fn deallocate_memory(&mut self, block: MemoryBlock) -> Result<(), MullamaError> {
         let device_id = self.find_device_for_address(block.address)?;
+        let block_size = block.size;
 
         if let Some(pool) = self.memory_pools.get_mut(&device_id) {
             pool.deallocate(block)?;
 
             // Record deallocation event
             self.record_event(EventType::MemoryDeallocation, Some(device_id),
-                             format!("Deallocated {} bytes", block.size),
-                             [("size".to_string(), block.size as f64)].iter().cloned().collect());
+                             format!("Deallocated {} bytes", block_size),
+                             [("size".to_string(), block_size as f64)].iter().cloned().collect());
 
             Ok(())
         } else {
@@ -829,9 +830,9 @@ impl GpuMemoryPool {
 
     fn deallocate(&mut self, block: MemoryBlock) -> Result<(), MullamaError> {
         if self.allocated_blocks.remove(&block.address).is_some() {
-            self.free_blocks.push(block);
             let block_size = block.size;
-        self.used_size -= block_size;
+            self.free_blocks.push(block);
+            self.used_size -= block_size;
             self.stats.total_deallocations += 1;
 
             // Coalesce adjacent free blocks

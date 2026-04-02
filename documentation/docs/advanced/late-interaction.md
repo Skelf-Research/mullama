@@ -7,13 +7,13 @@ Implement fine-grained semantic retrieval using multi-vector embeddings and MaxS
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["late-interaction"] }
+    mullama = { version = "0.3", features = ["late-interaction"] }
     ```
 
     For parallel scoring of large document collections, also enable `parallel`:
 
     ```toml
-    mullama = { version = "0.1", features = ["late-interaction", "parallel"] }
+    mullama = { version = "0.3", features = ["late-interaction", "parallel"] }
     ```
 
 ## Overview

@@ -3,7 +3,7 @@
 This page provides a comprehensive view of Mullama's feature status across all dimensions: implementation maturity, platform support, language binding parity, GPU backends, and quantization formats.
 
 !!! info "Current Version"
-    **Mullama v0.1.1** | Built on **llama.cpp b7542** | Last updated: January 2026
+    **Mullama v0.3.0** | Built on **llama.cpp b7542** | Last updated: January 2026
 
 ## Feature Status Overview
 
@@ -73,9 +73,9 @@ This page provides a comprehensive view of Mullama's feature status across all d
 | OpenAI API (`/v1/completions`) | :material-check-circle:{ .green } Stable | v0.1.0 | Text completions |
 | OpenAI API (`/v1/embeddings`) | :material-check-circle:{ .green } Stable | v0.1.0 | Embedding generation |
 | OpenAI API (`/v1/models`) | :material-check-circle:{ .green } Stable | v0.1.0 | Model listing |
-| Anthropic API (`/v1/messages`) | :material-check-circle:{ .green } Stable | v0.1.1 | Messages format |
+| Anthropic API (`/v1/messages`) | :material-check-circle:{ .green } Stable | v0.3.0 | Messages format |
 | WebSocket support | :material-check-circle:{ .green } Stable | v0.1.0 | Real-time bidirectional |
-| Prometheus metrics | :material-check-circle:{ .green } Stable | v0.1.1 | `/metrics` endpoint |
+| Prometheus metrics | :material-check-circle:{ .green } Stable | v0.3.0 | `/metrics` endpoint |
 | Health check | :material-check-circle:{ .green } Stable | v0.1.0 | `/health` endpoint |
 | CORS configuration | :material-check-circle:{ .green } Stable | v0.1.0 | Configurable origins |
 
@@ -114,12 +114,12 @@ This page provides a comprehensive view of Mullama's feature status across all d
 | Batch embedding | :material-check-circle:{ .green } Stable | v0.1.0 | Multiple texts |
 | Cosine similarity | :material-check-circle:{ .green } Stable | v0.1.0 | Standard metric |
 | Dot product similarity | :material-check-circle:{ .green } Stable | v0.1.0 | Standard metric |
-| ColBERT multi-vector | :material-check-circle:{ .green } Stable | v0.1.1 | Per-token embeddings |
-| MaxSim scoring | :material-check-circle:{ .green } Stable | v0.1.1 | Late interaction |
-| Top-k retrieval | :material-check-circle:{ .green } Stable | v0.1.1 | Parallel ranking |
-| Token-level analysis | :material-check-circle:{ .green } Stable | v0.1.1 | Token similarity maps |
-| Normalized scoring | :material-check-circle:{ .green } Stable | v0.1.1 | Unit-normalized vectors |
-| Symmetric scoring | :material-check-circle:{ .green } Stable | v0.1.1 | Bidirectional similarity |
+| ColBERT multi-vector | :material-check-circle:{ .green } Stable | v0.3.0 | Per-token embeddings |
+| MaxSim scoring | :material-check-circle:{ .green } Stable | v0.3.0 | Late interaction |
+| Top-k retrieval | :material-check-circle:{ .green } Stable | v0.3.0 | Parallel ranking |
+| Token-level analysis | :material-check-circle:{ .green } Stable | v0.3.0 | Token similarity maps |
+| Normalized scoring | :material-check-circle:{ .green } Stable | v0.3.0 | Unit-normalized vectors |
+| Symmetric scoring | :material-check-circle:{ .green } Stable | v0.3.0 | Bidirectional similarity |
 
 ### Daemon & CLI
 
@@ -127,20 +127,20 @@ This page provides a comprehensive view of Mullama's feature status across all d
 |---------|--------|---------|-------|
 | `mullama run` | :material-check-circle:{ .green } Stable | v0.1.0 | One-shot generation |
 | `mullama serve` | :material-check-circle:{ .green } Stable | v0.1.0 | Start HTTP server |
-| `mullama pull` | :material-check-circle:{ .green } Stable | v0.1.1 | Download from registry |
-| `mullama list` | :material-check-circle:{ .green } Stable | v0.1.1 | List available models |
-| `mullama show` | :material-check-circle:{ .green } Stable | v0.1.1 | Model details |
-| `mullama create` | :material-check-circle:{ .green } Stable | v0.1.1 | Create from Modelfile |
-| `mullama rm` | :material-check-circle:{ .green } Stable | v0.1.1 | Remove model |
-| `mullama cp` | :material-check-circle:{ .green } Stable | v0.1.1 | Copy/alias model |
-| `mullama ps` | :material-check-circle:{ .green } Stable | v0.1.1 | Show running models |
-| `mullama chat` | :material-check-circle:{ .green } Stable | v0.1.1 | TUI chat interface |
-| `mullama daemon start/stop/status` | :material-check-circle:{ .green } Stable | v0.1.1 | Lifecycle management |
-| `mullama daemon logs` | :material-check-circle:{ .green } Stable | v0.1.1 | Log viewing |
-| Auto-spawn | :material-check-circle:{ .green } Stable | v0.1.1 | Daemon on demand |
-| Model aliases (40+) | :material-check-circle:{ .green } Stable | v0.1.1 | Pre-configured |
-| Modelfile support | :material-check-circle:{ .green } Stable | v0.1.1 | Ollama-compatible + extensions |
-| Embedded Web UI | :material-check-circle:{ .green } Stable | v0.1.1 | Vue.js frontend |
+| `mullama pull` | :material-check-circle:{ .green } Stable | v0.3.0 | Download from registry |
+| `mullama list` | :material-check-circle:{ .green } Stable | v0.3.0 | List available models |
+| `mullama show` | :material-check-circle:{ .green } Stable | v0.3.0 | Model details |
+| `mullama create` | :material-check-circle:{ .green } Stable | v0.3.0 | Create from Modelfile |
+| `mullama rm` | :material-check-circle:{ .green } Stable | v0.3.0 | Remove model |
+| `mullama cp` | :material-check-circle:{ .green } Stable | v0.3.0 | Copy/alias model |
+| `mullama ps` | :material-check-circle:{ .green } Stable | v0.3.0 | Show running models |
+| `mullama chat` | :material-check-circle:{ .green } Stable | v0.3.0 | TUI chat interface |
+| `mullama daemon start/stop/status` | :material-check-circle:{ .green } Stable | v0.3.0 | Lifecycle management |
+| `mullama daemon logs` | :material-check-circle:{ .green } Stable | v0.3.0 | Log viewing |
+| Auto-spawn | :material-check-circle:{ .green } Stable | v0.3.0 | Daemon on demand |
+| Model aliases (40+) | :material-check-circle:{ .green } Stable | v0.3.0 | Pre-configured |
+| Modelfile support | :material-check-circle:{ .green } Stable | v0.3.0 | Ollama-compatible + extensions |
+| Embedded Web UI | :material-check-circle:{ .green } Stable | v0.3.0 | Vue.js frontend |
 
 ### Model Adaptation
 
@@ -150,7 +150,7 @@ This page provides a comprehensive view of Mullama's feature status across all d
 | Multiple LoRA adapters | :material-check-circle:{ .green } Stable | v0.1.0 | Simultaneous |
 | Dynamic LoRA scale | :material-check-circle:{ .green } Stable | v0.1.0 | Runtime weight adjustment |
 | LoRA metadata access | :material-check-circle:{ .green } Stable | v0.1.0 | Parameter info |
-| Control vectors (basic) | :material-progress-clock:{ .amber } Beta | v0.1.1 | Data structures + FFI |
+| Control vectors (basic) | :material-progress-clock:{ .amber } Beta | v0.3.0 | Data structures + FFI |
 | Control vectors (API) | :material-progress-clock:{ .amber } Beta | -- | High-level wrapper |
 | Control vector loading | :material-progress-clock:{ .amber } Beta | -- | File format support |
 

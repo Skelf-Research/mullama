@@ -3,7 +3,7 @@ members = [".", "bindings/ffi", "bindings/python", "bindings/node"]
 
 [package]
 name = "mullama"
-version = "0.1.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Skelf Research <support@skelfresearch.com>"]
@@ -24,6 +24,7 @@ include = [
     "build.rs",
     "wrapper.h",
     "Cargo.toml",
+    "Cargo.lock",
     "LICENSE",
     "README.md",
     "CONTRIBUTING.md",
@@ -38,6 +39,9 @@ format-conversion = ["multimodal", "ffmpeg-next"]
 streaming-audio = ["multimodal", "cpal", "ringbuf"]
 cuda = []
 rocm = []
+vulkan = []
+sycl = []
+rpc = []
 async = ["tokio", "futures", "tokio-util"]
 streaming = ["async", "async-stream"]
 web = ["async", "axum", "tower", "tower-http"]
@@ -45,11 +49,13 @@ websockets = ["async", "axum", "tokio-tungstenite"]
 parallel = ["rayon"]
 late-interaction = []
 tokio-runtime = ["tokio", "tokio-util"]
-daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding", "tokio-stream", "base64", "include_dir", "mime_guess"]
+use-mimalloc = ["mimalloc"]
+daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding", "tokio-stream", "base64", "include_dir", "mime_guess", "tracing", "tracing-subscriber", "sled", "use-mimalloc"]
 embedded-ui = ["include_dir", "mime_guess"]
+tls = ["axum-server"]
 windows-optimization = ["windows"]
 macos-optimization = ["core-foundation", "coreaudio-rs"]
-full = ["async", "streaming", "web", "websockets", "multimodal", "parallel", "late-interaction", "tokio-runtime", "format-conversion", "streaming-audio", "daemon"]
+full = ["async", "streaming", "web", "websockets", "multimodal", "parallel", "late-interaction", "tokio-runtime", "format-conversion", "streaming-audio", "daemon", "use-mimalloc"]
 
 [dependencies]
 thiserror = "1.0"
@@ -64,7 +70,7 @@ rand = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3.0"
 dirs = "5.0"
-mimalloc = { version = "0.1", default-features = false }
+mimalloc = { version = "0.1", default-features = false, optional = true }
 sha2 = "0.10"
 
 # Rust-specific performance optimizations
@@ -84,7 +90,14 @@ async-stream = { version = "0.3", optional = true }
 # Web framework integration
 axum = { version = "0.7", optional = true }
 tower = { version = "0.4", features = ["timeout", "limit"], optional = true }
-tower-http = { version = "0.5", features = ["cors"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+# Tracing/logging
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# TLS support
+axum-server = { version = "0.6", features = ["tls-rustls"], optional = true }
 
 # WebSocket support
 tokio-tungstenite = { version = "0.20", optional = true }
@@ -113,6 +126,7 @@ ringbuf = { version = "0.3", optional = true }
 
 # Daemon and TUI
 nng = { version = "1.0", optional = true }
+sled = { version = "0.34", optional = true }
 ratatui = { version = "0.28", optional = true }
 crossterm = { version = "0.28", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
@@ -207,3 +221,9 @@ required-features = ["async"]
 [[example]]
 name = "late_interaction"
 required-features = ["late-interaction"]
+
+[[example]]
+name = "simple"
+
+[[example]]
+name = "multi_model"

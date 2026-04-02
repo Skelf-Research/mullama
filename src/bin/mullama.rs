@@ -32,10 +32,6 @@
 //! mullama pull hf:TheBloke/Llama-2-7B-GGUF
 //! ```
 
-// Use mimalloc for better allocation performance
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -178,6 +174,54 @@ enum Commands {
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
+
+        /// TLS certificate file path (enables HTTPS)
+        #[arg(long)]
+        tls_cert: Option<String>,
+
+        /// TLS private key file path
+        #[arg(long)]
+        tls_key: Option<String>,
+
+        /// Enable flash attention
+        #[arg(long)]
+        flash_attn: bool,
+
+        /// KV cache type for keys (f16, f32, q8_0, q4_0)
+        #[arg(long)]
+        cache_type_k: Option<String>,
+
+        /// KV cache type for values (f16, f32, q8_0, q4_0)
+        #[arg(long)]
+        cache_type_v: Option<String>,
+
+        /// Disable memory-mapped model loading
+        #[arg(long)]
+        no_mmap: bool,
+
+        /// Lock model weights in physical memory
+        #[arg(long)]
+        mlock: bool,
+
+        /// Batch size for prompt processing
+        #[arg(long)]
+        batch_size: Option<u32>,
+
+        /// RoPE frequency base override
+        #[arg(long)]
+        rope_freq_base: Option<f32>,
+
+        /// RoPE frequency scale override
+        #[arg(long)]
+        rope_freq_scale: Option<f32>,
+
+        /// Tensor split mode (none, layer, row)
+        #[arg(long)]
+        split_mode: Option<String>,
+
+        /// KV cache defragmentation threshold (0.0 to disable)
+        #[arg(long)]
+        defrag_thold: Option<f32>,
     },
 
     /// Interactive TUI chat client
@@ -231,6 +275,30 @@ enum Commands {
         /// Show generation stats
         #[arg(long)]
         stats: bool,
+
+        /// Enable flash attention
+        #[arg(long)]
+        flash_attn: bool,
+
+        /// KV cache type for keys
+        #[arg(long)]
+        cache_type_k: Option<String>,
+
+        /// KV cache type for values
+        #[arg(long)]
+        cache_type_v: Option<String>,
+
+        /// Disable memory-mapped model loading
+        #[arg(long)]
+        no_mmap: bool,
+
+        /// Lock model weights in physical memory
+        #[arg(long)]
+        mlock: bool,
+
+        /// Batch size for prompt processing
+        #[arg(long)]
+        batch_size: Option<u32>,
     },
 
     /// List loaded models
@@ -260,6 +328,26 @@ enum Commands {
         /// Path to multimodal projector for vision models (mmproj.gguf)
         #[arg(long)]
         mmproj: Option<PathBuf>,
+
+        /// Enable flash attention
+        #[arg(long)]
+        flash_attn: bool,
+
+        /// KV cache type for keys
+        #[arg(long)]
+        cache_type_k: Option<String>,
+
+        /// KV cache type for values
+        #[arg(long)]
+        cache_type_v: Option<String>,
+
+        /// Disable memory-mapped model loading
+        #[arg(long)]
+        no_mmap: bool,
+
+        /// Lock model weights in physical memory
+        #[arg(long)]
+        mlock: bool,
 
         /// IPC socket to connect to
         #[arg(short, long, default_value = DEFAULT_SOCKET)]
@@ -537,6 +625,18 @@ enum CacheAction {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing/logging with env-filter support
+    // Use MULLAMA_LOG or RUST_LOG env vars to control log levels
+    // e.g., MULLAMA_LOG=info or RUST_LOG=mullama=debug,tower_http=info
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("MULLAMA_LOG")
+                .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("RUST_LOG"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("mullama=info,tower_http=info")),
+        )
+        .with_target(false)
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -577,7 +677,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             context_pool_size,
             threads,
             verbose,
+            tls_cert,
+            tls_key,
+            flash_attn,
+            cache_type_k,
+            cache_type_v,
+            no_mmap,
+            mlock,
+            batch_size,
+            rope_freq_base,
+            rope_freq_scale,
+            split_mode,
+            defrag_thold,
         } => {
+            if tls_cert.is_some() != tls_key.is_some() {
+                eprintln!("Error: --tls-cert and --tls-key must both be specified for HTTPS");
+                std::process::exit(1);
+            }
             run_server(
                 model,
                 mmproj,
@@ -595,6 +711,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 context_pool_size,
                 threads,
                 verbose,
+                flash_attn,
+                cache_type_k,
+                cache_type_v,
+                no_mmap,
+                mlock,
+                batch_size,
+                rope_freq_base,
+                rope_freq_scale,
+                split_mode,
+                defrag_thold,
             )
             .await?;
         }
@@ -614,6 +740,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             gpu_layers,
             context_size,
             stats,
+            flash_attn,
+            cache_type_k,
+            cache_type_v,
+            no_mmap,
+            mlock,
+            batch_size,
         } => {
             run_model_with_prompt(
                 &model,
@@ -626,6 +758,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 gpu_layers,
                 context_size,
                 stats,
+                flash_attn,
+                cache_type_k,
+                cache_type_v,
+                no_mmap,
+                mlock,
+                batch_size,
             )
             .await?;
         }
@@ -639,9 +777,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             gpu_layers,
             context_size,
             mmproj,
+            flash_attn,
+            cache_type_k,
+            cache_type_v,
+            no_mmap,
+            mlock,
             socket,
         } => {
-            load_model(&socket, &spec, gpu_layers, context_size, mmproj)?;
+            load_model(
+                &socket, &spec, gpu_layers, context_size, mmproj,
+                flash_attn, cache_type_k, cache_type_v, no_mmap, mlock,
+            )?;
         }
 
         Commands::Unload { alias, socket } => {
@@ -759,6 +905,16 @@ async fn run_server(
     context_pool_size: usize,
     threads: Option<i32>,
     verbose: bool,
+    flash_attn: bool,
+    cache_type_k: Option<String>,
+    cache_type_v: Option<String>,
+    no_mmap: bool,
+    mlock: bool,
+    batch_size: Option<u32>,
+    rope_freq_base: Option<f32>,
+    rope_freq_scale: Option<f32>,
+    split_mode: Option<String>,
+    defrag_thold: Option<f32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut resolved_api_key = api_key.or_else(|| std::env::var("MULLAMA_API_KEY").ok());
     let is_loopback_bind = is_loopback_http_addr(&http_addr);
@@ -927,7 +1083,54 @@ async fn run_server(
         builder = builder.model(format!("{}:{}", alias, path.display()));
     }
 
-    let (daemon, mut initial_models) = builder.build();
+    let (mut daemon, mut initial_models) = builder.build();
+
+    // Apply advanced model loading defaults from CLI flags
+    daemon.config.default_flash_attn = flash_attn;
+    daemon.config.default_use_mmap = if no_mmap { Some(false) } else { None };
+    daemon.config.default_use_mlock = mlock;
+    daemon.config.default_cache_type_k = cache_type_k.clone();
+    daemon.config.default_cache_type_v = cache_type_v.clone();
+    daemon.config.default_n_batch = batch_size;
+    daemon.config.default_rope_freq_base = rope_freq_base;
+    daemon.config.default_rope_freq_scale = rope_freq_scale;
+    daemon.config.default_defrag_thold = defrag_thold;
+    daemon.config.default_split_mode = split_mode.clone();
+
+    // Apply advanced params to initial models too
+    for model_config in &mut initial_models {
+        if flash_attn {
+            model_config.flash_attn = true;
+        }
+        if no_mmap {
+            model_config.use_mmap = Some(false);
+        }
+        if mlock {
+            model_config.use_mlock = true;
+        }
+        if let Some(ref k) = cache_type_k {
+            model_config.cache_type_k = Some(k.clone());
+        }
+        if let Some(ref v) = cache_type_v {
+            model_config.cache_type_v = Some(v.clone());
+        }
+        if let Some(batch) = batch_size {
+            model_config.n_batch = Some(batch);
+        }
+        if let Some(base) = rope_freq_base {
+            model_config.rope_freq_base = Some(base);
+        }
+        if let Some(scale) = rope_freq_scale {
+            model_config.rope_freq_scale = Some(scale);
+        }
+        if let Some(thold) = defrag_thold {
+            model_config.defrag_thold = Some(thold);
+        }
+        if let Some(ref mode) = split_mode {
+            model_config.split_mode = Some(mode.clone());
+        }
+    }
+
     let daemon = std::sync::Arc::new(daemon);
 
     let model_configs_by_alias: std::collections::HashMap<String, ModelConfig> = resolved_models
@@ -1155,6 +1358,7 @@ fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error
 
 /// Run a model with a prompt (Ollama-style: auto-starts daemon and loads model)
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 async fn run_model_with_prompt(
     model_spec: &str,
     prompt: Option<&str>,
@@ -1166,6 +1370,12 @@ async fn run_model_with_prompt(
     gpu_layers: i32,
     context_size: u32,
     stats: bool,
+    flash_attn: bool,
+    cache_type_k: Option<String>,
+    cache_type_v: Option<String>,
+    no_mmap: bool,
+    mlock: bool,
+    batch_size: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
     use mullama::daemon::OllamaClient;
@@ -1233,6 +1443,9 @@ async fn run_model_with_prompt(
                 startup_timeout: std::time::Duration::from_secs(60),
                 background: true,
                 log_file: Some(default_log_path()),
+                flash_attn,
+                cache_type_k: cache_type_k.clone(),
+                cache_type_v: cache_type_v.clone(),
                 ..Default::default()
             };
 
@@ -1267,11 +1480,17 @@ async fn run_model_with_prompt(
     if !model_loaded {
         eprintln!("Loading {}...", model_alias);
 
-        match client.load_model_with_options(
+        let use_mmap = if no_mmap { Some(false) } else { None };
+        match client.load_model_full(
             &model_alias,
             &model_path.display().to_string(),
             gpu_layers,
             context_size,
+            flash_attn,
+            cache_type_k.clone(),
+            cache_type_v.clone(),
+            use_mmap,
+            mlock,
         ) {
             Ok(_) => {}
             Err(e) => {
@@ -1534,6 +1753,11 @@ fn load_model(
     gpu_layers: i32,
     context_size: u32,
     mmproj: Option<PathBuf>,
+    flash_attn: bool,
+    cache_type_k: Option<String>,
+    cache_type_v: Option<String>,
+    no_mmap: bool,
+    mlock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if mmproj.is_some() {
         eprintln!("Warning: --mmproj is not yet supported via IPC protocol.");
@@ -1559,7 +1783,12 @@ fn load_model(
     print!("Loading model '{}'... ", alias);
     io::stdout().flush()?;
 
-    match client.load_model_with_options(&alias, &path, gpu_layers, context_size) {
+    let use_mmap = if no_mmap { Some(false) } else { None };
+
+    match client.load_model_full(
+        &alias, &path, gpu_layers, context_size,
+        flash_attn, cache_type_k, cache_type_v, use_mmap, mlock,
+    ) {
         Ok((_alias, info)) => {
             println!("OK");
             println!("  Parameters: {}M", info.parameters / 1_000_000);

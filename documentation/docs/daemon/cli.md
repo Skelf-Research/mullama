@@ -721,7 +721,7 @@ mullama daemon status [OPTIONS]
 Mullama Daemon Status
 =====================
 Running:     Yes
-Version:     0.1.1
+Version:     0.3.0
 Uptime:      1h 23m 45s
 Models:      2 loaded
 Socket:      ipc:///tmp/mullama.sock

@@ -7,10 +7,10 @@ Process images and audio alongside text using vision-language models (VLMs) and 
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["multimodal"] }
+    mullama = { version = "0.3", features = ["multimodal"] }
 
     # For audio processing, also enable streaming-audio
-    mullama = { version = "0.1", features = ["multimodal", "streaming-audio"] }
+    mullama = { version = "0.3", features = ["multimodal", "streaming-audio"] }
     ```
 
     Node.js and Python include multimodal support by default.

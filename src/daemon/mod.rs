@@ -46,12 +46,14 @@ pub mod defaults;
 mod hf;
 mod models;
 pub mod ollama;
+pub mod ollama_api;
 pub mod ollama_template;
 mod openai;
 mod protocol;
 pub mod registry;
 mod server;
 pub mod spawn;
+pub mod store;
 mod tui;
 pub mod ui;
 
@@ -60,18 +62,21 @@ pub use protocol::{
     generate_completion_id, ChatChoice as IpcChatChoice,
     ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
     CompletionChoice as IpcCompletionChoice, CompletionResponse as IpcCompletionResponse,
-    DaemonStats, DaemonStatus, EmbeddingInput, ErrorCode, ModelInfo, ModelStatus, Request,
-    Response, Usage,
+    DaemonStats, DaemonStatus, EmbeddingInput, ErrorCode, ModelDetailedStats, ModelInfo,
+    ModelStatus, Request, Response, Usage,
 };
 
 // Model management
 pub use models::{
-    LoadedModel, ModelConfig, ModelLoadConfig, ModelManager, RequestGuard,
-    DEFAULT_CONTEXT_POOL_SIZE,
+    estimate_model_memory, LoadedModel, MemoryEstimate, ModelConfig, ModelLoadConfig, ModelManager,
+    ModelStats, RequestGuard, DEFAULT_CONTEXT_POOL_SIZE,
 };
 
 // Server
-pub use server::{Daemon, DaemonBuilder, DaemonConfig};
+pub use server::{Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy};
+
+// Persistent store
+pub use store::DaemonStore;
 
 // OpenAI-compatible HTTP API types
 pub use openai::{

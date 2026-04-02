@@ -352,8 +352,7 @@ pub fn resolve_model_name(name: &str) -> ResolvedModel {
     }
 
     // 3. Explicit Ollama prefix
-    if name.starts_with("ollama:") {
-        let ollama_name = name.strip_prefix("ollama:").unwrap();
+    if let Some(ollama_name) = name.strip_prefix("ollama:") {
         let (model_name, tag) = ollama_name
             .split_once(':')
             .unwrap_or((ollama_name, "latest"));

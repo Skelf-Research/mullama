@@ -35,7 +35,7 @@ pub async fn serve_ui(uri: Uri) -> impl IntoResponse {
                     .header(header::CONTENT_TYPE, mime_type)
                     .header(header::CACHE_CONTROL, "public, max-age=31536000")
                     .body(Body::from(file.contents().to_vec()))
-                    .unwrap()
+                    .expect("static response builder")
             }
             None => {
                 // For SPA routing, serve index.html for non-asset paths
@@ -45,7 +45,7 @@ pub async fn serve_ui(uri: Uri) -> impl IntoResponse {
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                             .body(Body::from(index.contents().to_vec()))
-                            .unwrap();
+                            .expect("static response builder");
                     }
                 }
 
@@ -54,7 +54,7 @@ pub async fn serve_ui(uri: Uri) -> impl IntoResponse {
                     .status(StatusCode::NOT_FOUND)
                     .header(header::CONTENT_TYPE, "text/plain")
                     .body(Body::from("Not Found"))
-                    .unwrap()
+                    .expect("static response builder")
             }
         }
     }
@@ -93,7 +93,7 @@ cargo build --release --features daemon,embedded-ui</pre>
 </body>
 </html>"#,
             ))
-            .unwrap()
+            .expect("static response builder")
     }
 }
 

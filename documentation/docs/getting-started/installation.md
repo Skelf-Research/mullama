@@ -77,7 +77,7 @@ Install Mullama for your language or as a standalone CLI/daemon. Pre-built binar
 
     ```toml title="Cargo.toml"
     [dependencies]
-    mullama = { version = "0.1.1", features = ["async", "streaming"] }
+    mullama = { version = "0.3.0", features = ["async", "streaming"] }
     ```
 
 === "Go"
@@ -152,19 +152,19 @@ Mullama uses Cargo feature flags to control which capabilities are compiled. Thi
 ```toml title="Cargo.toml"
 [dependencies]
 # Web API service with streaming responses
-mullama = { version = "0.1.1", features = ["web", "websockets", "streaming"] }
+mullama = { version = "0.3.0", features = ["web", "websockets", "streaming"] }
 
 # Multimodal AI (text + image + audio)
-mullama = { version = "0.1.1", features = ["multimodal", "streaming-audio", "format-conversion"] }
+mullama = { version = "0.3.0", features = ["multimodal", "streaming-audio", "format-conversion"] }
 
 # High-throughput batch processing
-mullama = { version = "0.1.1", features = ["parallel", "async", "tokio-runtime"] }
+mullama = { version = "0.3.0", features = ["parallel", "async", "tokio-runtime"] }
 
 # Semantic search / RAG pipeline
-mullama = { version = "0.1.1", features = ["late-interaction", "parallel", "async"] }
+mullama = { version = "0.3.0", features = ["late-interaction", "parallel", "async"] }
 
 # Everything enabled
-mullama = { version = "0.1.1", features = ["full"] }
+mullama = { version = "0.3.0", features = ["full"] }
 ```
 
 ### Feature Reference
@@ -207,7 +207,7 @@ full
     For the smallest possible binary, use no features:
 
     ```toml
-    mullama = { version = "0.1.1", default-features = false }
+    mullama = { version = "0.3.0", default-features = false }
     ```
 
     This gives you synchronous model loading, inference, and sampling with zero additional dependencies.
@@ -294,7 +294,7 @@ Confirm that Mullama is correctly installed for your language.
     Expected output:
 
     ```
-    Mullama version: 0.1.1
+    Mullama version: 0.3.0
     ```
 
 === "Python"
@@ -306,7 +306,7 @@ Confirm that Mullama is correctly installed for your language.
     Expected output:
 
     ```
-    Mullama version: 0.1.1
+    Mullama version: 0.3.0
     ```
 
 === "Rust"
@@ -358,7 +358,7 @@ Confirm that Mullama is correctly installed for your language.
     Expected output:
 
     ```
-    mullama 0.1.1
+    mullama 0.3.0
     ```
 
     Test with a quick generation:

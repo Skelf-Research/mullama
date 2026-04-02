@@ -103,4 +103,4 @@ jobs:
             ${{ runner.os }}-cargo-clippy-
 
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features full -- -D warnings

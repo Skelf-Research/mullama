@@ -36,6 +36,16 @@ pub struct MullamaContextParams {
     pub offload_kqv: bool,
     /// Flash attention type (0=auto, 1=disabled, 2=enabled)
     pub flash_attn: c_int,
+    /// KV cache key type (ggml_type enum value, -1 = default/F16)
+    pub type_k: c_int,
+    /// KV cache value type (ggml_type enum value, -1 = default/F16)
+    pub type_v: c_int,
+    /// RoPE base frequency (0.0 = default)
+    pub rope_freq_base: f32,
+    /// RoPE frequency scaling factor (0.0 = default)
+    pub rope_freq_scale: f32,
+    /// KV cache defragmentation threshold (-1.0 = disabled)
+    pub defrag_thold: f32,
 }
 
 impl Default for MullamaContextParams {
@@ -51,6 +61,11 @@ impl Default for MullamaContextParams {
             embeddings: false,
             offload_kqv: true,
             flash_attn: 0,
+            type_k: -1,
+            type_v: -1,
+            rope_freq_base: 0.0,
+            rope_freq_scale: 0.0,
+            defrag_thold: -1.0,
         }
     }
 }
@@ -91,7 +106,7 @@ pub extern "C" fn mullama_context_new(
         ContextParams::default()
     } else {
         let p = unsafe { &*params };
-        ContextParams {
+        let mut ctx_params = ContextParams {
             n_ctx: p.n_ctx,
             n_batch: p.n_batch,
             n_ubatch: p.n_ubatch,
@@ -100,8 +115,33 @@ pub extern "C" fn mullama_context_new(
             n_threads_batch: p.n_threads_batch,
             embeddings: p.embeddings,
             offload_kqv: p.offload_kqv,
+            rope_freq_base: p.rope_freq_base,
+            rope_freq_scale: p.rope_freq_scale,
+            defrag_thold: p.defrag_thold,
             ..Default::default()
+        };
+        // Map KV cache type from ggml_type integer
+        if p.type_k >= 0 {
+            ctx_params.type_k = match p.type_k {
+                0 => mullama::KvCacheType::F32,
+                1 => mullama::KvCacheType::F16,
+                2 => mullama::KvCacheType::Q4_0,
+                8 => mullama::KvCacheType::Q8_0,
+                30 => mullama::KvCacheType::BF16,
+                _ => mullama::KvCacheType::F16,
+            };
         }
+        if p.type_v >= 0 {
+            ctx_params.type_v = match p.type_v {
+                0 => mullama::KvCacheType::F32,
+                1 => mullama::KvCacheType::F16,
+                2 => mullama::KvCacheType::Q4_0,
+                8 => mullama::KvCacheType::Q8_0,
+                30 => mullama::KvCacheType::BF16,
+                _ => mullama::KvCacheType::F16,
+            };
+        }
+        ctx_params
     };
 
     match Context::new(Arc::new((*model_arc).clone()), ctx_params) {

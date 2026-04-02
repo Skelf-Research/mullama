@@ -49,6 +49,13 @@ pub struct SpawnConfig {
 
     /// Log file path (for background mode)
     pub log_file: Option<PathBuf>,
+
+    /// Enable flash attention
+    pub flash_attn: bool,
+    /// KV cache type for keys
+    pub cache_type_k: Option<String>,
+    /// KV cache type for values
+    pub cache_type_v: Option<String>,
 }
 
 impl Default for SpawnConfig {
@@ -66,6 +73,9 @@ impl Default for SpawnConfig {
             startup_timeout: Duration::from_secs(30),
             background: true,
             log_file: None,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
         }
     }
 }
@@ -140,6 +150,15 @@ pub fn spawn_daemon(config: &SpawnConfig) -> SpawnResult {
     }
     if config.require_api_key {
         cmd.arg("--require-api-key");
+    }
+    if config.flash_attn {
+        cmd.arg("--flash-attn");
+    }
+    if let Some(ref k) = config.cache_type_k {
+        cmd.arg("--cache-type-k").arg(k);
+    }
+    if let Some(ref v) = config.cache_type_v {
+        cmd.arg("--cache-type-v").arg(v);
     }
 
     if config.background {

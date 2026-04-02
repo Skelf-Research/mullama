@@ -603,7 +603,7 @@ impl HfDownloader {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                    .unwrap()
+                    .expect("static progress bar template")
                     .progress_chars("#>-"),
             );
             Some(pb)
@@ -724,7 +724,21 @@ impl HfDownloader {
 
 impl Default for HfDownloader {
     fn default() -> Self {
-        Self::new().expect("Failed to create HfDownloader")
+        match Self::new() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[WARN] Failed to create HfDownloader: {}", e);
+                // Create a minimal downloader with default cache dir
+                Self {
+                    cache_dir: dirs::cache_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                        .join("mullama")
+                        .join("models"),
+                    client: reqwest::Client::new(),
+                    hf_token: None,
+                }
+            }
+        }
     }
 }
 

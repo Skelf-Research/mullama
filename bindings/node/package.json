@@ -1,6 +1,6 @@
 {
   "name": "mullama",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "High-performance Node.js bindings for Mullama LLM library - local inference with GGUF models",
   "main": "index.js",
   "types": "index.d.ts",

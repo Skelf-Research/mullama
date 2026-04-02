@@ -7,7 +7,7 @@ Build real-time, bidirectional communication channels for streaming LLM inferenc
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["websockets"] }
+    mullama = { version = "0.3", features = ["websockets"] }
     ```
 
 ## Overview
@@ -376,7 +376,7 @@ Process real-time audio from clients for transcription or voice commands.
     Audio streaming over WebSocket requires both `websockets` and `streaming-audio` features.
 
     ```toml
-    mullama = { version = "0.1", features = ["websockets", "streaming-audio"] }
+    mullama = { version = "0.3", features = ["websockets", "streaming-audio"] }
     ```
 
 === "Node.js"

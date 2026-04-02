@@ -319,7 +319,7 @@ Mullama uses Cargo feature flags (Rust) to keep the core library lightweight. In
 ```toml
 # Rust: enable specific features in Cargo.toml
 [dependencies]
-mullama = { version = "0.1", features = ["async", "streaming"] }
+mullama = { version = "0.3", features = ["async", "streaming"] }
 ```
 
 !!! info "Node.js and Python"

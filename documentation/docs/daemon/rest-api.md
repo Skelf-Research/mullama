@@ -477,7 +477,7 @@ curl http://localhost:8080/api/system/status
 
 ```json
 {
-  "version": "0.1.1",
+  "version": "0.3.0",
   "uptime_secs": 3600,
   "models_loaded": 2,
   "http_endpoint": "http://0.0.0.0:8080",
@@ -544,7 +544,7 @@ curl http://localhost:8080/status
 ```json
 {
   "status": "ok",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "uptime_secs": 3600,
   "models_loaded": 2,
   "active_requests": 0
@@ -641,7 +641,7 @@ curl http://localhost:8080/metrics
 ```
 # HELP mullama_info Mullama daemon information
 # TYPE mullama_info gauge
-mullama_info{version="0.1.1"} 1
+mullama_info{version="0.3.0"} 1
 
 # HELP mullama_uptime_seconds Daemon uptime in seconds
 # TYPE mullama_uptime_seconds counter

@@ -10,7 +10,7 @@ The streaming module provides real-time token generation with the `Stream` trait
 !!! info "Feature Gate"
     This module requires the `streaming` feature flag (which automatically enables `async`):
     ```toml
-    mullama = { version = "0.1", features = ["streaming"] }
+    mullama = { version = "0.3", features = ["streaming"] }
     ```
 
 ## TokenStream

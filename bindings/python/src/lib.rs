@@ -8,6 +8,7 @@ use numpy::{PyArray1, PyArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::sync::Mutex;
 use std::sync::Arc;
 
 /// Convert a MullamaError to a PyErr
@@ -484,25 +485,24 @@ impl PyContext {
             .map_err(to_py_err)
     }
 
-    /// Generate text with streaming (returns a generator)
+    /// Generate text with streaming (returns an iterator)
     ///
     /// Args:
     ///     prompt: Text prompt or list of token IDs
     ///     max_tokens: Maximum tokens to generate
     ///     params: Optional sampler parameters
     ///
-    /// Yields:
-    ///     str: Generated tokens one at a time
+    /// Returns:
+    ///     TokenIterator: Iterator that yields generated tokens one at a time.
+    ///         Supports `for token in ctx.generate_stream(...):`
+    ///         Also has `.text()` to get joined string and `.collect()` for list.
     #[pyo3(signature = (prompt, max_tokens=100, params=None))]
     fn generate_stream(
         &mut self,
-        py: Python<'_>,
         prompt: &Bound<'_, PyAny>,
         max_tokens: usize,
         params: Option<PySamplerParams>,
-    ) -> PyResult<Py<PyList>> {
-        // For simplicity, we'll collect all tokens and return as a list
-        // A proper generator implementation would require more complex PyO3 patterns
+    ) -> PyResult<PyTokenIterator> {
         let tokens: Vec<i32> = if let Ok(text) = prompt.extract::<String>() {
             self.model.tokenize(&text, true, false).map_err(to_py_err)?
         } else if let Ok(token_list) = prompt.extract::<Vec<i32>>() {
@@ -524,8 +524,10 @@ impl PyContext {
             })
             .map_err(to_py_err)?;
 
-        let list = PyList::new_bound(py, pieces);
-        Ok(list.unbind())
+        Ok(PyTokenIterator {
+            tokens: Mutex::new(pieces),
+            index: Mutex::new(0),
+        })
     }
 
     /// Decode tokens (process through the model)
@@ -570,6 +572,46 @@ impl PyContext {
             self.n_ctx(),
             self.n_batch()
         )
+    }
+}
+
+/// Token iterator for streaming generation (implements __iter__/__next__)
+#[pyclass(name = "TokenIterator")]
+pub struct PyTokenIterator {
+    tokens: Mutex<Vec<String>>,
+    index: Mutex<usize>,
+}
+
+#[pymethods]
+impl PyTokenIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&self) -> Option<String> {
+        let tokens = self.tokens.lock().unwrap();
+        let mut index = self.index.lock().unwrap();
+        if *index < tokens.len() {
+            let token = tokens[*index].clone();
+            *index += 1;
+            Some(token)
+        } else {
+            None
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.tokens.lock().unwrap().len()
+    }
+
+    /// Collect all tokens into a list
+    fn collect(&self) -> Vec<String> {
+        self.tokens.lock().unwrap().clone()
+    }
+
+    /// Join all tokens into a single string
+    fn text(&self) -> String {
+        self.tokens.lock().unwrap().join("")
     }
 }
 
@@ -695,6 +737,127 @@ impl PyEmbeddingGenerator {
     }
 }
 
+/// Hardware preset for common deployment configurations
+#[pyclass(name = "HardwarePreset")]
+#[derive(Clone)]
+pub struct PyHardwarePreset {
+    inner: mullama::presets::HardwarePreset,
+}
+
+#[pymethods]
+impl PyHardwarePreset {
+    /// Create CPU low memory preset (4GB RAM)
+    #[staticmethod]
+    pub fn cpu_low_memory() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::CpuLowMemory,
+        }
+    }
+
+    /// Create CPU standard preset (8-16GB RAM)
+    #[staticmethod]
+    pub fn cpu_standard() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::CpuStandard,
+        }
+    }
+
+    /// Create GPU low VRAM preset (4GB)
+    #[staticmethod]
+    pub fn gpu_low_vram() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::GpuLowVram,
+        }
+    }
+
+    /// Create GPU medium VRAM preset (8GB)
+    #[staticmethod]
+    pub fn gpu_medium_vram() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::GpuMediumVram,
+        }
+    }
+
+    /// Create GPU high VRAM preset (16GB+)
+    #[staticmethod]
+    pub fn gpu_high_vram() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::GpuHighVram,
+        }
+    }
+
+    /// Create Apple Silicon preset (M-series)
+    #[staticmethod]
+    pub fn apple_silicon() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::AppleSilicon,
+        }
+    }
+
+    /// Create maximum performance preset
+    #[staticmethod]
+    pub fn max_performance() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::MaxPerformance,
+        }
+    }
+
+    /// Auto-detect the best preset for the current hardware
+    #[staticmethod]
+    pub fn detect() -> Self {
+        Self {
+            inner: mullama::presets::HardwarePreset::detect(),
+        }
+    }
+
+    /// Get a preset by name (e.g., "cpu", "gpu", "apple-silicon", "max", "auto")
+    ///
+    /// Returns None if name is not recognized.
+    #[staticmethod]
+    pub fn from_name(name: &str) -> Option<Self> {
+        mullama::presets::HardwarePreset::from_name(name).map(|p| Self { inner: p })
+    }
+
+    /// Get the human-readable name of this preset
+    pub fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    /// Get a short description of this preset
+    pub fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    /// Get the recommended quantization format (e.g., "Q4_K_M")
+    pub fn recommended_quant(&self) -> &str {
+        self.inner.recommended_quant()
+    }
+
+    /// Get the recommended number of GPU layers (-1 = all)
+    pub fn gpu_layers(&self) -> i32 {
+        self.inner.model_params().n_gpu_layers
+    }
+
+    /// Get the recommended context size
+    pub fn context_size(&self) -> u32 {
+        self.inner.context_params().n_ctx
+    }
+
+    /// Check if this preset enables flash attention
+    pub fn flash_attn(&self) -> bool {
+        self.inner.flash_attn()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HardwarePreset(name='{}', gpu_layers={}, context_size={})",
+            self.inner.name(),
+            self.inner.model_params().n_gpu_layers,
+            self.inner.context_params().n_ctx,
+        )
+    }
+}
+
 /// Compute cosine similarity between two vectors
 #[pyfunction]
 fn cosine_similarity(a: &Bound<'_, PyArray1<f32>>, b: &Bound<'_, PyArray1<f32>>) -> PyResult<f32> {
@@ -759,13 +922,15 @@ fn _mullama(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyModel>()?;
     m.add_class::<PyContext>()?;
     m.add_class::<PySamplerParams>()?;
+    m.add_class::<PyTokenIterator>()?;
     m.add_class::<PyEmbeddingGenerator>()?;
+    m.add_class::<PyHardwarePreset>()?;
     m.add_function(wrap_pyfunction!(cosine_similarity, m)?)?;
     m.add_function(wrap_pyfunction!(backend_init, m)?)?;
     m.add_function(wrap_pyfunction!(backend_free, m)?)?;
     m.add_function(wrap_pyfunction!(supports_gpu_offload, m)?)?;
     m.add_function(wrap_pyfunction!(system_info, m)?)?;
     m.add_function(wrap_pyfunction!(max_devices, m)?)?;
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

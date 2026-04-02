@@ -94,7 +94,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 
     ```toml title="Cargo.toml"
     [dependencies]
-    mullama = { version = "0.1.1", features = ["async", "streaming"] }
+    mullama = { version = "0.3.0", features = ["async", "streaming"] }
     tokio = { version = "1", features = ["full"] }
     ```
 

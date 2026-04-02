@@ -102,8 +102,7 @@ impl OllamaModelRef {
         let (name_part, tag) = name.split_once(':').unwrap_or((name, "latest"));
 
         // Split into namespace and repository
-        let (namespace, repository) = if name_part.contains('/') {
-            let (ns, repo) = name_part.split_once('/').unwrap();
+        let (namespace, repository) = if let Some((ns, repo)) = name_part.split_once('/') {
             (ns.to_string(), repo.to_string())
         } else {
             ("library".to_string(), name_part.to_string())
@@ -611,7 +610,7 @@ impl OllamaClient {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                    .unwrap()
+                    .expect("static progress bar template")
                     .progress_chars("#>-"),
             );
             Some(pb)

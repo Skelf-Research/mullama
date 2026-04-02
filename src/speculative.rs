@@ -15,7 +15,6 @@ use std::collections::VecDeque;
 pub type Token = TokenId;
 
 /// Speculative decoding engine that orchestrates draft and target models
-#[derive(Debug)]
 pub struct SpeculativeDecoder {
     /// The main (target) model that provides final quality
     target_model: Arc<Model>,
@@ -29,6 +28,15 @@ pub struct SpeculativeDecoder {
     config: SpeculativeConfig,
     /// Performance statistics
     stats: SpeculativeStats,
+}
+
+impl std::fmt::Debug for SpeculativeDecoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpeculativeDecoder")
+            .field("config", &self.config)
+            .field("stats", &self.stats)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Configuration for speculative decoding

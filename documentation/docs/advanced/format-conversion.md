@@ -7,7 +7,7 @@ Convert audio and image files between formats with sample rate conversion, resiz
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["format-conversion"] }
+    mullama = { version = "0.3", features = ["format-conversion"] }
     ```
 
 ## Overview

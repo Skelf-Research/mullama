@@ -28,6 +28,8 @@ pub struct MullamaModelParams {
     pub vocab_only: bool,
     /// Check tensor data integrity
     pub check_tensors: bool,
+    /// Split mode for multi-GPU (0=none, 1=layer, 2=row)
+    pub split_mode: c_int,
 }
 
 impl Default for MullamaModelParams {
@@ -39,6 +41,7 @@ impl Default for MullamaModelParams {
             use_mlock: false,
             vocab_only: false,
             check_tensors: true,
+            split_mode: 0,
         }
     }
 }
@@ -80,6 +83,11 @@ pub extern "C" fn mullama_model_load(
         ModelParams::default()
     } else {
         let p = unsafe { &*params };
+        let split_mode = match p.split_mode {
+            1 => mullama::sys::llama_split_mode::LLAMA_SPLIT_MODE_LAYER,
+            2 => mullama::sys::llama_split_mode::LLAMA_SPLIT_MODE_ROW,
+            _ => mullama::sys::llama_split_mode::LLAMA_SPLIT_MODE_NONE,
+        };
         ModelParams {
             n_gpu_layers: p.n_gpu_layers,
             main_gpu: p.main_gpu,
@@ -87,6 +95,7 @@ pub extern "C" fn mullama_model_load(
             use_mlock: p.use_mlock,
             vocab_only: p.vocab_only,
             check_tensors: p.check_tensors,
+            split_mode,
             ..Default::default()
         }
     };
@@ -619,6 +628,147 @@ pub extern "C" fn mullama_model_apply_chat_template(
             MullamaErrorCode::InvalidInput.to_i32()
         }
     }
+}
+
+// ============================================================================
+// Metadata Iteration Functions
+// ============================================================================
+
+/// Get the number of metadata key-value pairs in the model
+///
+/// # Returns
+/// Number of metadata entries, or 0 if model is null
+#[no_mangle]
+pub extern "C" fn mullama_model_metadata_count(model: *const MullamaModel) -> c_int {
+    if model.is_null() {
+        return 0;
+    }
+
+    match unsafe { Handle::as_ref(model) } {
+        Some(m) => m.metadata().len() as c_int,
+        None => 0,
+    }
+}
+
+/// Get a metadata key by index
+///
+/// # Arguments
+/// * `model` - Model handle
+/// * `index` - Metadata entry index (0-based)
+/// * `output` - Output buffer for the key string
+/// * `max_output` - Size of the output buffer
+///
+/// # Returns
+/// Number of bytes written, or negative required size if buffer too small
+#[no_mangle]
+pub extern "C" fn mullama_model_metadata_key(
+    model: *const MullamaModel,
+    index: c_int,
+    output: *mut c_char,
+    max_output: size_t,
+) -> c_int {
+    if model.is_null() {
+        set_last_error("Model handle is null");
+        return MullamaErrorCode::NullPointer.to_i32();
+    }
+
+    let model_ref = match unsafe { Handle::as_ref(model) } {
+        Some(m) => m,
+        None => {
+            set_last_error("Invalid model handle");
+            return MullamaErrorCode::NullPointer.to_i32();
+        }
+    };
+
+    let metadata = model_ref.metadata();
+    let keys: Vec<&String> = metadata.keys().collect();
+
+    if index < 0 || index as usize >= keys.len() {
+        set_last_error("Metadata index out of range");
+        return MullamaErrorCode::InvalidInput.to_i32();
+    }
+
+    let key = keys[index as usize];
+    let bytes = key.as_bytes();
+    let len = bytes.len();
+
+    if output.is_null() || max_output < len + 1 {
+        return -(len as c_int + 1);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
+        *output.add(len) = 0;
+    }
+
+    len as c_int
+}
+
+/// Get a metadata value by index
+///
+/// # Arguments
+/// * `model` - Model handle
+/// * `index` - Metadata entry index (0-based)
+/// * `output` - Output buffer for the value string
+/// * `max_output` - Size of the output buffer
+///
+/// # Returns
+/// Number of bytes written, or negative required size if buffer too small
+#[no_mangle]
+pub extern "C" fn mullama_model_metadata_value(
+    model: *const MullamaModel,
+    index: c_int,
+    output: *mut c_char,
+    max_output: size_t,
+) -> c_int {
+    if model.is_null() {
+        set_last_error("Model handle is null");
+        return MullamaErrorCode::NullPointer.to_i32();
+    }
+
+    let model_ref = match unsafe { Handle::as_ref(model) } {
+        Some(m) => m,
+        None => {
+            set_last_error("Invalid model handle");
+            return MullamaErrorCode::NullPointer.to_i32();
+        }
+    };
+
+    let metadata = model_ref.metadata();
+    let values: Vec<&String> = metadata.values().collect();
+
+    if index < 0 || index as usize >= values.len() {
+        set_last_error("Metadata index out of range");
+        return MullamaErrorCode::InvalidInput.to_i32();
+    }
+
+    let value = values[index as usize];
+    let bytes = value.as_bytes();
+    let len = bytes.len();
+
+    if output.is_null() || max_output < len + 1 {
+        return -(len as c_int + 1);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
+        *output.add(len) = 0;
+    }
+
+    len as c_int
+}
+
+/// Convenience alias: apply chat template (same as mullama_model_apply_chat_template)
+#[no_mangle]
+pub extern "C" fn mullama_apply_chat_template(
+    model: *const MullamaModel,
+    messages: *const MullamaChatMessage,
+    n_messages: c_int,
+    add_generation_prompt: bool,
+    output: *mut c_char,
+    max_output: size_t,
+) -> c_int {
+    mullama_model_apply_chat_template(model, messages, n_messages, add_generation_prompt, output, max_output)
 }
 
 #[cfg(test)]

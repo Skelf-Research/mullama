@@ -12,9 +12,9 @@ The async module provides non-blocking wrappers around Mullama's core operations
     - `tokio-runtime` -- Enables `MullamaRuntime`, `ModelPool`, `TaskManager`, `RuntimeMetrics`
 
     ```toml
-    mullama = { version = "0.1", features = ["async"] }
+    mullama = { version = "0.3", features = ["async"] }
     # Or for full runtime management:
-    mullama = { version = "0.1", features = ["async", "tokio-runtime"] }
+    mullama = { version = "0.3", features = ["async", "tokio-runtime"] }
     ```
 
 ## AsyncModel

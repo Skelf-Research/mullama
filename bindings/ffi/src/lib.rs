@@ -155,14 +155,15 @@ pub extern "C" fn mullama_system_info(
 /// Library version major number
 pub const MULLAMA_VERSION_MAJOR: u32 = 0;
 /// Library version minor number
-pub const MULLAMA_VERSION_MINOR: u32 = 1;
+pub const MULLAMA_VERSION_MINOR: u32 = 2;
 /// Library version patch number
 pub const MULLAMA_VERSION_PATCH: u32 = 0;
 
-/// Get library version as a string
+/// Get library version as a string (derived from Cargo.toml)
 #[no_mangle]
 pub extern "C" fn mullama_version() -> *const libc::c_char {
-    static VERSION: &[u8] = b"0.1.0\0";
+    // Null-terminated version string derived from Cargo.toml at compile time
+    static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
     VERSION.as_ptr() as *const libc::c_char
 }
 
@@ -192,6 +193,84 @@ pub extern "C" fn mullama_version_patch() -> u32 {
 #[no_mangle]
 pub extern "C" fn mullama_time_us() -> i64 {
     mullama::time_us()
+}
+
+// ============================================================================
+// Hardware Presets
+// ============================================================================
+
+/// Get the number of available hardware presets
+#[no_mangle]
+pub extern "C" fn mullama_preset_count() -> libc::c_int {
+    mullama::presets::HardwarePreset::all().len() as libc::c_int
+}
+
+/// Get the name of a preset by index.
+/// Returns null if index is out of range.
+/// The returned pointer points to a static string valid for the lifetime of the program.
+#[no_mangle]
+pub extern "C" fn mullama_preset_name(index: libc::c_int) -> *const libc::c_char {
+    match mullama::presets::HardwarePreset::from_index(index as usize) {
+        Some(preset) => {
+            let name = preset.name();
+            // Return static string pointer (valid for lifetime of program)
+            name.as_ptr() as *const libc::c_char
+        }
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the description of a preset by index.
+/// Returns null if index is out of range.
+#[no_mangle]
+pub extern "C" fn mullama_preset_description(index: libc::c_int) -> *const libc::c_char {
+    match mullama::presets::HardwarePreset::from_index(index as usize) {
+        Some(preset) => {
+            let desc = preset.description();
+            desc.as_ptr() as *const libc::c_char
+        }
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the recommended quantization format for a preset by index.
+/// Returns null if index is out of range.
+#[no_mangle]
+pub extern "C" fn mullama_preset_recommended_quant(index: libc::c_int) -> *const libc::c_char {
+    match mullama::presets::HardwarePreset::from_index(index as usize) {
+        Some(preset) => {
+            let quant = preset.recommended_quant();
+            quant.as_ptr() as *const libc::c_char
+        }
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the recommended GPU layers for a preset by index.
+/// Returns 0 if index is out of range.
+#[no_mangle]
+pub extern "C" fn mullama_preset_gpu_layers(index: libc::c_int) -> libc::c_int {
+    match mullama::presets::HardwarePreset::from_index(index as usize) {
+        Some(preset) => preset.model_params().n_gpu_layers,
+        None => 0,
+    }
+}
+
+/// Get the recommended context size for a preset by index.
+/// Returns 0 if index is out of range.
+#[no_mangle]
+pub extern "C" fn mullama_preset_context_size(index: libc::c_int) -> u32 {
+    match mullama::presets::HardwarePreset::from_index(index as usize) {
+        Some(preset) => preset.context_params().n_ctx,
+        None => 0,
+    }
+}
+
+/// Detect the best preset for the current hardware.
+/// Returns the preset index.
+#[no_mangle]
+pub extern "C" fn mullama_preset_detect() -> libc::c_int {
+    mullama::presets::HardwarePreset::detect().index() as libc::c_int
 }
 
 // ============================================================================

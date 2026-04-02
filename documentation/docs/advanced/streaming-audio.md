@@ -7,7 +7,7 @@ Capture and process real-time audio with voice activity detection, noise reducti
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["streaming-audio"] }
+    mullama = { version = "0.3", features = ["streaming-audio"] }
     ```
 
 ## Overview

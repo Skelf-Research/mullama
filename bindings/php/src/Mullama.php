@@ -124,7 +124,11 @@ final class Mullama
      */
     public static function version(): string
     {
-        return '0.1.0';
+        $ptr = self::ffi()->mullama_version();
+        if ($ptr === null) {
+            return '0.2.0';
+        }
+        return FFI::string($ptr);
     }
 
     /**

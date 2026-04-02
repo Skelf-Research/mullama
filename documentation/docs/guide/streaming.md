@@ -7,7 +7,7 @@ Stream tokens in real-time as they are generated for responsive user experiences
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["streaming"] }
+    mullama = { version = "0.3", features = ["streaming"] }
     ```
 
 ## Why Streaming Matters

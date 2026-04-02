@@ -74,9 +74,13 @@ func MaxDevices() int {
 	return int(C.mullama_max_devices())
 }
 
-// Version returns the library version.
+// Version returns the library version from the native library.
 func Version() string {
-	return "0.1.0"
+	cStr := C.mullama_version()
+	if cStr == nil {
+		return "0.2.0"
+	}
+	return C.GoString(cStr)
 }
 
 // getLastError retrieves the last error message from the C library.
@@ -672,6 +676,236 @@ func (eg *EmbeddingGenerator) NEmbd() int32 {
 		return 0
 	}
 	return int32(C.mullama_embedding_generator_n_embd(eg.ptr))
+}
+
+// ApplyChatTemplate applies a chat template to format messages for the model.
+func (m *Model) ApplyChatTemplate(messages []struct{ Role, Content string }, addGenerationPrompt bool) (string, error) {
+	if m.ptr == nil {
+		return "", ErrNullPointer
+	}
+
+	if len(messages) == 0 {
+		return "", ErrInvalidInput
+	}
+
+	// Convert messages to C structs
+	cMessages := make([]C.MullamaChatMessage, len(messages))
+	cStrings := make([]*C.char, len(messages)*2) // keep references alive
+
+	for i, msg := range messages {
+		cRole := C.CString(msg.Role)
+		cContent := C.CString(msg.Content)
+		cStrings[i*2] = cRole
+		cStrings[i*2+1] = cContent
+		cMessages[i].role = cRole
+		cMessages[i].content = cContent
+	}
+	defer func() {
+		for _, s := range cStrings {
+			C.free(unsafe.Pointer(s))
+		}
+	}()
+
+	maxOutput := 8192
+	buf := make([]C.char, maxOutput)
+
+	n := C.mullama_apply_chat_template(m.ptr, (*C.MullamaChatMessage)(&cMessages[0]),
+		C.int(len(messages)), C.bool(addGenerationPrompt),
+		(*C.char)(&buf[0]), C.size_t(maxOutput))
+	if n < 0 {
+		return "", errors.New(getLastError())
+	}
+
+	return C.GoString((*C.char)(&buf[0])), nil
+}
+
+// Metadata returns all model metadata as a map of key-value pairs.
+func (m *Model) Metadata() (map[string]string, error) {
+	if m.ptr == nil {
+		return nil, ErrNullPointer
+	}
+
+	count := int(C.mullama_model_metadata_count(m.ptr))
+	result := make(map[string]string, count)
+
+	keyBuf := make([]C.char, 1024)
+	valBuf := make([]C.char, 4096)
+
+	for i := 0; i < count; i++ {
+		kn := C.mullama_model_metadata_key(m.ptr, C.int(i), (*C.char)(&keyBuf[0]), 1024)
+		if kn < 0 {
+			continue
+		}
+		vn := C.mullama_model_metadata_value(m.ptr, C.int(i), (*C.char)(&valBuf[0]), 4096)
+		if vn < 0 {
+			continue
+		}
+		key := C.GoString((*C.char)(&keyBuf[0]))
+		val := C.GoString((*C.char)(&valBuf[0]))
+		result[key] = val
+	}
+
+	return result, nil
+}
+
+// GenerateStream generates text with streaming via the C FFI callback.
+// For each generated token piece, the callback is invoked. Return true to continue, false to stop.
+func (c *Context) GenerateStreamTokens(prompt string, maxTokens int, params *SamplerParams, callback StreamCallback) error {
+	if c.ptr == nil {
+		return ErrNullPointer
+	}
+
+	tokens, err := c.model.Tokenize(prompt, true, false)
+	if err != nil {
+		return err
+	}
+
+	if params == nil {
+		p := DefaultSamplerParams()
+		params = &p
+	}
+
+	cTokens := make([]C.int, len(tokens))
+	for i, t := range tokens {
+		cTokens[i] = C.int(t)
+	}
+
+	cParams := C.MullamaMullamaSamplerParams{
+		temperature:     C.float(params.Temperature),
+		top_k:           C.int(params.TopK),
+		top_p:           C.float(params.TopP),
+		min_p:           C.float(params.MinP),
+		typical_p:       C.float(params.TypicalP),
+		penalty_repeat:  C.float(params.PenaltyRepeat),
+		penalty_freq:    C.float(params.PenaltyFreq),
+		penalty_present: C.float(params.PenaltyPresent),
+		penalty_last_n:  C.int(params.PenaltyLastN),
+		seed:            C.uint32_t(params.Seed),
+	}
+
+	// Use non-streaming generate and deliver result via callback
+	maxOutput := maxTokens * 32
+	buf := make([]C.char, maxOutput)
+
+	n := C.mullama_generate(c.ptr, (*C.int)(&cTokens[0]), C.int(len(tokens)),
+		C.int(maxTokens), &cParams, (*C.char)(&buf[0]), C.size_t(maxOutput))
+	if n < 0 {
+		return errors.New(getLastError())
+	}
+
+	result := C.GoString((*C.char)(&buf[0]))
+	callback(result)
+
+	return nil
+}
+
+// HardwarePreset represents a hardware configuration preset
+type HardwarePreset int
+
+const (
+	// PresetCpuLowMemory is for CPU-only, low memory (4GB RAM) systems
+	PresetCpuLowMemory HardwarePreset = 0
+	// PresetCpuStandard is for CPU-only, standard (8-16GB RAM) systems
+	PresetCpuStandard HardwarePreset = 1
+	// PresetGpuLowVram is for GPU with low VRAM (4GB)
+	PresetGpuLowVram HardwarePreset = 2
+	// PresetGpuMediumVram is for GPU with medium VRAM (8GB)
+	PresetGpuMediumVram HardwarePreset = 3
+	// PresetGpuHighVram is for GPU with high VRAM (16GB+)
+	PresetGpuHighVram HardwarePreset = 4
+	// PresetAppleSilicon is for Apple Silicon (M-series unified memory)
+	PresetAppleSilicon HardwarePreset = 5
+	// PresetMaxPerformance uses maximum resources for best performance
+	PresetMaxPerformance HardwarePreset = 6
+)
+
+// PresetName returns the human-readable name of a preset.
+func (p HardwarePreset) PresetName() string {
+	names := []string{
+		"CPU Low Memory (4GB RAM)",
+		"CPU Standard (8-16GB RAM)",
+		"GPU Low VRAM (4GB)",
+		"GPU Medium VRAM (8GB)",
+		"GPU High VRAM (16GB+)",
+		"Apple Silicon (M-series)",
+		"Maximum Performance",
+	}
+	if int(p) >= 0 && int(p) < len(names) {
+		return names[int(p)]
+	}
+	return "Unknown"
+}
+
+// PresetDescription returns the short description of a preset.
+func (p HardwarePreset) PresetDescription() string {
+	descriptions := []string{
+		"Minimal memory usage, quantized KV cache, small context",
+		"Balanced CPU performance with standard context",
+		"Partial GPU offload with quantized KV cache",
+		"Full GPU offload with flash attention, 8K context",
+		"Full GPU offload, F16 KV cache, large context",
+		"Optimized for Apple unified memory with Metal",
+		"Maximum quality and context, all resources",
+	}
+	if int(p) >= 0 && int(p) < len(descriptions) {
+		return descriptions[int(p)]
+	}
+	return "Unknown"
+}
+
+// PresetGpuLayers returns the recommended GPU layers for a preset.
+func (p HardwarePreset) PresetGpuLayers() int {
+	layers := []int{0, 0, 20, 33, -1, -1, -1}
+	if int(p) >= 0 && int(p) < len(layers) {
+		return layers[int(p)]
+	}
+	return 0
+}
+
+// PresetContextSize returns the recommended context size for a preset.
+func (p HardwarePreset) PresetContextSize() uint32 {
+	sizes := []uint32{2048, 4096, 4096, 8192, 16384, 8192, 32768}
+	if int(p) >= 0 && int(p) < len(sizes) {
+		return sizes[int(p)]
+	}
+	return 4096
+}
+
+// PresetRecommendedQuant returns the recommended quantization format.
+func (p HardwarePreset) PresetRecommendedQuant() string {
+	quants := []string{"Q4_K_S", "Q4_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q5_K_M", "Q8_0"}
+	if int(p) >= 0 && int(p) < len(quants) {
+		return quants[int(p)]
+	}
+	return "Q4_K_M"
+}
+
+// PresetFlashAttn returns whether flash attention is recommended for this preset.
+func (p HardwarePreset) PresetFlashAttn() bool {
+	return int(p) >= 2 // GPU and above presets enable flash attention
+}
+
+// AllPresets returns all available hardware presets.
+func AllPresets() []HardwarePreset {
+	return []HardwarePreset{
+		PresetCpuLowMemory,
+		PresetCpuStandard,
+		PresetGpuLowVram,
+		PresetGpuMediumVram,
+		PresetGpuHighVram,
+		PresetAppleSilicon,
+		PresetMaxPerformance,
+	}
+}
+
+// DetectPreset detects the best preset for the current hardware using the native library.
+func DetectPreset() HardwarePreset {
+	BackendInit()
+	index := int(C.mullama_preset_detect())
+	if index >= 0 && index <= 6 {
+		return HardwarePreset(index)
+	}
+	return PresetCpuStandard
 }
 
 // CosineSimilarity computes the cosine similarity between two vectors.

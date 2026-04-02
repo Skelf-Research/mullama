@@ -7,7 +7,7 @@ Run inference without blocking your application's main thread. Async support ena
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["async"] }
+    mullama = { version = "0.3", features = ["async"] }
     ```
 
     Node.js and Python include async support by default.

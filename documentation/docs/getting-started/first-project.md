@@ -744,7 +744,7 @@ Turn your chatbot into a REST API that other applications can consume.
 
     ```toml title="Cargo.toml"
     [dependencies]
-    mullama = { version = "0.1.1", features = ["web", "streaming"] }
+    mullama = { version = "0.3.0", features = ["web", "streaming"] }
     tokio = { version = "1", features = ["full"] }
     axum = "0.7"
     serde = { version = "1", features = ["derive"] }

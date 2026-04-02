@@ -7,7 +7,7 @@ Build production-ready REST APIs for LLM inference using Mullama's integrated Ax
 
     ```toml
     [dependencies]
-    mullama = { version = "0.1", features = ["web"] }
+    mullama = { version = "0.3", features = ["web"] }
     ```
 
 ## Overview

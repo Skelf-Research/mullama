@@ -1,55 +1,32 @@
 # Mullama
 
-**Drop-in Ollama replacement. All-in-one LLM toolkit.**
+**Run any LLM locally. Use it from any language. Deploy anywhere.**
 
 [![Crates.io](https://img.shields.io/crates/v/mullama)](https://crates.io/crates/mullama)
 [![PyPI](https://img.shields.io/pypi/v/mullama)](https://pypi.org/project/mullama/)
 [![npm](https://img.shields.io/npm/v/mullama)](https://www.npmjs.com/package/mullama)
+[![CI](https://img.shields.io/github/actions/workflow/status/skelf-research/mullama/ci.yml?branch=main&label=CI)](https://github.com/skelf-research/mullama/actions)
 [![Documentation](https://img.shields.io/badge/docs-skelfresearch.com-blue)](https://docs.skelfresearch.com/mullama/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1234567890?label=Discord&color=5865F2)](https://discord.gg/skelfresearch)
 
-Mullama is a local LLM server and library that works just like Ollama -- same CLI commands, same model format, same Modelfile syntax -- but with native language bindings for Rust, Python, Node.js, Go, PHP, and C/C++.
-
-**Coming from Ollama?** Your commands work unchanged:
-
-```bash
-mullama run llama3.2:1b "Hello!"
-mullama pull qwen2.5:7b
-mullama serve
-mullama list
-```
+Mullama is a local LLM server and library that works just like Ollama — same CLI commands, same model format, same Modelfile syntax — but with native language bindings for Python, Node.js, Go, PHP, Rust, and C/C++. Embed inference directly in your app with zero HTTP overhead, or run it as a server with OpenAI and Anthropic-compatible APIs.
 
 ## Install
 
-**One-liner (Linux/macOS):**
-
 ```bash
+# One-liner (Linux/macOS)
 curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
-```
 
-**Windows (PowerShell):**
-
-```powershell
+# Windows (PowerShell)
 iwr -useb https://skelfresearch.com/mullama/install.ps1 | iex
-```
 
-**Package managers:**
-
-```bash
-# Rust library
-cargo add mullama
-
-# Python
-pip install mullama
-
-# Node.js
-npm install mullama
-
-# Go
-go get github.com/skelf-research/mullama-go
-
-# PHP
-composer require skelf-research/mullama
+# Or via package managers
+pip install mullama          # Python
+npm install mullama          # Node.js
+cargo add mullama            # Rust
+go get github.com/skelf-research/mullama-go   # Go
+composer require skelf-research/mullama        # PHP
 ```
 
 ## Quick Start
@@ -61,18 +38,15 @@ mullama run llama3.2:1b "What is the capital of France?"
 # Interactive chat
 mullama chat
 
-# Start OpenAI-compatible server
+# Start an OpenAI-compatible server
 mullama serve --model llama3.2:1b
-
-# Use with OpenAI SDK (any language)
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "llama3.2:1b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-## Use as a Library (No Server Required)
+**Coming from Ollama?** Your commands work unchanged — `run`, `pull`, `serve`, `list`, `ps`, `create`, `show`, `rm`, `cp`.
 
-Unlike Ollama, Mullama can be embedded directly in your application -- no HTTP overhead, no separate daemon.
+## Use as a Library
+
+Embed LLM inference directly in your application — no server, no HTTP overhead, no separate process.
 
 **Python:**
 
@@ -107,150 +81,94 @@ let response = ctx.generate("Hello, AI!", 256)?;
 println!("{}", response);
 ```
 
-See [bindings documentation](./documentation/docs/bindings/) for Go, PHP, and C/C++.
+**Go:**
 
-## Ollama Compatibility + More
+```go
+import mullama "github.com/skelf-research/mullama-go"
+
+model, _ := mullama.LoadModel("llama3.2-1b.gguf", mullama.WithGPULayers(32))
+ctx, _ := model.NewContext(mullama.ContextConfig{ContextSize: 4096})
+response, _ := ctx.Generate("Hello, AI!")
+fmt.Println(response)
+```
+
+**PHP:**
+
+```php
+use Mullama\Model;
+use Mullama\Context;
+
+$model = Model::load('llama3.2-1b.gguf', ['gpu_layers' => 32]);
+$ctx = new Context($model, ['n_ctx' => 4096]);
+$response = $ctx->generate('Hello, AI!');
+echo $response;
+```
+
+See the [bindings documentation](https://docs.skelfresearch.com/mullama/bindings/) for full API details.
+
+## Why Mullama?
+
+| | |
+|:--|:--|
+| **Native bindings for 6 languages** | Python, Node.js, Go, PHP, Rust, C/C++ — call models directly, no HTTP roundtrips |
+| **Drop-in Ollama replacement** | Same CLI commands, same Modelfile format, same model registry |
+| **OpenAI + Anthropic API compatible** | Use your existing SDKs and tools without changes |
+| **Embed in any app** | Run inference in-process — no separate daemon required |
+| **7 GPU backends** | CUDA, Metal, ROCm, OpenCL, Vulkan, SYCL, RPC |
+| **Multimodal** | Text, image, and real-time audio with voice activity detection |
+| **Built-in Web UI and TUI** | Chat interface, model management, and API playground |
+
+## What You Can Build
+
+- **Chatbots and assistants** — Streaming responses, multi-turn context, and custom system prompts
+- **RAG pipelines** — Embeddings, ColBERT-style semantic search, and grammar-constrained generation
+- **Voice assistants** — Real-time audio capture with VAD, speech-to-text, and streaming LLM responses
+- **API servers** — Production-ready OpenAI-compatible endpoints with streaming SSE
+- **Edge deployments** — Embed a model directly in your app with no network dependency
+- **Batch processing** — Parallel inference across documents with work-stealing scheduling
+
+## Ollama Compatibility
 
 | Feature | Mullama | Ollama |
 |---------|:-------:|:------:|
-| CLI commands (`run`, `pull`, `serve`, etc.) | Same syntax | -- |
-| Modelfile format | Compatible | -- |
+| CLI commands (`run`, `pull`, `serve`, etc.) | Same syntax | — |
+| Modelfile format | Compatible | — |
 | GGUF models | Yes | Yes |
-| OpenAI API compatibility | Yes | Yes |
-| Anthropic API compatibility | Yes | No |
+| OpenAI API | Yes | Yes |
+| Anthropic API | Yes | No |
 | Native language bindings | 6 languages | HTTP only |
 | Embed in your app (no daemon) | Yes | No |
-| Web UI | Built-in | No |
-| TUI chat | Built-in | No |
-| ColBERT/late interaction | Yes | No |
-| Streaming audio input | Yes | No |
+| Built-in Web UI | Yes | No |
+| Built-in TUI chat | Yes | No |
 
-[Full comparison](./documentation/docs/comparison/vs-ollama.md) | [Migration guide](./documentation/docs/comparison/migration-from-ollama.md)
-
-## All-in-One LLM Toolkit
-
-Mullama includes everything you need:
-
-| Component | Description |
-|-----------|-------------|
-| **CLI** | Familiar commands: `run`, `pull`, `serve`, `list`, `chat`, `create` |
-| **Daemon** | Multi-model server with auto-spawn, hot-reload, session persistence |
-| **REST API** | OpenAI + Anthropic compatible endpoints |
-| **Web UI** | Model management, chat interface, API playground |
-| **TUI** | Terminal-based chat client |
-| **Library** | Native bindings for Rust, Python, Node.js, Go, PHP, C/C++ |
-
-## CLI Commands
-
-```bash
-# Model management
-mullama list              # List local models
-mullama pull llama3.2:1b  # Download model
-mullama rm old-model      # Remove model
-mullama ps                # Show running models
-
-# Generation
-mullama run llama3.2:1b "prompt"  # One-shot generation
-mullama chat                       # Interactive TUI
-
-# Daemon
-mullama serve --model llama3.2:1b  # Start server
-mullama daemon start               # Start in background
-mullama daemon stop                # Stop daemon
-mullama daemon status              # Show status
-
-# Model creation (Ollama-compatible Modelfile)
-mullama create my-assistant -f ./Modelfile
-mullama show my-assistant --modelfile
-```
-
-## API Endpoints
-
-**OpenAI-compatible:**
-
-```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "llama3.2:1b", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-**Anthropic-compatible:**
-
-```bash
-curl http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{"model": "llama3.2:1b", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /v1/chat/completions` | OpenAI chat completions |
-| `POST /v1/completions` | OpenAI text completions |
-| `POST /v1/messages` | Anthropic Messages API |
-| `POST /v1/embeddings` | Generate embeddings |
-| `GET /v1/models` | List available models |
-| `GET /ui/` | Web UI |
+[Full comparison](https://docs.skelfresearch.com/mullama/comparison/vs-ollama/) | [Migration guide](https://docs.skelfresearch.com/mullama/comparison/migration-from-ollama/)
 
 ## GPU Acceleration
 
+Set the environment variable for your hardware before building:
+
 ```bash
-# NVIDIA CUDA
-export LLAMA_CUDA=1
-
-# Apple Metal (macOS)
-export LLAMA_METAL=1
-
-# AMD ROCm (Linux)
-export LLAMA_HIPBLAS=1
-
-# Intel OpenCL
-export LLAMA_CLBLAST=1
+export LLAMA_CUDA=1      # NVIDIA CUDA
+export LLAMA_METAL=1     # Apple Silicon
+export LLAMA_HIPBLAS=1   # AMD ROCm
+export LLAMA_CLBLAST=1   # Intel/AMD OpenCL
+export LLAMA_VULKAN=1    # Vulkan (cross-platform)
+export LLAMA_SYCL=1      # Intel SYCL/oneAPI
+export LLAMA_RPC=1       # Distributed RPC backend
 ```
 
-## Feature Flags (Rust Library)
+## Roadmap
 
-```toml
-[dependencies.mullama]
-version = "0.1.1"
-features = [
-    "async",              # Async/await support
-    "streaming",          # Token streaming
-    "web",                # Axum web framework
-    "websockets",         # WebSocket support
-    "multimodal",         # Image and audio processing
-    "streaming-audio",    # Real-time audio capture
-    "parallel",           # Rayon parallel processing
-    "late-interaction",   # ColBERT-style embeddings
-    "daemon",             # Daemon mode with TUI client
-    "full"                # All features
-]
-```
+- **v0.4** — Speculative decoding, prompt caching, improved quantization support
+- **v0.5** — Distributed inference across multiple nodes, model sharding
+- **v0.6** — Built-in fine-tuning (LoRA/QLoRA), training data pipelines
+- **v1.0** — Stable API, LTS release, comprehensive benchmarks
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Getting Started](./docs/GETTING_STARTED.md) | Installation and first steps |
-| [Platform Setup](./docs/PLATFORM_SETUP.md) | OS-specific setup |
-| [Daemon Guide](./docs/DAEMON.md) | Daemon, CLI, API reference |
-| [Migration from Ollama](./docs/MIGRATION_FROM_OLLAMA.md) | Quick migration checklist |
-| [Full Documentation](https://docs.skelfresearch.com/mullama/) | Complete docs site |
+Full documentation is available at **[docs.skelfresearch.com/mullama](https://docs.skelfresearch.com/mullama/)**.
 
-## Examples
-
-```bash
-# Basic text generation
-cargo run --example simple --features async
-
-# Streaming responses
-cargo run --example streaming_generation --features "async,streaming"
-
-# Web service
-cargo run --example web_service --features "web,websockets"
-
-# Late interaction / ColBERT retrieval
-cargo run --example late_interaction --features late-interaction
-```
+Guides cover installation, library usage, daemon configuration, language bindings, advanced features, API reference, and tutorials.
 
 ## Contributing
 
@@ -264,4 +182,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.

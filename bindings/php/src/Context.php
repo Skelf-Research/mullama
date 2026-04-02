@@ -137,6 +137,8 @@ final class Context
     /**
      * Generate text with streaming (returns array of token strings).
      *
+     * Uses the streaming FFI callback to collect individual token pieces.
+     *
      * @param string $prompt Text prompt
      * @param int $maxTokens Maximum tokens to generate
      * @param SamplerParams|null $params Sampler parameters
@@ -144,9 +146,59 @@ final class Context
      */
     public function generateStream(string $prompt, int $maxTokens = 100, ?SamplerParams $params = null): array
     {
-        // Simplified implementation - returns full text as single array element
-        $text = $this->generate($prompt, $maxTokens, $params);
-        return [$text];
+        if ($this->ptr === null) {
+            throw new RuntimeException('Context has been freed');
+        }
+
+        $params = $params ?? new SamplerParams();
+
+        $ffi = Mullama::ffi();
+        $tokens = $this->model->tokenize($prompt, true, false);
+
+        $n = count($tokens);
+        $cTokens = FFI::new("int[{$n}]");
+        for ($i = 0; $i < $n; $i++) {
+            $cTokens[$i] = $tokens[$i];
+        }
+
+        $cParams = $ffi->new('MullamaMullamaSamplerParams');
+        $cParams->temperature = $params->temperature;
+        $cParams->top_k = $params->topK;
+        $cParams->top_p = $params->topP;
+        $cParams->min_p = $params->minP;
+        $cParams->typical_p = $params->typicalP;
+        $cParams->penalty_repeat = $params->penaltyRepeat;
+        $cParams->penalty_freq = $params->penaltyFreq;
+        $cParams->penalty_present = $params->penaltyPresent;
+        $cParams->penalty_last_n = $params->penaltyLastN;
+        $cParams->penalize_nl = false;
+        $cParams->ignore_eos = false;
+        $cParams->seed = $params->seed;
+
+        // Use streaming generation via FFI callback
+        $pieces = [];
+        $result = $ffi->mullama_generate_streaming(
+            $this->ptr,
+            FFI::addr($cTokens[0]),
+            $n,
+            $maxTokens,
+            FFI::addr($cParams),
+            function ($text, $userData) use (&$pieces) {
+                $pieces[] = FFI::string($text);
+                return true; // continue generating
+            },
+            null
+        );
+
+        // Fallback: if streaming FFI not available, use regular generate
+        if ($result < 0 || empty($pieces)) {
+            $text = $this->generate($prompt, $maxTokens, $params);
+            // Split into word-like pieces for a better streaming experience
+            $words = preg_split('/(\s+)/', $text, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
+            return $words ?: [$text];
+        }
+
+        return $pieces;
     }
 
     /**

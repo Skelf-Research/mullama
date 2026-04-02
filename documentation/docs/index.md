@@ -97,7 +97,7 @@ mullama run llama3.2:1b "Hello!"
     ```toml
     # Cargo.toml
     [dependencies]
-    mullama = { version = "0.1", features = ["async", "streaming"] }
+    mullama = { version = "0.3", features = ["async", "streaming"] }
     ```
 
     ```rust
@@ -154,7 +154,7 @@ mullama run llama3.2:1b "Hello!"
 
     ---
 
-    NVIDIA CUDA, Apple Metal, AMD ROCm, and OpenCL. Automatic detection and configuration. Full GPU offload or partial layer offloading.
+    NVIDIA CUDA, Apple Metal, AMD ROCm, OpenCL, Vulkan, SYCL, and RPC. Automatic detection and configuration. Full GPU offload or partial layer offloading.
 
 -   **:material-shield-check: Production Ready**
 
@@ -267,7 +267,7 @@ Mullama is built in three layers, each providing progressively higher-level abst
 ├──────────────────────────────────────────────────────────┤
 │                     llama.cpp (C++)                       │
 ├──────────────────────────────────────────────────────────┤
-│              CUDA | Metal | ROCm | OpenCL                │
+│       CUDA | Metal | ROCm | OpenCL | Vulkan | SYCL | RPC │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -277,10 +277,11 @@ Mullama is built in three layers, each providing progressively higher-level abst
 
 | | |
 |:--|:--|
-| **14,000+** | Lines of Rust integration code |
+| **41,000+** | Lines of Rust integration code |
 | **6** | Native language bindings |
-| **4** | GPU acceleration backends |
+| **7** | GPU acceleration backends (CUDA, Metal, ROCm, OpenCL, Vulkan, SYCL, RPC) |
 | **40+** | Pre-configured model aliases |
+| **7** | Hardware presets with auto-detection |
 | **2** | API compatibility layers (OpenAI + Anthropic) |
 | **10+** | Sampling strategies with SIMD acceleration |
 

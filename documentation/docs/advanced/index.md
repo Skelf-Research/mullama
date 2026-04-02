@@ -118,11 +118,11 @@ Combine features as needed in your `Cargo.toml`:
     ```toml
     # Selective features
     [dependencies]
-    mullama = { version = "0.1", features = ["web", "websockets", "parallel"] }
+    mullama = { version = "0.3", features = ["web", "websockets", "parallel"] }
 
     # All features
     [dependencies]
-    mullama = { version = "0.1", features = ["full"] }
+    mullama = { version = "0.3", features = ["full"] }
     ```
 
 === "CLI"

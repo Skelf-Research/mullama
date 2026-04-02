@@ -71,6 +71,141 @@ pub struct ModelConfig {
     pub context_size: Option<u32>,
 }
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Per-model statistics tracking
+pub struct ModelStats {
+    /// Total requests served
+    pub requests_total: AtomicU64,
+    /// Total tokens generated
+    pub tokens_generated: AtomicU64,
+    /// Total prompt tokens processed
+    pub tokens_prompt: AtomicU64,
+    /// Running average tokens per second (stored as fixed-point x100)
+    pub avg_tokens_per_sec: AtomicU64,
+    /// Unix timestamp of last request (for LRU eviction)
+    pub last_used: AtomicU64,
+    /// Estimated memory footprint in bytes
+    pub estimated_memory_bytes: AtomicU64,
+    /// How long the model took to load (ms)
+    pub load_time_ms: AtomicU64,
+}
+
+impl ModelStats {
+    pub fn new() -> Self {
+        Self {
+            requests_total: AtomicU64::new(0),
+            tokens_generated: AtomicU64::new(0),
+            tokens_prompt: AtomicU64::new(0),
+            avg_tokens_per_sec: AtomicU64::new(0),
+            last_used: AtomicU64::new(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            estimated_memory_bytes: AtomicU64::new(0),
+            load_time_ms: AtomicU64::new(0),
+        }
+    }
+
+    /// Record a completed request
+    pub fn record_request(&self, prompt_tokens: u32, completion_tokens: u32, duration_ms: u64) {
+        self.requests_total.fetch_add(1, Ordering::Relaxed);
+        self.tokens_generated
+            .fetch_add(completion_tokens as u64, Ordering::Relaxed);
+        self.tokens_prompt
+            .fetch_add(prompt_tokens as u64, Ordering::Relaxed);
+        self.last_used.store(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+
+        // Update running average tok/s (exponential moving average, x100 fixed-point)
+        if duration_ms > 0 && completion_tokens > 0 {
+            let tps_x100 = (completion_tokens as u64 * 100_000) / duration_ms;
+            let prev = self.avg_tokens_per_sec.load(Ordering::Relaxed);
+            if prev == 0 {
+                self.avg_tokens_per_sec.store(tps_x100, Ordering::Relaxed);
+            } else {
+                // EMA: new = (old * 3 + sample) / 4
+                let new_avg = (prev * 3 + tps_x100) / 4;
+                self.avg_tokens_per_sec.store(new_avg, Ordering::Relaxed);
+            }
+        }
+    }
+
+    pub fn touch(&self) {
+        self.last_used.store(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+    }
+}
+
+impl Default for ModelStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Memory estimation result for a model
+#[derive(Debug, Clone)]
+pub struct MemoryEstimate {
+    /// Model weights memory in bytes
+    pub model_bytes: u64,
+    /// KV cache memory in bytes
+    pub kv_cache_bytes: u64,
+    /// Overhead (context, scratch buffers, etc.)
+    pub overhead_bytes: u64,
+    /// Total estimated memory
+    pub total_bytes: u64,
+}
+
+impl MemoryEstimate {
+    pub fn total_mb(&self) -> u64 {
+        self.total_bytes / (1024 * 1024)
+    }
+}
+
+/// Estimate model memory requirements from file size and parameters
+pub fn estimate_model_memory(
+    file_size: u64,
+    context_size: u32,
+    gpu_layers: i32,
+    n_layers: u32,
+) -> MemoryEstimate {
+    // Model weights: approximately file size (GGUF is already quantized)
+    let model_bytes = file_size;
+
+    // KV cache estimation: 2 * n_layers * context_size * n_embd * sizeof(type)
+    // For Q8_0 KV cache: ~1 byte per element
+    // For F16 KV cache: ~2 bytes per element
+    // Rough estimate: 2 * context_size * 128 * n_layers (assumes ~128 dim per head, common)
+    let kv_bytes_per_token = (n_layers as u64) * 256; // conservative estimate
+    let kv_cache_bytes = kv_bytes_per_token * (context_size as u64);
+
+    // Overhead: ~20% of model size for scratch buffers, compute graphs, etc.
+    let overhead_bytes = model_bytes / 5;
+
+    let _gpu_layers = gpu_layers; // reserved for future GPU memory split estimation
+
+    let total_bytes = model_bytes + kv_cache_bytes + overhead_bytes;
+
+    MemoryEstimate {
+        model_bytes,
+        kv_cache_bytes,
+        overhead_bytes,
+        total_bytes,
+    }
+}
+
 /// A loaded model instance with its context pool
 ///
 /// ## Context Pool
@@ -94,6 +229,8 @@ pub struct LoadedModel {
     pub active_requests: AtomicU32,
     /// Runtime configuration from Ollama, Modelfile, or defaults
     pub config: ModelConfig,
+    /// Per-model statistics
+    pub stats: ModelStats,
     /// Multimodal context for vision/audio models (requires mmproj file)
     #[cfg(feature = "multimodal")]
     pub mtmd_context: Option<TokioRwLock<MtmdContext>>,
@@ -131,6 +268,7 @@ impl LoadedModel {
             info,
             active_requests: AtomicU32::new(0),
             config,
+            stats: ModelStats::new(),
             mtmd_context: mtmd_context.map(TokioRwLock::new),
         })
     }
@@ -165,6 +303,7 @@ impl LoadedModel {
             info,
             active_requests: AtomicU32::new(0),
             config,
+            stats: ModelStats::new(),
         })
     }
 
@@ -233,6 +372,26 @@ pub struct ModelLoadConfig {
     pub mmproj_path: Option<String>,
     /// Runtime configuration from Ollama registry or Modelfile
     pub model_config: Option<ModelConfig>,
+    /// Use memory-mapped file for model weights
+    pub use_mmap: Option<bool>,
+    /// Lock model weights in memory
+    pub use_mlock: bool,
+    /// Enable flash attention
+    pub flash_attn: bool,
+    /// KV cache type for keys (default: f16)
+    pub cache_type_k: Option<String>,
+    /// KV cache type for values (default: f16)
+    pub cache_type_v: Option<String>,
+    /// RoPE frequency base
+    pub rope_freq_base: Option<f32>,
+    /// RoPE frequency scale
+    pub rope_freq_scale: Option<f32>,
+    /// Batch size for prompt processing
+    pub n_batch: Option<u32>,
+    /// KV cache defragmentation threshold
+    pub defrag_thold: Option<f32>,
+    /// Tensor split mode for multi-GPU
+    pub split_mode: Option<String>,
 }
 
 impl ModelLoadConfig {
@@ -246,6 +405,16 @@ impl ModelLoadConfig {
             context_pool_size: DEFAULT_CONTEXT_POOL_SIZE,
             mmproj_path: None,
             model_config: None,
+            use_mmap: None,
+            use_mlock: false,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
         }
     }
 
@@ -278,6 +447,56 @@ impl ModelLoadConfig {
     /// Set the model runtime configuration (from Ollama or Modelfile)
     pub fn with_config(mut self, config: ModelConfig) -> Self {
         self.model_config = Some(config);
+        self
+    }
+
+    pub fn use_mmap(mut self, use_mmap: bool) -> Self {
+        self.use_mmap = Some(use_mmap);
+        self
+    }
+
+    pub fn use_mlock(mut self, mlock: bool) -> Self {
+        self.use_mlock = mlock;
+        self
+    }
+
+    pub fn flash_attn(mut self, enabled: bool) -> Self {
+        self.flash_attn = enabled;
+        self
+    }
+
+    pub fn cache_type_k(mut self, cache_type: impl Into<String>) -> Self {
+        self.cache_type_k = Some(cache_type.into());
+        self
+    }
+
+    pub fn cache_type_v(mut self, cache_type: impl Into<String>) -> Self {
+        self.cache_type_v = Some(cache_type.into());
+        self
+    }
+
+    pub fn rope_freq_base(mut self, base: f32) -> Self {
+        self.rope_freq_base = Some(base);
+        self
+    }
+
+    pub fn rope_freq_scale(mut self, scale: f32) -> Self {
+        self.rope_freq_scale = Some(scale);
+        self
+    }
+
+    pub fn n_batch(mut self, batch: u32) -> Self {
+        self.n_batch = Some(batch);
+        self
+    }
+
+    pub fn defrag_thold(mut self, thold: f32) -> Self {
+        self.defrag_thold = Some(thold);
+        self
+    }
+
+    pub fn split_mode(mut self, mode: impl Into<String>) -> Self {
+        self.split_mode = Some(mode.into());
         self
     }
 }
@@ -333,20 +552,56 @@ impl ModelManager {
         }
 
         // Load the model
-        let model_params = ModelParams {
+        let mut model_params = ModelParams {
             n_gpu_layers: config.gpu_layers,
             ..ModelParams::default()
         };
+        if let Some(mmap) = config.use_mmap {
+            model_params.use_mmap = mmap;
+        }
+        model_params.use_mlock = config.use_mlock;
+        if let Some(ref mode) = config.split_mode {
+            model_params.split_mode = match mode.to_lowercase().as_str() {
+                "layer" => crate::sys::llama_split_mode::LLAMA_SPLIT_MODE_LAYER,
+                "row" => crate::sys::llama_split_mode::LLAMA_SPLIT_MODE_ROW,
+                _ => crate::sys::llama_split_mode::LLAMA_SPLIT_MODE_NONE,
+            };
+        }
 
         let model = Arc::new(Model::load_with_params(&config.path, model_params)?);
 
         // Create context parameters (kept for pool creation)
-        let ctx_params = ContextParams {
+        let mut ctx_params = ContextParams {
             n_ctx: config.context_size,
             n_threads: config.threads,
             n_threads_batch: config.threads,
             ..ContextParams::default()
         };
+        if config.flash_attn {
+            ctx_params.flash_attn_type = crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        }
+        if let Some(ref k) = config.cache_type_k {
+            if let Some(kt) = crate::context::KvCacheType::from_str(k) {
+                ctx_params.type_k = kt;
+            }
+        }
+        if let Some(ref v) = config.cache_type_v {
+            if let Some(vt) = crate::context::KvCacheType::from_str(v) {
+                ctx_params.type_v = vt;
+            }
+        }
+        if let Some(base) = config.rope_freq_base {
+            ctx_params.rope_freq_base = base;
+        }
+        if let Some(scale) = config.rope_freq_scale {
+            ctx_params.rope_freq_scale = scale;
+        }
+        if let Some(batch) = config.n_batch {
+            ctx_params.n_batch = batch;
+        }
+        if let Some(thold) = config.defrag_thold {
+            ctx_params.defrag_thold = thold;
+        }
 
         let context = Context::new(model.clone(), ctx_params.clone())?;
 

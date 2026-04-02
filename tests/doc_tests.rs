@@ -433,6 +433,8 @@ mod feature_completeness_tests {
             op_offload: false,
             swa_full: true,
             kv_unified: false,
+            type_k: mullama::KvCacheType::default(),
+            type_v: mullama::KvCacheType::default(),
         };
 
         // All context parameters should be settable

@@ -275,4 +275,78 @@ final class Model
         }
         return (bool) Mullama::ffi()->mullama_model_token_is_eog($this->ptr, $token);
     }
+
+    /**
+     * Apply a chat template to format messages.
+     *
+     * @param array $messages Array of ['role' => string, 'content' => string]
+     * @param bool $addGenerationPrompt Whether to add generation prompt
+     * @return string Formatted prompt
+     */
+    public function chatTemplate(array $messages, bool $addGenerationPrompt = true): string
+    {
+        if ($this->ptr === null) {
+            throw new RuntimeException('Model has been freed');
+        }
+
+        $ffi = Mullama::ffi();
+        $n = count($messages);
+        $cMessages = $ffi->new("MullamaChatMessage[{$n}]");
+
+        for ($i = 0; $i < $n; $i++) {
+            $cMessages[$i]->role = $messages[$i]['role'];
+            $cMessages[$i]->content = $messages[$i]['content'];
+        }
+
+        $maxOutput = 8192;
+        $buf = FFI::new("char[{$maxOutput}]");
+
+        $result = $ffi->mullama_apply_chat_template(
+            $this->ptr,
+            FFI::addr($cMessages[0]),
+            $n,
+            $addGenerationPrompt,
+            FFI::addr($buf[0]),
+            $maxOutput
+        );
+
+        if ($result < 0) {
+            throw new RuntimeException(Mullama::getLastError());
+        }
+
+        return FFI::string($buf);
+    }
+
+    /**
+     * Get all model metadata as an associative array.
+     *
+     * @return array<string, string>
+     */
+    public function metadata(): array
+    {
+        if ($this->ptr === null) {
+            throw new RuntimeException('Model has been freed');
+        }
+
+        $ffi = Mullama::ffi();
+        $count = (int) $ffi->mullama_model_metadata_count($this->ptr);
+        $result = [];
+
+        $keyBuf = FFI::new('char[1024]');
+        $valBuf = FFI::new('char[4096]');
+
+        for ($i = 0; $i < $count; $i++) {
+            $kn = $ffi->mullama_model_metadata_key($this->ptr, $i, FFI::addr($keyBuf[0]), 1024);
+            if ($kn < 0) {
+                continue;
+            }
+            $vn = $ffi->mullama_model_metadata_value($this->ptr, $i, FFI::addr($valBuf[0]), 4096);
+            if ($vn < 0) {
+                continue;
+            }
+            $result[FFI::string($keyBuf)] = FFI::string($valBuf);
+        }
+
+        return $result;
+    }
 }
