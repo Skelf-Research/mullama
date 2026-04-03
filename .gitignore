@@ -17,7 +17,6 @@ target/
 .cargo/
 
 # Model files (large binary files)
-models/
 *.gguf
 *.ggml
 *.bin
