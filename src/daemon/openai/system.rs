@@ -152,8 +152,9 @@ pub(super) async fn api_system_status(State(daemon): State<AppState>) -> Json<Sy
 
     let http_endpoint = daemon
         .config
-        .http_port
-        .map(|port| format!("http://{}:{}", daemon.config.http_addr, port));
+        .http
+        .port
+        .map(|port| format!("http://{}:{}", daemon.config.http.addr, port));
 
     Json(SystemStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),

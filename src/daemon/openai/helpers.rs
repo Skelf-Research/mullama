@@ -1,18 +1,42 @@
-pub(super) fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
+use std::convert::Infallible;
+use std::time::Duration;
 
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
+use axum::response::{sse::Event, IntoResponse, Response, Sse};
+use futures::stream::{self, StreamExt as _};
+
+/// Build an SSE response from a stream of events.
+///
+/// Appends the `[DONE]` sentinel and configures keep-alive. Shared by
+/// chat completion, vision chat completion, and text completion streaming.
+pub(super) fn sse_response(
+    event_stream: impl futures::Stream<Item = Event> + Send + 'static,
+) -> Response {
+    let sse_stream = event_stream
+        .chain(stream::once(async { Event::default().data("[DONE]") }))
+        .map(Ok::<_, Infallible>);
+
+    Sse::new(sse_stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response()
+}
+
+/// Convert a protocol `Response::Error` into an `ApiError`.
+///
+/// Shared by all streaming endpoints that call `handle_*_streaming` methods
+/// which return `Result<_, Response>`.
+pub(super) fn protocol_err_to_api(resp: crate::daemon::protocol::Response) -> super::error::ApiError {
+    if let crate::daemon::protocol::Response::Error { message, .. } = resp {
+        super::error::ApiError::new(message)
     } else {
-        format!("{} B", bytes)
+        super::error::ApiError::new("Failed to start streaming")
     }
 }
+
+pub(super) use crate::daemon::protocol::format_size;
 
 pub(super) fn model_config_from_modelfile(
     modelfile: &crate::modelfile::Modelfile,

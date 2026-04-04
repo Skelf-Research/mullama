@@ -191,16 +191,16 @@ pub(crate) async fn run_server(
 
     let (mut daemon, mut initial_models) = builder.build();
 
-    daemon.config.default_flash_attn = flash_attn;
-    daemon.config.default_use_mmap = if no_mmap { Some(false) } else { None };
-    daemon.config.default_use_mlock = mlock;
-    daemon.config.default_cache_type_k = cache_type_k.clone();
-    daemon.config.default_cache_type_v = cache_type_v.clone();
-    daemon.config.default_n_batch = batch_size;
-    daemon.config.default_rope_freq_base = rope_freq_base;
-    daemon.config.default_rope_freq_scale = rope_freq_scale;
-    daemon.config.default_defrag_thold = defrag_thold;
-    daemon.config.default_split_mode = split_mode.clone();
+    daemon.config.model_defaults.flash_attn = flash_attn;
+    daemon.config.model_defaults.use_mmap = if no_mmap { Some(false) } else { None };
+    daemon.config.model_defaults.use_mlock = mlock;
+    daemon.config.model_defaults.cache_type_k = cache_type_k.clone();
+    daemon.config.model_defaults.cache_type_v = cache_type_v.clone();
+    daemon.config.model_defaults.n_batch = batch_size;
+    daemon.config.model_defaults.rope_freq_base = rope_freq_base;
+    daemon.config.model_defaults.rope_freq_scale = rope_freq_scale;
+    daemon.config.model_defaults.defrag_thold = defrag_thold;
+    daemon.config.model_defaults.split_mode = split_mode.clone();
 
     for model_config in &mut initial_models {
         if flash_attn {

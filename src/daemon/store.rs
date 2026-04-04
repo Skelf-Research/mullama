@@ -7,6 +7,47 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Trait for daemon storage backends.
+///
+/// Enables alternative storage implementations (SQLite, Redis, in-memory)
+/// while keeping the same API surface. The default implementation is
+/// `DaemonStore` backed by sled.
+pub trait StorageBackend: Send + Sync {
+    // Model stats
+    fn get_model_stats(&self, alias: &str) -> Option<PersistedModelStats>;
+    fn update_model_stats(
+        &self,
+        alias: &str,
+        requests_delta: u64,
+        tokens_generated_delta: u64,
+        tokens_prompt_delta: u64,
+        avg_tps_x100: u64,
+    );
+    fn record_model_load(&self, alias: &str, load_time_ms: u64);
+    fn all_model_stats(&self) -> Vec<(String, PersistedModelStats)>;
+
+    // Model metadata cache
+    fn get_model_meta(&self, path: &str, mtime: u64) -> Option<CachedModelMeta>;
+    fn set_model_meta(&self, path: &str, meta: &CachedModelMeta);
+
+    // Prompt cache
+    fn get_prompt_tokens(&self, hash: &[u8]) -> Option<Vec<i32>>;
+    fn set_prompt_tokens(&self, hash: &[u8], tokens: &[i32]);
+
+    // Sessions
+    fn save_session(&self, session: &StoredSession);
+    fn get_session(&self, id: &str) -> Option<StoredSession>;
+    fn list_sessions(&self) -> Vec<StoredSession>;
+    fn delete_session(&self, id: &str);
+
+    // Config
+    fn get_config(&self, key: &str) -> Option<String>;
+    fn set_config(&self, key: &str, value: &str);
+
+    // Lifecycle
+    fn flush(&self);
+}
+
 /// Persistent store backed by sled embedded database
 pub struct DaemonStore {
     db: sled::Db,
@@ -260,6 +301,75 @@ impl DaemonStore {
     /// Flush all pending writes to disk
     pub fn flush(&self) {
         let _ = self.db.flush();
+    }
+}
+
+impl StorageBackend for DaemonStore {
+    fn get_model_stats(&self, alias: &str) -> Option<PersistedModelStats> {
+        self.get_model_stats(alias)
+    }
+
+    fn update_model_stats(
+        &self,
+        alias: &str,
+        requests_delta: u64,
+        tokens_generated_delta: u64,
+        tokens_prompt_delta: u64,
+        avg_tps_x100: u64,
+    ) {
+        self.update_model_stats(alias, requests_delta, tokens_generated_delta, tokens_prompt_delta, avg_tps_x100);
+    }
+
+    fn record_model_load(&self, alias: &str, load_time_ms: u64) {
+        self.record_model_load(alias, load_time_ms);
+    }
+
+    fn all_model_stats(&self) -> Vec<(String, PersistedModelStats)> {
+        self.all_model_stats()
+    }
+
+    fn get_model_meta(&self, path: &str, mtime: u64) -> Option<CachedModelMeta> {
+        self.get_model_meta(path, mtime)
+    }
+
+    fn set_model_meta(&self, path: &str, meta: &CachedModelMeta) {
+        self.set_model_meta(path, meta);
+    }
+
+    fn get_prompt_tokens(&self, hash: &[u8]) -> Option<Vec<i32>> {
+        self.get_prompt_tokens(hash)
+    }
+
+    fn set_prompt_tokens(&self, hash: &[u8], tokens: &[i32]) {
+        self.set_prompt_tokens(hash, tokens);
+    }
+
+    fn save_session(&self, session: &StoredSession) {
+        self.save_session(session);
+    }
+
+    fn get_session(&self, id: &str) -> Option<StoredSession> {
+        self.get_session(id)
+    }
+
+    fn list_sessions(&self) -> Vec<StoredSession> {
+        self.list_sessions()
+    }
+
+    fn delete_session(&self, id: &str) {
+        self.delete_session(id);
+    }
+
+    fn get_config(&self, key: &str) -> Option<String> {
+        self.get_config(key)
+    }
+
+    fn set_config(&self, key: &str, value: &str) {
+        self.set_config(key, value);
+    }
+
+    fn flush(&self) {
+        self.flush();
     }
 }
 

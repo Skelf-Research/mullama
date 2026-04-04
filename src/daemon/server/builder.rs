@@ -23,79 +23,79 @@ impl DaemonBuilder {
     }
 
     pub fn http_port(mut self, port: u16) -> Self {
-        self.config.http_port = Some(port);
+        self.config.http.port = Some(port);
         self
     }
 
     pub fn disable_http(mut self) -> Self {
-        self.config.http_port = None;
+        self.config.http.port = None;
         self
     }
 
     pub fn http_addr(mut self, addr: impl Into<String>) -> Self {
-        self.config.http_addr = addr.into();
+        self.config.http.addr = addr.into();
         self
     }
 
     pub fn http_api_key(mut self, api_key: Option<String>) -> Self {
-        self.config.http_api_key = api_key;
+        self.config.http.api_key = api_key;
         self
     }
 
     pub fn enforce_http_api_key(mut self, enforce: bool) -> Self {
-        self.config.enforce_http_api_key = enforce;
+        self.config.http.enforce_api_key = enforce;
         self
     }
 
     pub fn max_tokens_per_request(mut self, max_tokens: u32) -> Self {
-        self.config.max_tokens_per_request = max_tokens;
+        self.config.resources.max_tokens_per_request = max_tokens;
         self
     }
 
     pub fn max_request_body_bytes(mut self, bytes: usize) -> Self {
-        self.config.max_request_body_bytes = bytes;
+        self.config.http.max_request_body_bytes = bytes;
         self
     }
 
     pub fn max_concurrent_http_requests(mut self, max: usize) -> Self {
-        self.config.max_concurrent_http_requests = max;
+        self.config.http.max_concurrent_requests = max;
         self
     }
 
     pub fn max_requests_per_second(mut self, max: u64) -> Self {
-        self.config.max_requests_per_second = max;
+        self.config.http.max_requests_per_second = max;
         self
     }
 
     pub fn default_context_size(mut self, size: u32) -> Self {
-        self.config.default_context_size = size;
+        self.config.model_defaults.context_size = size;
         self
     }
 
     pub fn default_gpu_layers(mut self, layers: i32) -> Self {
-        self.config.default_gpu_layers = layers;
+        self.config.model_defaults.gpu_layers = layers;
         self
     }
 
     pub fn default_context_pool_size(mut self, size: usize) -> Self {
-        self.config.default_context_pool_size = size.max(1);
+        self.config.model_defaults.context_pool_size = size.max(1);
         self
     }
 
     pub fn threads_per_model(mut self, threads: i32) -> Self {
-        self.config.threads_per_model = threads;
+        self.config.model_defaults.threads_per_model = threads;
         self
     }
 
     /// Configure memory monitoring
     pub fn memory_config(mut self, config: MemoryConfig) -> Self {
-        self.config.memory_config = config;
+        self.config.resources.memory_config = config;
         self
     }
 
     /// Enable or disable memory monitoring
     pub fn enable_memory_monitoring(mut self, enable: bool) -> Self {
-        self.config.enable_memory_monitoring = enable;
+        self.config.resources.enable_memory_monitoring = enable;
         self
     }
 
@@ -115,10 +115,10 @@ impl DaemonBuilder {
 
         self.initial_models.push(
             ModelLoadConfig::new(alias, path)
-                .gpu_layers(self.config.default_gpu_layers)
-                .context_size(self.config.default_context_size)
-                .context_pool_size(self.config.default_context_pool_size)
-                .threads(self.config.threads_per_model),
+                .gpu_layers(self.config.model_defaults.gpu_layers)
+                .context_size(self.config.model_defaults.context_size)
+                .context_pool_size(self.config.model_defaults.context_pool_size)
+                .threads(self.config.model_defaults.threads_per_model),
         );
         self
     }

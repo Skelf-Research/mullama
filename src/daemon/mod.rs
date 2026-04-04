@@ -50,6 +50,7 @@ pub mod ollama_api;
 pub mod ollama_template;
 mod openai;
 mod protocol;
+pub mod provider;
 pub mod registry;
 mod server;
 pub mod spawn;
@@ -59,11 +60,12 @@ pub mod ui;
 
 // Protocol types (IPC)
 pub use protocol::{
-    generate_completion_id, ChatChoice as IpcChatChoice,
-    ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
-    CompletionChoice as IpcCompletionChoice, CompletionResponse as IpcCompletionResponse,
-    DaemonStats, DaemonStatus, EmbeddingInput, ErrorCode, ModelDetailedStats, ModelInfo,
-    ModelStatus, Request, Response, Usage,
+    format_size, generate_completion_id, ChatChoice as IpcChatChoice,
+    ChatCompletionParams, ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
+    CompletionChoice as IpcCompletionChoice, CompletionParams,
+    CompletionResponse as IpcCompletionResponse, DaemonStats, DaemonStatus, EmbeddingInput,
+    ErrorCode, ModelDetailedStats, ModelInfo, ModelLoadParams, ModelStatus, Request, Response,
+    Usage,
 };
 
 // Model management
@@ -73,10 +75,16 @@ pub use models::{
 };
 
 // Server
-pub use server::{Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy};
+pub use server::{
+    Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig,
+    ResourceConfig,
+};
 
 // Persistent store
-pub use store::DaemonStore;
+pub use store::{DaemonStore, StorageBackend};
+
+// Model provider trait
+pub use provider::{ModelProvider, ResolvedModelPath};
 
 // OpenAI-compatible HTTP API types
 pub use openai::{

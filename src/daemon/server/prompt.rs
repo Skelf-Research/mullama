@@ -33,7 +33,23 @@ pub(super) fn find_stop_in_recent_window(
     None
 }
 
-pub(super) fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<String> {
+/// Resolve stop sequences for chat endpoints.
+///
+/// Prefers stop sequences from the model config; falls back to model's built-in
+/// chat stop tokens. Then merges in any user-supplied stop sequences.
+pub(crate) fn resolve_chat_stop_sequences(
+    loaded: &LoadedModel,
+    user_stops: Vec<String>,
+) -> Vec<String> {
+    let default_stops = if !loaded.config.stop_sequences.is_empty() {
+        loaded.config.stop_sequences.clone()
+    } else {
+        loaded.model.get_chat_stop_sequences()
+    };
+    merge_stop_sequences(default_stops, user_stops)
+}
+
+pub(crate) fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<String> {
     let mut merged = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -108,7 +124,7 @@ impl Daemon {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn build_sampler_params(
+    fn build_sampler_params_inner(
         &self,
         loaded: &LoadedModel,
         temperature: Option<f32>,
@@ -131,6 +147,44 @@ impl Daemon {
             sampler.penalty_present = v;
         }
         sampler
+    }
+
+    /// Build sampler params from a `ChatCompletionParams` struct.
+    ///
+    /// Uses the standard default temperature of 0.7.
+    pub(super) fn build_chat_sampler(
+        &self,
+        loaded: &LoadedModel,
+        params: &super::super::protocol::ChatCompletionParams,
+    ) -> SamplerParams {
+        self.build_sampler_params_inner(
+            loaded,
+            params.temperature,
+            params.top_p,
+            params.top_k,
+            params.frequency_penalty,
+            params.presence_penalty,
+            0.7,
+        )
+    }
+
+    /// Build sampler params from a `CompletionParams` struct.
+    ///
+    /// Uses the standard default temperature of 0.7.
+    pub(super) fn build_completion_sampler(
+        &self,
+        loaded: &LoadedModel,
+        params: &super::super::protocol::CompletionParams,
+    ) -> SamplerParams {
+        self.build_sampler_params_inner(
+            loaded,
+            params.temperature,
+            params.top_p,
+            params.top_k,
+            params.frequency_penalty,
+            params.presence_penalty,
+            0.7,
+        )
     }
 
     pub fn build_chat_prompt(&self, model: &crate::Model, messages: &[ChatMessage]) -> String {

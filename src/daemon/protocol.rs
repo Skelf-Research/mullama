@@ -28,6 +28,95 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Parameters for loading a model via IPC
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelLoadParams {
+    pub alias: String,
+    pub path: String,
+    #[serde(default)]
+    pub gpu_layers: i32,
+    #[serde(default)]
+    pub context_size: u32,
+    #[serde(default)]
+    pub use_mmap: Option<bool>,
+    #[serde(default)]
+    pub use_mlock: bool,
+    #[serde(default)]
+    pub flash_attn: bool,
+    #[serde(default)]
+    pub cache_type_k: Option<String>,
+    #[serde(default)]
+    pub cache_type_v: Option<String>,
+    #[serde(default)]
+    pub rope_freq_base: Option<f32>,
+    #[serde(default)]
+    pub rope_freq_scale: Option<f32>,
+    #[serde(default)]
+    pub n_batch: Option<u32>,
+    #[serde(default)]
+    pub defrag_thold: Option<f32>,
+    #[serde(default)]
+    pub split_mode: Option<String>,
+}
+
+/// Parameters for chat completion requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCompletionParams {
+    pub model: Option<String>,
+    pub messages: Vec<ChatMessage>,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
+    pub frequency_penalty: Option<f32>,
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
+    #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
+    pub stop: Vec<String>,
+    /// Response format (text or JSON)
+    #[serde(default)]
+    pub response_format: Option<ResponseFormat>,
+    /// Tools/functions the model can call
+    #[serde(default)]
+    pub tools: Option<Vec<Tool>>,
+    /// How to choose which tool to call
+    #[serde(default)]
+    pub tool_choice: Option<ToolChoice>,
+    /// Extended thinking configuration
+    #[serde(default)]
+    pub thinking: Option<ThinkingConfig>,
+}
+
+/// Parameters for text completion requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionParams {
+    pub model: Option<String>,
+    pub prompt: String,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
+    pub frequency_penalty: Option<f32>,
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
+    #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
+    pub stop: Vec<String>,
+}
+
 /// Request messages from client to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
@@ -42,34 +131,7 @@ pub enum Request {
     ListModels,
 
     /// Load a model with alias
-    LoadModel {
-        alias: String,
-        path: String,
-        #[serde(default)]
-        gpu_layers: i32,
-        #[serde(default)]
-        context_size: u32,
-        #[serde(default)]
-        use_mmap: Option<bool>,
-        #[serde(default)]
-        use_mlock: bool,
-        #[serde(default)]
-        flash_attn: bool,
-        #[serde(default)]
-        cache_type_k: Option<String>,
-        #[serde(default)]
-        cache_type_v: Option<String>,
-        #[serde(default)]
-        rope_freq_base: Option<f32>,
-        #[serde(default)]
-        rope_freq_scale: Option<f32>,
-        #[serde(default)]
-        n_batch: Option<u32>,
-        #[serde(default)]
-        defrag_thold: Option<f32>,
-        #[serde(default)]
-        split_mode: Option<String>,
-    },
+    LoadModel(ModelLoadParams),
 
     /// Unload a model by alias
     UnloadModel { alias: String },
@@ -78,60 +140,10 @@ pub enum Request {
     SetDefaultModel { alias: String },
 
     /// Chat completion (OpenAI-style)
-    ChatCompletion {
-        model: Option<String>,
-        messages: Vec<ChatMessage>,
-        #[serde(default = "default_max_tokens")]
-        max_tokens: u32,
-        #[serde(default)]
-        temperature: Option<f32>,
-        #[serde(default)]
-        top_p: Option<f32>,
-        #[serde(default)]
-        top_k: Option<i32>,
-        #[serde(default)]
-        frequency_penalty: Option<f32>,
-        #[serde(default)]
-        presence_penalty: Option<f32>,
-        #[serde(default)]
-        stream: bool,
-        #[serde(default)]
-        stop: Vec<String>,
-        /// Response format (text or JSON)
-        #[serde(default)]
-        response_format: Option<ResponseFormat>,
-        /// Tools/functions the model can call
-        #[serde(default)]
-        tools: Option<Vec<Tool>>,
-        /// How to choose which tool to call
-        #[serde(default)]
-        tool_choice: Option<ToolChoice>,
-        /// Extended thinking configuration
-        #[serde(default)]
-        thinking: Option<ThinkingConfig>,
-    },
+    ChatCompletion(ChatCompletionParams),
 
     /// Text completion
-    Completion {
-        model: Option<String>,
-        prompt: String,
-        #[serde(default = "default_max_tokens")]
-        max_tokens: u32,
-        #[serde(default)]
-        temperature: Option<f32>,
-        #[serde(default)]
-        top_p: Option<f32>,
-        #[serde(default)]
-        top_k: Option<i32>,
-        #[serde(default)]
-        frequency_penalty: Option<f32>,
-        #[serde(default)]
-        presence_penalty: Option<f32>,
-        #[serde(default)]
-        stream: bool,
-        #[serde(default)]
-        stop: Vec<String>,
-    },
+    Completion(CompletionParams),
 
     /// Generate embeddings
     Embeddings {
@@ -730,6 +742,35 @@ pub fn generate_request_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("req_{:x}", ts)
+}
+
+/// Current Unix timestamp in seconds.
+///
+/// Used for `created` fields in completion responses and SSE chunks.
+pub fn unix_timestamp_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Format a byte count in human-readable form (e.g. "1.5 GB", "42.0 MB").
+///
+/// Shared by CLI display, OpenAI model endpoints, and Ollama pull progress.
+pub fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Generate a unique completion ID

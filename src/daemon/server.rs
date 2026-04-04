@@ -15,11 +15,12 @@ mod handlers;
 mod prompt;
 
 pub use builder::DaemonBuilder;
-pub use config::{DaemonConfig, EvictionPolicy};
+pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
+pub(crate) use prompt::resolve_chat_stop_sequences;
 
 use super::models::ModelManager;
 use super::protocol::*;
-use super::store::DaemonStore;
+use super::store::{DaemonStore, StorageBackend};
 use crate::memory_monitor::{MemoryMonitor, MemoryPressure, RecoveryManager};
 
 /// The daemon server
@@ -36,15 +37,15 @@ pub struct Daemon {
     pub memory_monitor: Option<Arc<MemoryMonitor>>,
     /// Recovery manager for handling OOM situations
     pub recovery_manager: RecoveryManager,
-    /// Persistent store for daemon state
-    pub store: Arc<DaemonStore>,
+    /// Persistent store for daemon state (pluggable via [`StorageBackend`] trait)
+    pub store: Arc<dyn StorageBackend>,
 }
 
 impl Daemon {
     /// Create a new daemon
     pub fn new(config: DaemonConfig) -> Self {
-        let memory_monitor = if config.enable_memory_monitoring {
-            let monitor = MemoryMonitor::new(config.memory_config.clone());
+        let memory_monitor = if config.resources.enable_memory_monitoring {
+            let monitor = MemoryMonitor::new(config.resources.memory_config.clone());
             monitor.start();
             Some(monitor)
         } else {
@@ -57,7 +58,7 @@ impl Daemon {
             RecoveryManager::new()
         };
 
-        let store = match DaemonStore::open_default() {
+        let store: Arc<dyn StorageBackend> = match DaemonStore::open_default() {
             Ok(s) => Arc::new(s),
             Err(e) => {
                 eprintln!(
@@ -95,12 +96,12 @@ impl Daemon {
             ));
         }
 
-        if max_tokens > self.config.max_tokens_per_request {
+        if max_tokens > self.config.resources.max_tokens_per_request {
             return Err(Response::error(
                 ErrorCode::InvalidRequest,
                 format!(
                     "max_tokens {} exceeds server limit {}",
-                    max_tokens, self.config.max_tokens_per_request
+                    max_tokens, self.config.resources.max_tokens_per_request
                 ),
             ));
         }
@@ -137,102 +138,14 @@ impl Daemon {
             Request::Status => self.handle_status().await,
             Request::ListModels => self.handle_list_models().await,
 
-            Request::LoadModel {
-                alias,
-                path,
-                gpu_layers,
-                context_size,
-                use_mmap,
-                use_mlock,
-                flash_attn,
-                cache_type_k,
-                cache_type_v,
-                rope_freq_base,
-                rope_freq_scale,
-                n_batch,
-                defrag_thold,
-                split_mode,
-            } => {
-                self.handle_load_model(
-                    alias,
-                    path,
-                    gpu_layers,
-                    context_size,
-                    use_mmap,
-                    use_mlock,
-                    flash_attn,
-                    cache_type_k,
-                    cache_type_v,
-                    rope_freq_base,
-                    rope_freq_scale,
-                    n_batch,
-                    defrag_thold,
-                    split_mode,
-                )
-                .await
-            }
+            Request::LoadModel(params) => self.handle_load_model(params).await,
 
             Request::UnloadModel { alias } => self.handle_unload_model(&alias).await,
             Request::SetDefaultModel { alias } => self.handle_set_default(&alias).await,
 
-            Request::ChatCompletion {
-                model,
-                messages,
-                max_tokens,
-                temperature,
-                top_p,
-                top_k,
-                frequency_penalty,
-                presence_penalty,
-                stream,
-                stop,
-                response_format,
-                tools: _,
-                tool_choice: _,
-                thinking: _,
-            } => {
-                self.handle_chat_completion(
-                    model,
-                    messages,
-                    max_tokens,
-                    temperature,
-                    top_p,
-                    top_k,
-                    frequency_penalty,
-                    presence_penalty,
-                    stream,
-                    stop,
-                    response_format,
-                )
-                .await
-            }
+            Request::ChatCompletion(params) => self.handle_chat_completion(params).await,
 
-            Request::Completion {
-                model,
-                prompt,
-                max_tokens,
-                temperature,
-                top_p,
-                top_k,
-                frequency_penalty,
-                presence_penalty,
-                stream,
-                stop,
-            } => {
-                self.handle_completion(
-                    model,
-                    prompt,
-                    max_tokens,
-                    temperature,
-                    top_p,
-                    top_k,
-                    frequency_penalty,
-                    presence_penalty,
-                    stream,
-                    stop,
-                )
-                .await
-            }
+            Request::Completion(params) => self.handle_completion(params).await,
 
             Request::Embeddings { model, input } => self.handle_embeddings(model, input).await,
 
@@ -320,7 +233,10 @@ mod tests {
 
     fn test_daemon() -> Daemon {
         let config = DaemonConfig {
-            enable_memory_monitoring: false,
+            resources: ResourceConfig {
+                enable_memory_monitoring: false,
+                ..ResourceConfig::default()
+            },
             ..DaemonConfig::default()
         };
         Daemon::new(config)

@@ -36,14 +36,14 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         .route("/status", get(super::system::status))
         .route("/metrics", get(super::system::metrics))
         .with_state(daemon.clone())
-        .layer(DefaultBodyLimit::max(daemon.config.max_request_body_bytes))
+        .layer(DefaultBodyLimit::max(daemon.config.http.max_request_body_bytes))
         .layer(ConcurrencyLimitLayer::new(
-            daemon.config.max_concurrent_http_requests,
+            daemon.config.http.max_concurrent_requests,
         ));
 
-    if daemon.config.max_requests_per_second > 0 {
+    if daemon.config.http.max_requests_per_second > 0 {
         let rate_limit_state = super::middleware::HttpRateLimitState {
-            limit: daemon.config.max_requests_per_second,
+            limit: daemon.config.http.max_requests_per_second,
             second: Arc::new(AtomicU64::new(super::types::unix_timestamp_secs())),
             count: Arc::new(AtomicU64::new(0)),
         };
@@ -53,8 +53,8 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         ));
     }
 
-    if daemon.config.enforce_http_api_key {
-        if let Some(api_key) = daemon.config.http_api_key.as_deref() {
+    if daemon.config.http.enforce_api_key {
+        if let Some(api_key) = daemon.config.http.api_key.as_deref() {
             let auth = super::middleware::HttpAuthState {
                 api_key: Arc::<str>::from(api_key),
             };

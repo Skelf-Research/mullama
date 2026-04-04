@@ -126,7 +126,7 @@ impl DaemonClient {
             (alias, spec.to_string())
         };
 
-        match self.request(&Request::LoadModel {
+        match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.clone(),
             path,
             gpu_layers: 0,
@@ -141,7 +141,7 @@ impl DaemonClient {
             n_batch: None,
             defrag_thold: None,
             split_mode: None,
-        })? {
+        }))? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
@@ -156,7 +156,7 @@ impl DaemonClient {
         gpu_layers: i32,
         context_size: u32,
     ) -> Result<(String, ModelInfo), MullamaError> {
-        match self.request(&Request::LoadModel {
+        match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.to_string(),
             path: path.to_string(),
             gpu_layers,
@@ -171,7 +171,7 @@ impl DaemonClient {
             n_batch: None,
             defrag_thold: None,
             split_mode: None,
-        })? {
+        }))? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
@@ -191,7 +191,7 @@ impl DaemonClient {
         use_mmap: Option<bool>,
         use_mlock: bool,
     ) -> Result<(String, ModelInfo), MullamaError> {
-        match self.request(&Request::LoadModel {
+        match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.to_string(),
             path: path.to_string(),
             gpu_layers,
@@ -206,7 +206,7 @@ impl DaemonClient {
             n_batch: None,
             defrag_thold: None,
             split_mode: None,
-        })? {
+        }))? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
@@ -268,7 +268,7 @@ impl DaemonClient {
         let generation_timeout = Duration::from_secs(300);
 
         match self.request_with_timeout(
-            &Request::ChatCompletion {
+            &Request::ChatCompletion(ChatCompletionParams {
                 model: model.map(String::from),
                 messages,
                 max_tokens,
@@ -283,7 +283,7 @@ impl DaemonClient {
                 tools: None,
                 tool_choice: None,
                 thinking: None,
-            },
+            }),
             generation_timeout,
         )? {
             Response::ChatCompletion(resp) => Ok(ChatResult {
@@ -316,7 +316,7 @@ impl DaemonClient {
         let generation_timeout = Duration::from_secs(300);
 
         match self.request_with_timeout(
-            &Request::Completion {
+            &Request::Completion(CompletionParams {
                 model: model.map(String::from),
                 prompt: prompt.to_string(),
                 max_tokens,
@@ -327,7 +327,7 @@ impl DaemonClient {
                 presence_penalty: None,
                 stream: false,
                 stop: vec![],
-            },
+            }),
             generation_timeout,
         )? {
             Response::Completion(resp) => Ok(CompletionResult {

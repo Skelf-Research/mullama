@@ -2,7 +2,9 @@ use std::sync::atomic::Ordering;
 
 use super::super::{prompt::infer_ollama_model_config, Daemon};
 use crate::daemon::models::ModelLoadConfig;
-use crate::daemon::protocol::{DaemonStats, DaemonStatus, ErrorCode, ModelStatus, Response};
+use crate::daemon::protocol::{
+    DaemonStats, DaemonStatus, ErrorCode, ModelLoadParams, ModelStatus, Response,
+};
 
 impl Daemon {
     pub(crate) async fn handle_status(&self) -> Response {
@@ -29,8 +31,9 @@ impl Daemon {
             default_model,
             http_endpoint: self
                 .config
-                .http_port
-                .map(|p| format!("http://{}:{}", self.config.http_addr, p)),
+                .http
+                .port
+                .map(|p| format!("http://{}:{}", self.config.http.addr, p)),
             ipc_endpoint: self.config.ipc_addr.clone(),
             stats: DaemonStats {
                 requests_total: self.total_requests.load(Ordering::Relaxed),
@@ -61,73 +64,57 @@ impl Daemon {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn handle_load_model(
-        &self,
-        alias: String,
-        path: String,
-        gpu_layers: i32,
-        context_size: u32,
-        use_mmap: Option<bool>,
-        use_mlock: bool,
-        flash_attn: bool,
-        cache_type_k: Option<String>,
-        cache_type_v: Option<String>,
-        rope_freq_base: Option<f32>,
-        rope_freq_scale: Option<f32>,
-        n_batch: Option<u32>,
-        defrag_thold: Option<f32>,
-        split_mode: Option<String>,
-    ) -> Response {
-        let mut resolved_context_size = if context_size == 0 {
-            self.config.default_context_size
+    pub(crate) async fn handle_load_model(&self, params: ModelLoadParams) -> Response {
+        let md = &self.config.model_defaults;
+        let mut resolved_context_size = if params.context_size == 0 {
+            md.context_size
         } else {
-            context_size
+            params.context_size
         };
 
-        let mut config = ModelLoadConfig::new(&alias, &path)
-            .gpu_layers(if gpu_layers == 0 {
-                self.config.default_gpu_layers
+        let mut config = ModelLoadConfig::new(&params.alias, &params.path)
+            .gpu_layers(if params.gpu_layers == 0 {
+                md.gpu_layers
             } else {
-                gpu_layers
+                params.gpu_layers
             })
             .context_size(resolved_context_size)
-            .context_pool_size(self.config.default_context_pool_size)
-            .threads(self.config.threads_per_model);
+            .context_pool_size(md.context_pool_size)
+            .threads(md.threads_per_model);
 
-        if let Some(mmap) = use_mmap.or(self.config.default_use_mmap) {
+        if let Some(mmap) = params.use_mmap.or(md.use_mmap) {
             config = config.use_mmap(mmap);
         }
-        if use_mlock || self.config.default_use_mlock {
+        if params.use_mlock || md.use_mlock {
             config = config.use_mlock(true);
         }
-        if flash_attn || self.config.default_flash_attn {
+        if params.flash_attn || md.flash_attn {
             config = config.flash_attn(true);
         }
-        if let Some(ref k) = cache_type_k.as_ref().or(self.config.default_cache_type_k.as_ref()) {
+        if let Some(ref k) = params.cache_type_k.as_ref().or(md.cache_type_k.as_ref()) {
             config = config.cache_type_k(k.as_str());
         }
-        if let Some(ref v) = cache_type_v.as_ref().or(self.config.default_cache_type_v.as_ref()) {
+        if let Some(ref v) = params.cache_type_v.as_ref().or(md.cache_type_v.as_ref()) {
             config = config.cache_type_v(v.as_str());
         }
-        if let Some(base) = rope_freq_base.or(self.config.default_rope_freq_base) {
+        if let Some(base) = params.rope_freq_base.or(md.rope_freq_base) {
             config = config.rope_freq_base(base);
         }
-        if let Some(scale) = rope_freq_scale.or(self.config.default_rope_freq_scale) {
+        if let Some(scale) = params.rope_freq_scale.or(md.rope_freq_scale) {
             config = config.rope_freq_scale(scale);
         }
-        if let Some(batch) = n_batch.or(self.config.default_n_batch) {
+        if let Some(batch) = params.n_batch.or(md.n_batch) {
             config = config.n_batch(batch);
         }
-        if let Some(thold) = defrag_thold.or(self.config.default_defrag_thold) {
+        if let Some(thold) = params.defrag_thold.or(md.defrag_thold) {
             config = config.defrag_thold(thold);
         }
-        if let Some(ref mode) = split_mode.as_ref().or(self.config.default_split_mode.as_ref()) {
+        if let Some(ref mode) = params.split_mode.as_ref().or(md.split_mode.as_ref()) {
             config = config.split_mode(mode.as_str());
         }
 
-        if let Some(ollama_config) = infer_ollama_model_config(&path) {
-            if context_size == 0 {
+        if let Some(ollama_config) = infer_ollama_model_config(&params.path) {
+            if params.context_size == 0 {
                 if let Some(ctx) = ollama_config.context_size {
                     resolved_context_size = ctx;
                 }
@@ -137,7 +124,10 @@ impl Daemon {
         }
 
         match self.models.load(config).await {
-            Ok(info) => Response::ModelLoaded { alias, info },
+            Ok(info) => Response::ModelLoaded {
+                alias: params.alias,
+                info,
+            },
             Err(e) => Response::error(ErrorCode::ModelLoadFailed, e.to_string()),
         }
     }

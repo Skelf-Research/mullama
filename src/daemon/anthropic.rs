@@ -61,21 +61,7 @@ use super::server::Daemon;
 /// Shared state for the HTTP server
 pub type AppState = Arc<Daemon>;
 
-fn merge_stop_sequences(base: Vec<String>, additional: Vec<String>) -> Vec<String> {
-    let mut merged = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for stop in base.into_iter().chain(additional.into_iter()) {
-        if stop.is_empty() {
-            continue;
-        }
-        if seen.insert(stop.clone()) {
-            merged.push(stop);
-        }
-    }
-
-    merged
-}
+use super::server::resolve_chat_stop_sequences;
 
 fn apply_default_system_prompt(
     messages: Vec<ChatMessage>,
@@ -406,12 +392,7 @@ async fn handle_messages(
     // Build prompt
     let prompt = daemon.build_chat_prompt(&loaded.model, &messages);
 
-    let default_stops = if !loaded.config.stop_sequences.is_empty() {
-        loaded.config.stop_sequences.clone()
-    } else {
-        loaded.model.get_chat_stop_sequences()
-    };
-    let all_stops = merge_stop_sequences(default_stops, stop);
+    let all_stops = resolve_chat_stop_sequences(&loaded, stop);
     let mut sampler_params = crate::SamplerParams::default();
     sampler_params.temperature = request
         .temperature
@@ -483,12 +464,7 @@ async fn handle_messages_streaming(
     // Build prompt
     let prompt = daemon.build_chat_prompt(&loaded.model, &messages);
 
-    let default_stops = if !loaded.config.stop_sequences.is_empty() {
-        loaded.config.stop_sequences.clone()
-    } else {
-        loaded.model.get_chat_stop_sequences()
-    };
-    let all_stops = merge_stop_sequences(default_stops, stop);
+    let all_stops = resolve_chat_stop_sequences(&loaded, stop);
     let mut sampler_params = crate::SamplerParams::default();
     sampler_params.temperature = request
         .temperature

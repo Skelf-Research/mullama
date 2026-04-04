@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
@@ -193,10 +191,7 @@ pub(super) fn default_max_tokens() -> u32 {
 }
 
 pub(super) fn unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    crate::daemon::protocol::unix_timestamp_secs()
 }
 
 pub(super) fn validate_n_parameter(n: Option<u32>, endpoint: &str) -> Result<(), ApiError> {
@@ -207,6 +202,94 @@ pub(super) fn validate_n_parameter(n: Option<u32>, endpoint: &str) -> Result<(),
         )));
     }
     Ok(())
+}
+
+// ── From impls for protocol → OpenAI type conversions ──
+
+impl From<crate::daemon::protocol::ChatCompletionResponse> for ChatCompletionResponse {
+    fn from(resp: crate::daemon::protocol::ChatCompletionResponse) -> Self {
+        Self {
+            id: resp.id,
+            object: resp.object,
+            created: resp.created,
+            model: resp.model,
+            choices: resp.choices.into_iter().map(ChatChoice::from).collect(),
+            usage: resp.usage,
+        }
+    }
+}
+
+impl From<crate::daemon::protocol::ChatChoice> for ChatChoice {
+    fn from(c: crate::daemon::protocol::ChatChoice) -> Self {
+        Self {
+            index: c.index,
+            message: c.message,
+            finish_reason: c.finish_reason,
+        }
+    }
+}
+
+impl From<crate::daemon::protocol::CompletionResponse> for CompletionResponse {
+    fn from(resp: crate::daemon::protocol::CompletionResponse) -> Self {
+        Self {
+            id: resp.id,
+            object: resp.object,
+            created: resp.created,
+            model: resp.model,
+            choices: resp.choices.into_iter().map(CompletionChoice::from).collect(),
+            usage: resp.usage,
+        }
+    }
+}
+
+impl From<crate::daemon::protocol::CompletionChoice> for CompletionChoice {
+    fn from(c: crate::daemon::protocol::CompletionChoice) -> Self {
+        Self {
+            index: c.index,
+            text: c.text,
+            finish_reason: c.finish_reason,
+        }
+    }
+}
+
+// ── From impls for OpenAI request → protocol param conversions ──
+
+impl From<ChatCompletionRequest> for crate::daemon::protocol::ChatCompletionParams {
+    fn from(req: ChatCompletionRequest) -> Self {
+        Self {
+            model: req.model,
+            messages: req.messages,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+            top_p: req.top_p,
+            top_k: None,
+            frequency_penalty: req.frequency_penalty,
+            presence_penalty: req.presence_penalty,
+            stream: req.stream,
+            stop: req.stop.unwrap_or_default(),
+            response_format: req.response_format,
+            tools: None,
+            tool_choice: None,
+            thinking: None,
+        }
+    }
+}
+
+impl From<CompletionRequest> for crate::daemon::protocol::CompletionParams {
+    fn from(req: CompletionRequest) -> Self {
+        Self {
+            model: req.model,
+            prompt: req.prompt,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+            top_p: req.top_p,
+            top_k: None,
+            frequency_penalty: req.frequency_penalty,
+            presence_penalty: req.presence_penalty,
+            stream: req.stream,
+            stop: req.stop.unwrap_or_default(),
+        }
+    }
 }
 
 #[cfg(test)]
