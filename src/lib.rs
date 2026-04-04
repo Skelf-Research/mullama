@@ -137,6 +137,7 @@ pub mod websockets;
 // Advanced features
 pub mod grammar;
 pub mod gpu_advanced;
+pub mod hf;
 pub mod huggingface;
 pub mod lora;
 pub mod modelfile;
