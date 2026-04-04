@@ -39,6 +39,8 @@ pub struct Daemon {
     pub recovery_manager: RecoveryManager,
     /// Persistent store for daemon state (pluggable via [`StorageBackend`] trait)
     pub store: Arc<dyn StorageBackend>,
+    /// Model providers for resolving model specs to local paths
+    pub providers: Vec<Box<dyn super::provider::ModelProvider>>,
 }
 
 impl Daemon {
@@ -73,6 +75,14 @@ impl Daemon {
             }
         };
 
+        let mut providers: Vec<Box<dyn super::provider::ModelProvider>> = Vec::new();
+        if let Ok(ollama) = super::ollama::OllamaClient::new() {
+            providers.push(Box::new(ollama));
+        }
+        if let Ok(hf) = crate::hf::HfDownloader::new() {
+            providers.push(Box::new(hf));
+        }
+
         Self {
             config,
             models: Arc::new(ModelManager::new()),
@@ -84,6 +94,7 @@ impl Daemon {
             memory_monitor,
             recovery_manager,
             store,
+            providers,
         }
     }
 
@@ -125,6 +136,31 @@ impl Daemon {
         }
     }
 
+    /// Resolve a model spec to a local path using the provider chain.
+    ///
+    /// Iterates through registered providers (Ollama, HuggingFace) and returns
+    /// the first successful resolution. Falls through on provider errors.
+    pub async fn resolve_model_spec(
+        &self,
+        spec: &str,
+    ) -> Result<super::provider::ResolvedModelPath, crate::MullamaError> {
+        for provider in &self.providers {
+            if provider.supports(spec) {
+                match provider.resolve(spec).await {
+                    Ok(resolved) => return Ok(resolved),
+                    Err(e) => {
+                        tracing::warn!("Provider '{}' failed for '{}': {}", provider.name(), spec, e);
+                        continue;
+                    }
+                }
+            }
+        }
+        Err(crate::MullamaError::OperationFailed(format!(
+            "No provider can resolve: {}",
+            spec
+        )))
+    }
+
     /// Handle a request
     pub async fn handle_request(&self, request: Request) -> Response {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
@@ -163,6 +199,7 @@ impl Daemon {
             }
 
             Request::Shutdown => {
+                self.store.flush();
                 self.shutdown.store(true, Ordering::SeqCst);
                 Response::ShuttingDown
             }

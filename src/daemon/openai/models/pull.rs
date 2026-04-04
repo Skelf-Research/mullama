@@ -7,18 +7,16 @@ use super::super::helpers::format_size;
 use super::super::AppState;
 use super::types::{ModelOperationResponse, PullModelRequest};
 
-/// Pull a model from HuggingFace
+/// Pull a model from a remote provider (HuggingFace or Ollama registry)
 pub(in crate::daemon::openai) async fn api_pull_model(
-    State(_daemon): State<AppState>,
+    State(daemon): State<AppState>,
     Json(request): Json<PullModelRequest>,
 ) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
-    use crate::daemon::hf::{HfDownloader, HfModelSpec};
     use crate::daemon::registry::{resolve_model_name, ResolvedModel};
 
+    // Early-exit checks for specs that cannot be pulled
     let resolved = resolve_model_name(&request.name);
-
-    let hf_spec = match resolved {
-        ResolvedModel::HuggingFace { spec, .. } => spec,
+    match &resolved {
         ResolvedModel::LocalPath(_) => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -29,88 +27,50 @@ pub(in crate::daemon::openai) async fn api_pull_model(
                 }),
             ));
         }
-        ResolvedModel::Ollama { name, tag } => {
+        ResolvedModel::Unknown(name)
+            if !name.starts_with("hf:") && !name.contains('/') =>
+        {
             return Err((
-                StatusCode::BAD_REQUEST,
+                StatusCode::NOT_FOUND,
                 Json(ModelOperationResponse {
                     success: false,
                     message: format!(
-                        "Ollama model '{}:{}' detected. Use CLI: mullama pull {}:{}",
-                        name, tag, name, tag
+                        "Unknown model '{}'. Use hf:owner/repo format or a known alias.",
+                        name
                     ),
                     model: None,
                 }),
             ));
         }
-        ResolvedModel::Unknown(name) => {
-            if name.starts_with("hf:") || name.contains('/') {
-                if name.starts_with("hf:") {
-                    name
-                } else {
-                    format!("hf:{}", name)
-                }
-            } else {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    Json(ModelOperationResponse {
-                        success: false,
-                        message: format!(
-                            "Unknown model '{}'. Use hf:owner/repo format or a known alias.",
-                            name
-                        ),
-                        model: None,
-                    }),
-                ));
-            }
-        }
-    };
+        _ => {} // HuggingFace, Ollama, or resolvable Unknown — proceed
+    }
 
-    let spec = HfModelSpec::parse(&hf_spec).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ModelOperationResponse {
-                success: false,
-                message: format!("Invalid HuggingFace spec: {}", hf_spec),
-                model: None,
-            }),
-        )
-    })?;
-
-    let downloader = HfDownloader::new().map_err(|e| {
+    // Use the provider chain for resolution + download
+    let resolved_path = daemon.resolve_model_spec(&request.name).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ModelOperationResponse {
                 success: false,
-                message: format!("Failed to initialize downloader: {}", e),
+                message: format!("Pull failed: {}", e),
                 model: None,
             }),
         )
     })?;
 
-    let path = downloader.download_spec(&spec, false).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ModelOperationResponse {
-                success: false,
-                message: format!("Download failed: {}", e),
-                model: None,
-            }),
-        )
-    })?;
-
-    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&resolved_path.path)
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     Ok(Json(ModelOperationResponse {
         success: true,
         message: format!("Model '{}' downloaded successfully", request.name),
         model: Some(serde_json::json!({
-            "name": spec.get_alias(),
-            "source": "huggingface",
-            "repo_id": spec.repo_id,
-            "filename": spec.filename,
+            "name": resolved_path.alias,
+            "source": "provider",
+            "was_cached": resolved_path.was_cached,
             "size": size,
             "size_formatted": format_size(size),
-            "path": path.display().to_string(),
+            "path": resolved_path.path.display().to_string(),
             "downloaded": chrono::Utc::now().to_rfc3339(),
         })),
     }))

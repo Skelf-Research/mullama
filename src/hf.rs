@@ -792,6 +792,81 @@ pub async fn resolve_model_path(
     }
 }
 
+#[cfg(feature = "daemon")]
+impl crate::daemon::provider::ModelProvider for HfDownloader {
+    fn supports(&self, spec: &str) -> bool {
+        HfModelSpec::is_hf_spec(spec)
+            || (spec.contains('/') && !spec.starts_with('/') && !spec.starts_with('.'))
+    }
+
+    fn resolve(
+        &self,
+        spec: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<crate::daemon::provider::ResolvedModelPath, MullamaError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        let spec = spec.to_string();
+        Box::pin(async move {
+            let hf_spec = HfModelSpec::parse(&spec).ok_or_else(|| {
+                // Bare owner/repo format — synthesize an HF spec
+                MullamaError::OperationFailed(format!("Cannot parse HF spec: {}", spec))
+            });
+
+            let hf_spec = match hf_spec {
+                Ok(s) => s,
+                Err(_) => {
+                    // Try as bare owner/repo
+                    let synthetic = format!("hf:{}", spec);
+                    HfModelSpec::parse(&synthetic).ok_or_else(|| {
+                        MullamaError::OperationFailed(format!(
+                            "Cannot parse as HuggingFace spec: {}",
+                            spec
+                        ))
+                    })?
+                }
+            };
+
+            let alias = hf_spec.get_alias();
+
+            // Check cache
+            if let Some(ref filename) = hf_spec.filename {
+                if let Some(cached) = self.get_cached(&hf_spec.repo_id, filename) {
+                    return Ok(crate::daemon::provider::ResolvedModelPath {
+                        path: cached.local_path,
+                        alias,
+                        was_cached: true,
+                    });
+                }
+            }
+
+            let path = self.download_spec(&hf_spec, false).await?;
+            Ok(crate::daemon::provider::ResolvedModelPath {
+                path,
+                alias,
+                was_cached: false,
+            })
+        })
+    }
+
+    fn is_cached(&self, spec: &str) -> bool {
+        if let Some(hf_spec) = HfModelSpec::parse(spec) {
+            let cached = self.list_cached();
+            cached.iter().any(|m| m.repo_id == hf_spec.repo_id)
+        } else {
+            false
+        }
+    }
+
+    fn name(&self) -> &str {
+        "huggingface"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

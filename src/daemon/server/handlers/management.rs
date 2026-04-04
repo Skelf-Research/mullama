@@ -3,7 +3,8 @@ use std::sync::atomic::Ordering;
 use super::super::{prompt::infer_ollama_model_config, Daemon};
 use crate::daemon::models::ModelLoadConfig;
 use crate::daemon::protocol::{
-    DaemonStats, DaemonStatus, ErrorCode, ModelLoadParams, ModelStatus, Response,
+    DaemonStats, DaemonStatus, ErrorCode, ModelDetailedStats, ModelLoadParams, ModelStatus,
+    Response,
 };
 
 impl Daemon {
@@ -23,6 +24,41 @@ impl Daemon {
                 used / (1024 * 1024)
             })
             .unwrap_or(0);
+
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let model_details: Vec<ModelDetailedStats> = self
+            .store
+            .all_model_stats()
+            .into_iter()
+            .map(|(alias, ps)| {
+                let avg_tps = if ps.avg_tokens_per_sec_x100 > 0 {
+                    ps.avg_tokens_per_sec_x100 as f32 / 100.0
+                } else {
+                    0.0
+                };
+                let last_used_secs_ago = now_secs.saturating_sub(ps.last_used);
+                let avg_load_time_ms = if ps.load_count > 0 {
+                    ps.total_load_time_ms / ps.load_count
+                } else {
+                    0
+                };
+                ModelDetailedStats {
+                    alias,
+                    requests_total: ps.requests_total,
+                    tokens_generated: ps.tokens_generated,
+                    tokens_prompt: ps.tokens_prompt,
+                    avg_tokens_per_sec: avg_tps,
+                    memory_bytes: 0,
+                    active_requests: 0,
+                    last_used_secs_ago,
+                    load_time_ms: avg_load_time_ms,
+                    pool_size: 0,
+                }
+            })
+            .collect();
 
         Response::Status(DaemonStatus {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -44,7 +80,7 @@ impl Daemon {
                 memory_total_mb: 0,
                 memory_available_mb: 0,
                 memory_pressure: String::new(),
-                model_details: Vec::new(),
+                model_details,
             },
         })
     }
@@ -65,6 +101,7 @@ impl Daemon {
     }
 
     pub(crate) async fn handle_load_model(&self, params: ModelLoadParams) -> Response {
+        let load_start = std::time::Instant::now();
         let md = &self.config.model_defaults;
         let mut resolved_context_size = if params.context_size == 0 {
             md.context_size
@@ -124,10 +161,14 @@ impl Daemon {
         }
 
         match self.models.load(config).await {
-            Ok(info) => Response::ModelLoaded {
-                alias: params.alias,
-                info,
-            },
+            Ok(info) => {
+                let elapsed = load_start.elapsed();
+                self.store.record_model_load(&params.alias, elapsed.as_millis() as u64);
+                Response::ModelLoaded {
+                    alias: params.alias,
+                    info,
+                }
+            }
             Err(e) => Response::error(ErrorCode::ModelLoadFailed, e.to_string()),
         }
     }

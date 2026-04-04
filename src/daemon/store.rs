@@ -382,6 +382,7 @@ impl Drop for DaemonStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_store_model_stats() {
@@ -438,5 +439,55 @@ mod tests {
 
         store.set_config("last_gpu_layers", "33");
         assert_eq!(store.get_config("last_gpu_layers").unwrap(), "33");
+    }
+
+    #[test]
+    fn test_trait_dispatch_through_dyn_storage_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DaemonStore::open(&dir.path().join("trait_test.db")).unwrap();
+        let backend: Arc<dyn StorageBackend> = Arc::new(store);
+
+        // Model stats via trait object
+        assert!(backend.get_model_stats("dyn_test").is_none());
+        backend.update_model_stats("dyn_test", 5, 100, 50, 3000);
+        let stats = backend.get_model_stats("dyn_test").unwrap();
+        assert_eq!(stats.requests_total, 5);
+        assert_eq!(stats.tokens_generated, 100);
+        assert_eq!(stats.tokens_prompt, 50);
+
+        // Record model load via trait object
+        backend.record_model_load("dyn_test", 1500);
+        let stats = backend.get_model_stats("dyn_test").unwrap();
+        assert_eq!(stats.load_count, 1);
+        assert_eq!(stats.total_load_time_ms, 1500);
+
+        // all_model_stats via trait object
+        let all = backend.all_model_stats();
+        assert!(!all.is_empty());
+        assert!(all.iter().any(|(alias, _)| alias == "dyn_test"));
+
+        // Config via trait object
+        backend.set_config("trait_key", "trait_value");
+        assert_eq!(backend.get_config("trait_key").unwrap(), "trait_value");
+
+        // Sessions via trait object
+        let session = StoredSession {
+            id: "dyn_sess".to_string(),
+            model: "test_model".to_string(),
+            messages: vec![StoredMessage {
+                role: "user".to_string(),
+                content: "via trait".to_string(),
+            }],
+            created_at: 100,
+            updated_at: 200,
+        };
+        backend.save_session(&session);
+        let loaded = backend.get_session("dyn_sess").unwrap();
+        assert_eq!(loaded.messages[0].content, "via trait");
+        backend.delete_session("dyn_sess");
+        assert!(backend.get_session("dyn_sess").is_none());
+
+        // Flush via trait object
+        backend.flush();
     }
 }

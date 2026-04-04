@@ -109,6 +109,13 @@ impl Daemon {
 
         match result {
             Ok((text, prompt_tokens, completion_tokens)) => {
+                self.store.update_model_stats(
+                    &loaded.alias,
+                    1,
+                    completion_tokens as u64,
+                    prompt_tokens as u64,
+                    0,
+                );
                 super::build_chat_completion_response(&loaded.alias, text, prompt_tokens, completion_tokens)
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
