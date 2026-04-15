@@ -1070,13 +1070,21 @@ impl Drop for Context {
 }
 
 // SAFETY: Context can be sent between threads because:
-// 1. The raw pointer is never dereferenced without proper synchronization
-// 2. All operations are synchronized via RwLock when used in async contexts
+// 1. The raw llama_context pointer is never dereferenced without proper synchronization
+// 2. All operations that use the raw pointer are serialized through either:
+//    - &mut self (exclusive access, no concurrent calls)
+//    - RwLock in async contexts (concurrent reads serialized)
 // 3. llama_context is designed to be used from a single thread at a time,
-//    which we ensure through the RwLock guard
+//    which we enforce by never calling llama_context methods concurrently
+// 4. The Context struct does not use any Rust types that are !Send
 unsafe impl Send for Context {}
 
-// SAFETY: Context can be shared between threads because:
-// 1. All mutable operations are done through &mut self
-// 2. When wrapped in RwLock, concurrent access is properly synchronized
+// SAFETY: Context can be shared between threads (&Context) because:
+// 1. All mutable operations require &mut self, ensuring exclusive access
+// 2. When wrapped in RwLock (async contexts), concurrent readers are
+//    properly synchronized against writers
+// 3. Shared references only allow read-only access to metadata, which
+//    is thread-safe
+// 4. The underlying llama_context is never accessed through &Context
+//    without internal synchronization
 unsafe impl Sync for Context {}

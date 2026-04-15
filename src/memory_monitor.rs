@@ -467,7 +467,7 @@ impl Default for RecoveryManager {
 
 /// Get system memory usage (used, total) in bytes
 #[cfg(target_os = "linux")]
-fn get_system_memory() -> Option<(u64, u64)> {
+pub fn get_system_memory() -> Option<(u64, u64)> {
     use std::fs;
 
     let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
@@ -501,7 +501,7 @@ fn parse_meminfo_value(line: &str) -> Option<u64> {
 }
 
 #[cfg(target_os = "macos")]
-fn get_system_memory() -> Option<(u64, u64)> {
+pub fn get_system_memory() -> Option<(u64, u64)> {
     use std::process::Command;
 
     // Get total memory using sysctl
@@ -543,7 +543,7 @@ fn parse_vm_stat_value(line: &str) -> Option<u64> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_system_memory() -> Option<(u64, u64)> {
+pub fn get_system_memory() -> Option<(u64, u64)> {
     use std::mem;
 
     #[repr(C)]
@@ -587,7 +587,7 @@ fn get_system_memory() -> Option<(u64, u64)> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn get_system_memory() -> Option<(u64, u64)> {
+pub fn get_system_memory() -> Option<(u64, u64)> {
     // Fallback: return None for unsupported platforms
     None
 }
@@ -595,37 +595,74 @@ fn get_system_memory() -> Option<(u64, u64)> {
 /// Get GPU memory usage (used, total) in bytes
 /// Returns None if no GPU is available or query fails
 fn get_gpu_memory() -> Option<(u64, u64)> {
-    // Try CUDA first
-    #[cfg(feature = "cuda")]
-    {
-        if let Some(result) = get_cuda_memory() {
-            return Some(result);
+    get_cuda_memory_via_nvidia_smi().or_else(|| {
+        #[cfg(target_os = "macos")]
+        {
+            get_metal_memory()
         }
-    }
-
-    // Try Metal on macOS
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(result) = get_metal_memory() {
-            return Some(result);
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
         }
-    }
-
-    // No GPU memory available
-    None
+    })
 }
 
-#[cfg(feature = "cuda")]
-fn get_cuda_memory() -> Option<(u64, u64)> {
-    // CUDA memory query would go here
-    // For now, return None as this requires CUDA runtime
-    None
+fn get_cuda_memory_via_nvidia_smi() -> Option<(u64, u64)> {
+    use std::process::Command;
+
+    let output = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next()?;
+
+    let parts: Vec<&str> = line.trim().split(',').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let used_mb: u64 = parts[0].trim().parse().ok()?;
+    let total_mb: u64 = parts[1].trim().parse().ok()?;
+    Some((used_mb * 1024 * 1024, total_mb * 1024 * 1024))
 }
 
 #[cfg(target_os = "macos")]
 fn get_metal_memory() -> Option<(u64, u64)> {
-    // Metal unified memory - return system memory as approximation
-    // Real Metal memory tracking would require Metal framework bindings
+    let (sys_used, sys_total) = get_system_memory()?;
+    let available = sys_total.saturating_sub(sys_used);
+    let gpu_wired = get_macos_wired_memory().unwrap_or(0);
+    let gpu_used = gpu_wired;
+    let gpu_available = available.saturating_sub(gpu_wired);
+    let gpu_effective_total = gpu_available.saturating_add(gpu_used);
+    Some((gpu_used, gpu_effective_total.max(gpu_used)))
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_macos_wired_memory() -> Option<u64> {
+    use std::process::Command;
+
+    let output = Command::new("vm_stat").output().ok()?;
+    let vm_str = String::from_utf8_lossy(&output.stdout);
+
+    let mut wired_pages: u64 = 0;
+    let page_size: u64 = 16384;
+
+    for line in vm_str.lines() {
+        if line.starts_with("Pages wired down:") {
+            wired_pages = parse_vm_stat_value(line)?;
+        }
+    }
+
+    Some(wired_pages * page_size)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn get_macos_wired_memory() -> Option<u64> {
     None
 }
 

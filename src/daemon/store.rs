@@ -317,7 +317,13 @@ impl StorageBackend for DaemonStore {
         tokens_prompt_delta: u64,
         avg_tps_x100: u64,
     ) {
-        self.update_model_stats(alias, requests_delta, tokens_generated_delta, tokens_prompt_delta, avg_tps_x100);
+        self.update_model_stats(
+            alias,
+            requests_delta,
+            tokens_generated_delta,
+            tokens_prompt_delta,
+            avg_tps_x100,
+        );
     }
 
     fn record_model_load(&self, alias: &str, load_time_ms: u64) {

@@ -719,7 +719,7 @@ fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
     let ggml_include_path = llama_cpp_path.join("ggml").join("include");
     let mtmd_include_path = llama_cpp_path.join("tools").join("mtmd");
 
-    let mut builder = bindgen::Builder::default()
+    let builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_path.display()))
         .clang_arg(format!("-I{}", ggml_include_path.display()))
@@ -744,26 +744,7 @@ fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
         .allowlist_type("mtmd_.*")
         .allowlist_type("clip_.*");
 
-    // On Linux, try to find system include paths for clang
-    #[cfg(target_os = "linux")]
-    {
-        // Try to get GCC's include paths
-        if let Ok(output) = Command::new("gcc")
-            .args(["-E", "-Wp,-v", "-xc", "/dev/null"])
-            .output()
-        {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            for line in stderr.lines() {
-                let line = line.trim();
-                if line.starts_with('/')
-                    && !line.contains(' ')
-                    && std::path::Path::new(line).exists()
-                {
-                    builder = builder.clang_arg(format!("-isystem{}", line));
-                }
-            }
-        }
-    }
+    let builder = add_linux_system_include_paths(builder);
 
     let bindings = builder.generate().expect("Unable to generate bindings");
 
@@ -771,4 +752,30 @@ fn generate_bindings(llama_cpp_path: &Path, _build_path: &Path) {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+}
+
+#[cfg(target_os = "linux")]
+fn add_linux_system_include_paths(builder: bindgen::Builder) -> bindgen::Builder {
+    let mut builder = builder;
+
+    if let Ok(output) = Command::new("gcc")
+        .args(["-E", "-Wp,-v", "-xc", "/dev/null"])
+        .output()
+    {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for line in stderr.lines() {
+            let line = line.trim();
+            if line.starts_with('/') && !line.contains(' ') && std::path::Path::new(line).exists()
+            {
+                builder = builder.clang_arg(format!("-isystem{}", line));
+            }
+        }
+    }
+
+    builder
+}
+
+#[cfg(not(target_os = "linux"))]
+fn add_linux_system_include_paths(builder: bindgen::Builder) -> bindgen::Builder {
+    builder
 }

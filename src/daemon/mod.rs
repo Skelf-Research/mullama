@@ -60,8 +60,8 @@ pub mod ui;
 
 // Protocol types (IPC)
 pub use protocol::{
-    format_size, generate_completion_id, ChatChoice as IpcChatChoice,
-    ChatCompletionParams, ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
+    format_size, generate_completion_id, ChatChoice as IpcChatChoice, ChatCompletionParams,
+    ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
     CompletionChoice as IpcCompletionChoice, CompletionParams,
     CompletionResponse as IpcCompletionResponse, DaemonStats, DaemonStatus, EmbeddingInput,
     ErrorCode, ModelDetailedStats, ModelInfo, ModelLoadParams, ModelStatus, Request, Response,

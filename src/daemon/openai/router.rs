@@ -27,16 +27,24 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         .route("/api/models", get(super::models::api_list_models))
         .route("/api/models/pull", post(super::models::api_pull_model))
         .route("/api/models/load", post(super::models::api_load_model))
-        .route("/api/models/:name/unload", post(super::models::api_unload_model))
+        .route(
+            "/api/models/:name/unload",
+            post(super::models::api_unload_model),
+        )
         .route("/api/models/:name", delete(super::models::api_delete_model))
         .route("/api/models/:name", get(super::models::api_get_model))
         .route("/api/system/status", get(super::system::api_system_status))
         .route("/api/defaults", get(super::defaults::api_list_defaults))
-        .route("/api/defaults/:name/use", post(super::defaults::api_use_default))
+        .route(
+            "/api/defaults/:name/use",
+            post(super::defaults::api_use_default),
+        )
         .route("/status", get(super::system::status))
         .route("/metrics", get(super::system::metrics))
         .with_state(daemon.clone())
-        .layer(DefaultBodyLimit::max(daemon.config.http.max_request_body_bytes))
+        .layer(DefaultBodyLimit::max(
+            daemon.config.http.max_request_body_bytes,
+        ))
         .layer(ConcurrencyLimitLayer::new(
             daemon.config.http.max_concurrent_requests,
         ));
@@ -58,10 +66,8 @@ pub fn create_openai_router(daemon: AppState) -> Router {
             let auth = super::middleware::HttpAuthState {
                 api_key: Arc::<str>::from(api_key),
             };
-            protected = protected.layer(from_fn_with_state(
-                auth,
-                super::middleware::require_api_key,
-            ));
+            protected =
+                protected.layer(from_fn_with_state(auth, super::middleware::require_api_key));
         }
     }
 

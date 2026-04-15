@@ -121,8 +121,8 @@ mod documentation_example_tests {
         // let result = ctx.generate(&tokens, 100)?;
 
         // Test that the types and methods exist
-        let model_params = ModelParams::default();
-        let context_params = ContextParams::default();
+        let _model_params = ModelParams::default();
+        let _context_params = ContextParams::default();
 
         // Test parameter customization as documented
         let custom_context = ContextParams {

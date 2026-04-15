@@ -1,5 +1,6 @@
 target/
 .git/
+.gitignore
 node_modules/
 ui/node_modules/
 ui/dist/
@@ -7,5 +8,18 @@ ui/dist/
 *.a
 *.so
 *.dylib
+*.node
 .env
 .DS_Store
+*.md
+!README.md
+examples/
+tests/
+benchmarks/
+scripts/
+bindings/python/
+bindings/node/node_modules/
+bindings/go/
+bindings/php/
+vendor/
+*.log

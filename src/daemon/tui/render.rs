@@ -8,8 +8,8 @@ use ratatui::{
     Frame,
 };
 
-use super::{centered_rect, InputMode, Role};
 use super::app::TuiApp;
+use super::{centered_rect, InputMode, Role};
 
 impl TuiApp {
     pub(crate) fn draw(&mut self, f: &mut Frame) {

@@ -35,18 +35,18 @@
 
 #[cfg(feature = "parallel")]
 use rayon::{
-    iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+    iter::{IntoParallelRefIterator, ParallelIterator},
     prelude::*,
     ThreadPool, ThreadPoolBuilder,
 };
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use crate::{Context, ContextParams, Model, MullamaError, SamplerChain, SamplerParams, TokenId};
+use crate::{ContextParams, Model, MullamaError, SamplerParams, TokenId};
 
 /// Parallel processor for batch operations
 #[cfg(feature = "parallel")]
@@ -128,7 +128,6 @@ impl ParallelProcessor {
         prompts: &[&str],
         config: &BatchGenerationConfig,
     ) -> Result<Vec<GenerationResult>, MullamaError> {
-        let model = &self.model;
         let generation_config = config.clone();
 
         let process_batch = |prompts: &[&str]| -> Result<Vec<GenerationResult>, MullamaError> {
@@ -205,13 +204,13 @@ impl ParallelProcessor {
         let start_time = Instant::now();
 
         // Create context (this would need thread-local storage in real implementation)
-        let mut ctx_params = ContextParams::default();
-        ctx_params.n_ctx = config.context_size;
-        ctx_params.n_threads = 1; // Single thread per generation task
+        let mut _ctx_params = ContextParams::default();
+        _ctx_params.n_ctx = config.context_size;
+        _ctx_params.n_threads = 1; // Single thread per generation task
 
         // Note: In real implementation, we'd need thread-safe context creation
         // For now, this is a simplified placeholder
-        let tokens = self.model.tokenize(prompt, true, false)?;
+        let _tokens = self.model.tokenize(prompt, true, false)?;
 
         // Simulate generation
         let generated_text = format!("Generated response for: {}", prompt);
@@ -507,8 +506,8 @@ pub mod patterns {
 
     /// Pipeline pattern for sequential stages with parallel processing
     pub fn parallel_pipeline<T, R>(
-        data: Vec<T>,
-        stages: Vec<Box<dyn Fn(Vec<T>) -> Result<Vec<R>, MullamaError> + Send + Sync>>,
+        _data: Vec<T>,
+        _stages: Vec<Box<dyn Fn(Vec<T>) -> Result<Vec<R>, MullamaError> + Send + Sync>>,
     ) -> Result<Vec<R>, MullamaError>
     where
         T: Send + 'static,

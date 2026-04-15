@@ -518,12 +518,14 @@ async fn handle_messages_streaming(
 
     // Create the stream
     let initial_events = vec![
-        Ok(Event::default()
-            .event("message_start")
-            .data(serde_json::to_string(&message_start).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)))),
-        Ok(Event::default()
-            .event("content_block_start")
-            .data(serde_json::to_string(&content_block_start).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)))),
+        Ok(Event::default().event("message_start").data(
+            serde_json::to_string(&message_start)
+                .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)),
+        )),
+        Ok(Event::default().event("content_block_start").data(
+            serde_json::to_string(&content_block_start)
+                .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)),
+        )),
     ];
 
     let initial_stream = stream::iter(initial_events);
@@ -536,19 +538,21 @@ async fn handle_messages_streaming(
             index: 0,
             delta: ContentBlockDelta::TextDelta { text: chunk.delta },
         };
-        Ok(Event::default()
-            .event("content_block_delta")
-            .data(serde_json::to_string(&delta).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e))))
+        Ok(Event::default().event("content_block_delta").data(
+            serde_json::to_string(&delta).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)),
+        ))
     });
 
     // Final events
     let final_events = vec![
-        Ok(Event::default()
-            .event("content_block_stop")
-            .data(serde_json::to_string(&StreamEvent::ContentBlockStop { index: 0 }).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)))),
-        Ok(Event::default()
-            .event("message_stop")
-            .data(serde_json::to_string(&StreamEvent::MessageStop).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)))),
+        Ok(Event::default().event("content_block_stop").data(
+            serde_json::to_string(&StreamEvent::ContentBlockStop { index: 0 })
+                .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)),
+        )),
+        Ok(Event::default().event("message_stop").data(
+            serde_json::to_string(&StreamEvent::MessageStop)
+                .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e)),
+        )),
     ];
 
     let final_stream = stream::iter(final_events);

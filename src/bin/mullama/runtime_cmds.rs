@@ -3,16 +3,13 @@ use std::path::PathBuf;
 
 use mullama::daemon::spawn::default_log_path;
 use mullama::daemon::{
-    resolve_model_name, resolve_model_path, spawn_daemon, ResolvedModel, SpawnConfig,
-    SpawnResult, TuiApp,
+    resolve_model_name, resolve_model_path, spawn_daemon, ResolvedModel, SpawnConfig, SpawnResult,
+    TuiApp,
 };
 
 use crate::shared::{connect, derive_alias_from_path};
 
-pub(crate) fn run_chat(
-    socket: &str,
-    _timeout: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
 
     match client.ping() {
@@ -148,6 +145,7 @@ pub(crate) async fn run_model_with_prompt(
             cache_type_v.clone(),
             use_mmap,
             mlock,
+            batch_size,
         ) {
             Ok(_) => {}
             Err(e) => {
@@ -236,8 +234,6 @@ pub(crate) async fn run_model_with_prompt(
             println!();
         }
     }
-
-    let _ = batch_size;
 
     Ok(())
 }
@@ -368,10 +364,7 @@ pub(crate) async fn run_vision_prompt(
     Ok(())
 }
 
-pub(crate) fn list_models(
-    socket: &str,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn list_models(socket: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
     let models = client.list_models()?;
 
@@ -445,6 +438,7 @@ pub(crate) fn load_model(
         cache_type_v,
         use_mmap,
         mlock,
+        None,
     ) {
         Ok((_alias, info)) => {
             println!("OK");
@@ -460,10 +454,7 @@ pub(crate) fn load_model(
     Ok(())
 }
 
-pub(crate) fn unload_model(
-    socket: &str,
-    alias: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn unload_model(socket: &str, alias: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
 
     print!("Unloading model '{}'... ", alias);
@@ -480,10 +471,7 @@ pub(crate) fn unload_model(
     Ok(())
 }
 
-pub(crate) fn set_default(
-    socket: &str,
-    alias: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn set_default(socket: &str, alias: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
 
     match client.set_default_model(alias) {
@@ -494,10 +482,7 @@ pub(crate) fn set_default(
     Ok(())
 }
 
-pub(crate) fn show_status(
-    socket: &str,
-    json: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn show_status(socket: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
     let status = client.status()?;
 
@@ -540,19 +525,32 @@ pub(crate) fn ping_daemon(socket: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-pub(crate) fn cli_stop_daemon(
-    socket: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn cli_stop_daemon(socket: &str, force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let client = connect(socket)?;
 
-    print!("Shutting down daemon... ");
+    if force {
+        print!("Force shutting down daemon... ");
+    } else {
+        print!("Shutting down daemon... ");
+    }
     io::stdout().flush()?;
 
     match client.shutdown() {
         Ok(()) => println!("OK"),
         Err(e) => {
-            println!("FAILED");
-            eprintln!("Error: {}", e);
+            if force {
+                match std::process::Command::new("pkill")
+                    .arg("-f")
+                    .arg("mullama serve")
+                    .output()
+                {
+                    Ok(_) => println!("OK (force killed)"),
+                    Err(kill_err) => println!("FAILED (kill error: {})", kill_err),
+                }
+            } else {
+                println!("FAILED");
+                eprintln!("Error: {}", e);
+            }
         }
     }
 

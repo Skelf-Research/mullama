@@ -11,14 +11,15 @@
 //! - **Enums**: `enum` (for strings)
 //! - **String constraints**: `minLength`, `maxLength`
 //! - **Integer constraints**: `minimum`, `maximum`
+//! - **Union types**: `oneOf`, `anyOf`
+//! - **References**: `$ref` (local references within the same schema)
+//! - **Patterns**: `pattern` (regular expression constraints)
 //!
 //! ## Unsupported Features
 //!
-//! - `oneOf`, `anyOf`, `allOf`, `not`
-//! - `$ref` (references)
+//! - `allOf`, `not`
 //! - `patternProperties`
-//! - `format` (dates, emails, etc.)
-//! - `pattern` (regex)
+//! - `format` (dates, emails, etc.) - silently ignored
 //!
 //! ## Example
 //!
@@ -75,14 +76,15 @@ impl From<StructuredOutputError> for MullamaError {
 pub struct JsonSchemaConverter {
     rules: Vec<String>,
     rule_counter: usize,
+    definitions: serde_json::Map<String, Value>,
 }
 
 impl JsonSchemaConverter {
-    /// Create a new converter
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
             rule_counter: 0,
+            definitions: serde_json::Map::new(),
         }
     }
 
@@ -98,6 +100,41 @@ impl JsonSchemaConverter {
     pub fn convert(schema: &Value) -> Result<Grammar, StructuredOutputError> {
         let mut converter = Self::new();
         converter.add_primitives();
+
+        // Extract definitions for $ref resolution
+        if let Some(obj) = schema.as_object() {
+            if let Some(defs) = obj.get("definitions") {
+                if let Some(defs_obj) = defs.as_object() {
+                    converter.definitions = defs_obj.clone();
+                }
+            }
+            if let Some(defs) = obj.get("$defs") {
+                if let Some(defs_obj) = defs.as_object() {
+                    for (k, v) in defs_obj {
+                        converter.definitions.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+
+        // Handle top-level oneOf/anyOf
+        if let Some(obj) = schema.as_object() {
+            if let Some(one_of) = obj.get("oneOf") {
+                let root_rule = converter.one_of_to_rule("root", one_of)?;
+                converter.rules.insert(0, root_rule);
+                let gbnf = converter.rules.join("\n");
+                return Grammar::from_gbnf(&gbnf)
+                    .map_err(|e| StructuredOutputError::GrammarError(e.to_string()));
+            }
+            if let Some(any_of) = obj.get("anyOf") {
+                let root_rule = converter.any_of_to_rule("root", any_of)?;
+                converter.rules.insert(0, root_rule);
+                let gbnf = converter.rules.join("\n");
+                return Grammar::from_gbnf(&gbnf)
+                    .map_err(|e| StructuredOutputError::GrammarError(e.to_string()));
+            }
+        }
+
         let root_rule = converter.schema_to_rule("root", schema)?;
         converter.rules.insert(0, root_rule);
 
@@ -115,7 +152,6 @@ impl JsonSchemaConverter {
             StructuredOutputError::InvalidSchema("Schema must be an object".into())
         })?;
 
-        // Check for unsupported features
         for key in obj.keys() {
             match key.as_str() {
                 "type"
@@ -132,38 +168,31 @@ impl JsonSchemaConverter {
                 | "title"
                 | "default"
                 | "examples"
-                | "const" => {}
-                "oneOf" | "anyOf" | "allOf" | "not" => {
+                | "const"
+                | "oneOf"
+                | "anyOf"
+                | "$ref"
+                | "pattern"
+                | "definitions"
+                | "$defs"
+                | "minItems"
+                | "maxItems" => {}
+                "allOf" | "not" => {
                     return Err(StructuredOutputError::UnsupportedFeature(format!(
                         "'{}' is not supported",
                         key
                     )));
-                }
-                "$ref" => {
-                    return Err(StructuredOutputError::UnsupportedFeature(
-                        "'$ref' references are not supported".into(),
-                    ));
-                }
-                "pattern" => {
-                    return Err(StructuredOutputError::UnsupportedFeature(
-                        "'pattern' regex constraints are not supported".into(),
-                    ));
                 }
                 "patternProperties" => {
                     return Err(StructuredOutputError::UnsupportedFeature(
                         "'patternProperties' is not supported".into(),
                     ));
                 }
-                "format" => {
-                    // Silently ignore format - we don't enforce it
-                }
-                _ => {
-                    // Allow unknown keys (they might be custom extensions)
-                }
+                "format" => {}
+                _ => {}
             }
         }
 
-        // Recursively validate nested schemas
         if let Some(properties) = obj.get("properties") {
             if let Some(props) = properties.as_object() {
                 for prop_schema in props.values() {
@@ -174,6 +203,38 @@ impl JsonSchemaConverter {
 
         if let Some(items) = obj.get("items") {
             Self::validate_schema_recursive(items)?;
+        }
+
+        if let Some(one_of) = obj.get("oneOf") {
+            if let Some(arr) = one_of.as_array() {
+                for sub_schema in arr {
+                    Self::validate_schema_recursive(sub_schema)?;
+                }
+            }
+        }
+
+        if let Some(any_of) = obj.get("anyOf") {
+            if let Some(arr) = any_of.as_array() {
+                for sub_schema in arr {
+                    Self::validate_schema_recursive(sub_schema)?;
+                }
+            }
+        }
+
+        if let Some(defs) = obj.get("definitions") {
+            if let Some(defs_obj) = defs.as_object() {
+                for def_schema in defs_obj.values() {
+                    Self::validate_schema_recursive(def_schema)?;
+                }
+            }
+        }
+
+        if let Some(defs) = obj.get("$defs") {
+            if let Some(defs_obj) = defs.as_object() {
+                for def_schema in defs_obj.values() {
+                    Self::validate_schema_recursive(def_schema)?;
+                }
+            }
         }
 
         Ok(())
@@ -228,6 +289,21 @@ impl JsonSchemaConverter {
         // Handle enum
         if let Some(enum_vals) = obj.get("enum") {
             return self.enum_to_rule(name, enum_vals);
+        }
+
+        // Handle $ref
+        if let Some(ref_val) = obj.get("$ref") {
+            return self.ref_to_rule(name, ref_val);
+        }
+
+        // Handle oneOf
+        if let Some(one_of) = obj.get("oneOf") {
+            return self.one_of_to_rule(name, one_of);
+        }
+
+        // Handle anyOf
+        if let Some(any_of) = obj.get("anyOf") {
+            return self.any_of_to_rule(name, any_of);
         }
 
         // Handle type
@@ -413,16 +489,17 @@ impl JsonSchemaConverter {
             .unwrap_or(0) as usize;
         let max_length = schema.get("maxLength").and_then(|v| v.as_u64());
 
-        // For now, we use the basic string rule
-        // More sophisticated length constraints would require character-level rules
+        // Handle pattern constraint - convert basic regex patterns to GBNF
+        if let Some(pattern_val) = schema.get("pattern") {
+            if let Some(pattern_str) = pattern_val.as_str() {
+                return self.pattern_to_rule(name, pattern_str);
+            }
+        }
+
         if min_length > 0 || max_length.is_some() {
-            // Generate a constrained string rule
-            // This is a simplified version - proper implementation would need
-            // more complex GBNF rules
             let char_rule = r#"[^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])"#;
 
             if let Some(max) = max_length {
-                // Generate rule with max length
                 let content_rule = self.generate_rule_name(&format!("{}_content", name));
                 self.rules
                     .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
@@ -430,7 +507,6 @@ impl JsonSchemaConverter {
             }
         }
 
-        // Use default string rule
         Ok(format!("{} ::= string", name))
     }
 
@@ -454,6 +530,148 @@ impl JsonSchemaConverter {
 
         // Use default integer rule
         Ok(format!("{} ::= integer", name))
+    }
+
+    /// Handle $ref references
+    fn ref_to_rule(
+        &mut self,
+        name: &str,
+        ref_val: &Value,
+    ) -> Result<String, StructuredOutputError> {
+        let ref_str = ref_val
+            .as_str()
+            .ok_or_else(|| StructuredOutputError::InvalidSchema("$ref must be a string".into()))?;
+
+        let definition_name = if ref_str.starts_with("#/definitions/") {
+            &ref_str[14..]
+        } else if ref_str.starts_with("#/$defs/") {
+            &ref_str[8..]
+        } else if !ref_str.starts_with('#') {
+            ref_str
+        } else {
+            return Err(StructuredOutputError::InvalidSchema(format!(
+                "Unsupported $ref format: '{}'. Only local references (#/definitions/ or #/$defs/) are supported",
+                ref_str
+            )));
+        };
+
+        let definition = self
+            .definitions
+            .get(definition_name)
+            .ok_or_else(|| {
+                StructuredOutputError::InvalidSchema(format!(
+                    "Definition '{}' not found in schema definitions",
+                    definition_name
+                ))
+            })?
+            .clone();
+
+        self.schema_to_rule(name, &definition)
+    }
+
+    /// Handle oneOf (union type - match exactly one of the schemas)
+    fn one_of_to_rule(
+        &mut self,
+        name: &str,
+        one_of: &Value,
+    ) -> Result<String, StructuredOutputError> {
+        let schemas = one_of
+            .as_array()
+            .ok_or_else(|| StructuredOutputError::InvalidSchema("oneOf must be an array".into()))?;
+
+        if schemas.is_empty() {
+            return Err(StructuredOutputError::InvalidSchema(
+                "oneOf must have at least one schema".into(),
+            ));
+        }
+
+        if schemas.len() == 1 {
+            return self.schema_to_rule(name, &schemas[0]);
+        }
+
+        let mut alternatives = Vec::new();
+        for (i, sub_schema) in schemas.iter().enumerate() {
+            let rule_name = self.generate_rule_name(&format!("{}_oneof_{}", name, i));
+            let rule = self.schema_to_rule(&rule_name, sub_schema)?;
+            self.rules.push(rule);
+            alternatives.push(rule_name);
+        }
+
+        Ok(format!("{} ::= {}", name, alternatives.join(" | ")))
+    }
+
+    /// Handle anyOf (union type - match at least one schema)
+    fn any_of_to_rule(
+        &mut self,
+        name: &str,
+        any_of: &Value,
+    ) -> Result<String, StructuredOutputError> {
+        let schemas = any_of
+            .as_array()
+            .ok_or_else(|| StructuredOutputError::InvalidSchema("anyOf must be an array".into()))?;
+
+        if schemas.is_empty() {
+            return Err(StructuredOutputError::InvalidSchema(
+                "anyOf must have at least one schema".into(),
+            ));
+        }
+
+        if schemas.len() == 1 {
+            return self.schema_to_rule(name, &schemas[0]);
+        }
+
+        let mut alternatives = Vec::new();
+        for (i, sub_schema) in schemas.iter().enumerate() {
+            let rule_name = self.generate_rule_name(&format!("{}_anyof_{}", name, i));
+            let rule = self.schema_to_rule(&rule_name, sub_schema)?;
+            self.rules.push(rule);
+            alternatives.push(rule_name);
+        }
+
+        Ok(format!("{} ::= {}", name, alternatives.join(" | ")))
+    }
+
+    /// Convert a regex pattern to a GBNF rule for string constraints
+    fn pattern_to_rule(
+        &mut self,
+        name: &str,
+        pattern: &str,
+    ) -> Result<String, StructuredOutputError> {
+        let gbnf_rule = if pattern.starts_with('^') && pattern.ends_with('$') {
+            &pattern[1..pattern.len() - 1]
+        } else {
+            pattern
+        };
+
+        let char_rule = self.generate_rule_name(&format!("{}_char", name));
+
+        if gbnf_rule == "\\d+" || gbnf_rule == "[0-9]+" {
+            self.rules.push(format!("{} ::= [0-9]", char_rule));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else if gbnf_rule == "\\d*" || gbnf_rule == "[0-9]*" {
+            self.rules.push(format!("{} ::= [0-9]", char_rule));
+            Ok(format!("{} ::= \"\\\"\" ({})* \"\\\"\"", name, char_rule))
+        } else if gbnf_rule.starts_with("[a-zA-Z") || gbnf_rule.starts_with("[A-Za-z") {
+            self.rules.push(format!("{} ::= [a-zA-Z]", char_rule));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else if gbnf_rule == "[a-z]+" || gbnf_rule == "[a-zA-Z]+" {
+            self.rules.push(format!("{} ::= [a-zA-Z]", char_rule));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else if gbnf_rule.starts_with("[0-9a-fA-F") || gbnf_rule.starts_with("[0-9A-Fa-f") {
+            self.rules.push(format!("{} ::= [0-9a-fA-F]", char_rule));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else if gbnf_rule.starts_with("[^") && gbnf_rule.ends_with(']') {
+            let negated_content = &gbnf_rule[2..gbnf_rule.len() - 1];
+            self.rules
+                .push(format!("{} ::= [^{}\"\\\\]", char_rule, negated_content));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else if gbnf_rule.starts_with('[') && gbnf_rule.ends_with(']') {
+            let content = &gbnf_rule[1..gbnf_rule.len() - 1];
+            self.rules.push(format!("{} ::= [{}]", char_rule, content));
+            Ok(format!("{} ::= \"\\\"\" {}+ \"\\\"\"", name, char_rule))
+        } else {
+            Ok(format!("{} ::= string", name))
+        }
     }
 }
 
@@ -539,18 +757,74 @@ mod tests {
 
     #[test]
     fn test_unsupported_feature_ref() {
+        // $ref is now supported when definitions are provided
         let schema = json!({
-            "$ref": "#/definitions/Person"
+            "$ref": "#/definitions/Person",
+            "definitions": {
+                "Person": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" }
+                    }
+                }
+            }
         });
 
-        let result = JsonSchemaConverter::validate_schema(&schema);
+        let result = JsonSchemaConverter::convert(&schema);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ref_not_found() {
+        let schema = json!({
+            "$ref": "#/definitions/NonExistent"
+        });
+
+        let result = JsonSchemaConverter::convert(&schema);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_unsupported_feature_oneof() {
+    fn test_oneof_schema() {
         let schema = json!({
             "oneOf": [
+                { "type": "string" },
+                { "type": "number" }
+            ]
+        });
+
+        let result = JsonSchemaConverter::convert(&schema);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_anyof_schema() {
+        let schema = json!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "integer" }
+            ]
+        });
+
+        let result = JsonSchemaConverter::convert(&schema);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pattern_string() {
+        let schema = json!({
+            "type": "string",
+            "pattern": "^[0-9]+$"
+        });
+
+        let result = JsonSchemaConverter::convert(&schema);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unsupported_allof() {
+        let schema = json!({
+            "allOf": [
                 { "type": "string" },
                 { "type": "number" }
             ]

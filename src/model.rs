@@ -7,6 +7,20 @@ use crate::{
 use std::os::raw::c_char;
 use std::{ffi::CString, path::Path, ptr, sync::Arc};
 
+type ProgressCallbackFn = fn(f32) -> bool;
+
+struct ProgressCallbackData {
+    callback: ProgressCallbackFn,
+}
+
+unsafe extern "C" fn progress_callback_wrapper(
+    progress: std::os::raw::c_float,
+    user_data: *mut std::os::raw::c_void,
+) -> bool {
+    let data = &*(user_data as *const ProgressCallbackData);
+    (data.callback)(progress)
+}
+
 /// Inner struct to hold the model pointer with proper cleanup
 #[derive(Debug)]
 struct ModelInner {
@@ -159,14 +173,23 @@ impl Model {
             llama_params.kv_overrides = ptr::null();
         }
 
-        // Set progress callback if provided
-        if params.progress_callback.is_some() {
-            // Note: This would require more complex callback handling in a real implementation
-            llama_params.progress_callback = None; // Placeholder
-            llama_params.progress_callback_user_data = ptr::null_mut();
+        let _callback_data: Option<Box<ProgressCallbackData>>;
+        if let Some(cb) = params.progress_callback {
+            let data = Box::new(ProgressCallbackData { callback: cb });
+            llama_params.progress_callback = Some(
+                progress_callback_wrapper
+                    as unsafe extern "C" fn(
+                        std::os::raw::c_float,
+                        *mut std::os::raw::c_void,
+                    ) -> bool,
+            );
+            llama_params.progress_callback_user_data =
+                &*data as *const ProgressCallbackData as *mut std::os::raw::c_void;
+            _callback_data = Some(data);
         } else {
             llama_params.progress_callback = None;
             llama_params.progress_callback_user_data = ptr::null_mut();
+            _callback_data = None;
         }
 
         // Set remaining parameters

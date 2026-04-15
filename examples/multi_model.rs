@@ -90,6 +90,10 @@ fn generate(
     }
 
     let elapsed = start.elapsed();
-    println!("\n  ({} tokens, {:.1} tok/s)", count, count as f64 / elapsed.as_secs_f64());
+    println!(
+        "\n  ({} tokens, {:.1} tok/s)",
+        count,
+        count as f64 / elapsed.as_secs_f64()
+    );
     Ok(())
 }

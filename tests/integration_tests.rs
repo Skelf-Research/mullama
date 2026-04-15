@@ -4,7 +4,6 @@
 //! Some tests require actual model files and will be skipped if not available.
 
 use mullama::*;
-use std::{path::Path, sync::Arc};
 
 #[cfg(test)]
 mod model_integration_tests {

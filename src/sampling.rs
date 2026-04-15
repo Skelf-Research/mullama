@@ -3,7 +3,7 @@
 //! This module provides the full sampling functionality including:
 //! - All sampling strategies (greedy, top-k, top-p, temperature, etc.)
 //! - Sampler chains for combining multiple strategies
-//! - Advanced samplers (mirostat, typical, tail-free, etc.)
+//! - Advanced samplers (mirostat, typical, etc.)
 //! - Grammar-constrained sampling
 //! - Penalty systems for repetition control
 //! - Logit bias for token preference control
@@ -69,12 +69,6 @@ impl Sampler {
     pub fn min_p(p: f32, min_keep: usize) -> Result<Self, MullamaError> {
         let sampler_ptr = unsafe { sys::llama_sampler_init_min_p(p, min_keep) };
         Self::from_ptr(sampler_ptr, None, "min-p")
-    }
-
-    /// Create a tail-free sampling (TFS) sampler
-    pub fn tail_free(z: f32, min_keep: usize) -> Result<Self, MullamaError> {
-        let sampler_ptr = unsafe { sys::llama_sampler_init_tail_free(z, min_keep) };
-        Self::from_ptr(sampler_ptr, None, "tail-free")
     }
 
     /// Create a typical sampling sampler
@@ -305,29 +299,6 @@ impl Sampler {
         }
     }
 
-    /// Get performance data for this sampler
-    pub fn perf_data(&self) -> SamplerPerfData {
-        let data = unsafe { sys::llama_perf_sampler(self.sampler_ptr) };
-        SamplerPerfData {
-            t_sample_ms: data.t_sample_ms,
-            n_sample: data.n_sample,
-        }
-    }
-
-    /// Print performance information
-    pub fn perf_print(&self) {
-        unsafe {
-            sys::llama_perf_sampler_print(self.sampler_ptr);
-        }
-    }
-
-    /// Reset performance counters
-    pub fn perf_reset(&mut self) {
-        unsafe {
-            sys::llama_perf_sampler_reset(self.sampler_ptr);
-        }
-    }
-
     /// Get the internal sampler pointer (for advanced use)
     #[allow(dead_code)]
     pub(crate) fn as_ptr(&self) -> *mut sys::llama_sampler {
@@ -431,6 +402,29 @@ impl SamplerChain {
     /// Get the seed used by the chain's distribution sampler
     pub fn get_seed(&self) -> u32 {
         unsafe { sys::llama_sampler_get_seed(self.chain_ptr) }
+    }
+
+    /// Get performance data for this sampler chain.
+    pub fn perf_data(&self) -> SamplerPerfData {
+        let data = unsafe { sys::llama_perf_sampler(self.chain_ptr) };
+        SamplerPerfData {
+            t_sample_ms: data.t_sample_ms,
+            n_sample: data.n_sample,
+        }
+    }
+
+    /// Print performance information for this sampler chain.
+    pub fn perf_print(&self) {
+        unsafe {
+            sys::llama_perf_sampler_print(self.chain_ptr);
+        }
+    }
+
+    /// Reset performance counters for this sampler chain.
+    pub fn perf_reset(&mut self) {
+        unsafe {
+            sys::llama_perf_sampler_reset(self.chain_ptr);
+        }
     }
 
     /// Get the internal pointer (for advanced use)

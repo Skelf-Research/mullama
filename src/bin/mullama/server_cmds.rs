@@ -53,6 +53,26 @@ pub(crate) async fn run_server(
 
     mullama::backend_init();
 
+    let spawn_config = mullama::daemon::SpawnConfig {
+        socket: socket.clone(),
+        http_port,
+        http_addr: http_addr.clone(),
+        api_key: resolved_api_key.clone(),
+        require_api_key: enforce_api_key,
+        gpu_layers,
+        context_size,
+        context_pool_size,
+        background: false,
+        log_file: None,
+        flash_attn,
+        cache_type_k: cache_type_k.clone(),
+        cache_type_v: cache_type_v.clone(),
+        ..Default::default()
+    };
+    if let Err(e) = spawn_config.save() {
+        eprintln!("Warning: could not save daemon config for restart: {}", e);
+    }
+
     println!("Starting Mullama Daemon...");
     println!("  IPC Socket: {}", socket);
     if http_port > 0 {

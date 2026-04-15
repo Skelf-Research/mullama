@@ -107,7 +107,7 @@ impl ImageConverter {
     pub async fn convert_image(
         &self,
         input_path: impl AsRef<Path>,
-        input_format: ImageFormatType,
+        _input_format: ImageFormatType,
         output_format: ImageFormatType,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
@@ -154,7 +154,7 @@ impl ImageConverter {
     pub async fn convert_image_bytes(
         &self,
         input_data: &[u8],
-        input_format: ImageFormatType,
+        _input_format: ImageFormatType,
         output_format: ImageFormatType,
         config: ConversionConfig,
     ) -> Result<ImageConversionResult, MullamaError> {
@@ -241,18 +241,12 @@ impl ImageConverter {
                     })?;
             }
             ImageFormatType::Png => {
-                let compression = if let Some(quality) = config.quality {
-                    (quality * 9.0) as u8
-                } else {
-                    self.config.png_compression
-                };
                 img.write_to(&mut cursor, ImageOutputFormat::Png)
                     .map_err(|e| {
                         MullamaError::ConfigError(format!("PNG encoding failed: {}", e))
                     })?;
             }
             ImageFormatType::WebP => {
-                let quality = config.quality.unwrap_or(self.config.webp_quality);
                 // Note: WebP support would require additional dependencies
                 img.write_to(&mut cursor, ImageOutputFormat::Png)
                     .map_err(|e| {

@@ -6,11 +6,7 @@
 //! - Sampling chain composition
 //! - Performance monitoring concepts
 
-use mullama::{
-    Batch, Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain,
-    SamplerChainParams, SamplerParams,
-};
-use std::sync::Arc;
+use mullama::{ContextParams, ModelParams, MullamaError, SamplerParams};
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama Advanced Generation Example");

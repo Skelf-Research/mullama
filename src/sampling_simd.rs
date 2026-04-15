@@ -130,6 +130,7 @@ pub fn simd_max_f32(data: &[f32]) -> f32 {
 }
 
 /// Scalar fallback for maximum
+#[cfg(not(target_arch = "aarch64"))]
 fn scalar_max_f32(data: &[f32]) -> f32 {
     data.iter().copied().fold(f32::NEG_INFINITY, f32::max)
 }
@@ -220,6 +221,7 @@ pub fn simd_sum_f32(data: &[f32]) -> f32 {
     }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 fn scalar_sum_f32(data: &[f32]) -> f32 {
     data.iter().sum()
 }
@@ -299,6 +301,9 @@ pub fn simd_softmax(data: &mut [f32]) {
             unsafe { simd_softmax_avx2(data, max_val) };
             return;
         }
+
+        scalar_softmax(data, max_val);
+        return;
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -307,10 +312,13 @@ pub fn simd_softmax(data: &mut [f32]) {
         return;
     }
 
-    // Scalar fallback
-    scalar_softmax(data, max_val);
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        scalar_softmax(data, max_val);
+    }
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 fn scalar_softmax(data: &mut [f32], max_val: f32) {
     let mut sum = 0.0f32;
     for val in data.iter_mut() {

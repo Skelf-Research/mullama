@@ -1,11 +1,19 @@
 //! Hugging Face Hub client for model operations
+//!
+//! The core `HFClient` struct is always available. HTTP-dependent methods
+//! (search, download, etc.) require the `daemon` feature which provides the
+//! `reqwest` HTTP client. This replaces the previous `curl` subprocess approach
+//! with a native cross-platform HTTP implementation.
 
 use super::types::*;
 use super::urlencoding;
 use super::{HF_API_BASE, HF_MODELS_BASE};
 use crate::error::MullamaError;
+#[cfg(feature = "daemon")]
 use crate::Model;
 use std::fs;
+#[cfg(feature = "daemon")]
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// Hugging Face Hub client for model operations
@@ -57,6 +65,7 @@ impl HFClient {
     }
 
     /// Search for models on Hugging Face Hub
+    #[cfg(feature = "daemon")]
     pub fn search_models(
         &self,
         filters: &ModelSearchFilters,
@@ -120,6 +129,7 @@ impl HFClient {
     }
 
     /// Get detailed information about a specific model
+    #[cfg(feature = "daemon")]
     pub fn get_model_info(&self, model_id: &str) -> Result<HFModelInfo, MullamaError> {
         let url = format!("{}/models/{}", HF_API_BASE, model_id);
         let response = self.http_get(&url)?;
@@ -134,6 +144,7 @@ impl HFClient {
     }
 
     /// List GGUF files available for a model
+    #[cfg(feature = "daemon")]
     pub fn list_gguf_files(&self, model_id: &str) -> Result<Vec<GGUFFile>, MullamaError> {
         let url = format!("{}/models/{}/tree/main", HF_API_BASE, model_id);
         let response = self.http_get(&url)?;
@@ -174,6 +185,7 @@ impl HFClient {
     }
 
     /// Download a GGUF file
+    #[cfg(feature = "daemon")]
     pub fn download_gguf(
         &self,
         model_id: &str,
@@ -216,6 +228,7 @@ impl HFClient {
     ///
     /// # Returns
     /// Path to the downloaded LoRA adapter file
+    #[cfg(feature = "daemon")]
     pub fn download_lora(
         &self,
         model_id: &str,
@@ -266,6 +279,7 @@ impl HFClient {
     }
 
     /// Download a model file with progress tracking
+    #[cfg(feature = "daemon")]
     fn download_file(
         &self,
         url: &str,
@@ -276,111 +290,83 @@ impl HFClient {
     ) -> Result<(), MullamaError> {
         let temp_path = dest.with_extension("download");
 
-        #[cfg(unix)]
-        {
-            use std::process::{Command, Stdio};
-            use std::thread;
-            use std::time::{Duration, Instant};
-
-            let mut cmd = Command::new("curl");
-            cmd.arg("-L") // Follow redirects
-                .arg("-o")
-                .arg(&temp_path)
-                .arg("-s") // Silent mode
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-
-            if let Some(ref token) = self.token {
-                cmd.arg("-H")
-                    .arg(format!("Authorization: Bearer {}", token));
-            }
-
-            cmd.arg(url);
-
-            let mut child = cmd.spawn().map_err(|e| {
-                MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e))
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(&self.user_agent)
+            .build()
+            .map_err(|e| {
+                MullamaError::HuggingFaceError(format!("Failed to create HTTP client: {}", e))
             })?;
 
-            // Poll file size for progress updates
-            let start_time = Instant::now();
-            let temp_path_clone = temp_path.clone();
-            let filename_clone = filename.to_string();
+        let mut request = client.get(url);
+        if let Some(ref token) = self.token {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
 
-            loop {
-                // Check if curl is still running
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        // Process finished
-                        if !status.success() {
-                            // Clean up temp file
-                            let _ = fs::remove_file(&temp_path);
-                            return Err(MullamaError::HuggingFaceError(
-                                "Download failed".to_string(),
-                            ));
-                        }
-                        break;
-                    }
-                    Ok(None) => {
-                        // Still running, check file size
-                        if let Ok(metadata) = fs::metadata(&temp_path_clone) {
-                            let downloaded = metadata.len();
-                            let elapsed = start_time.elapsed().as_secs_f64();
-                            let speed = if elapsed > 0.0 {
-                                (downloaded as f64 / elapsed) as u64
-                            } else {
-                                0
-                            };
-                            let remaining = expected_size.saturating_sub(downloaded);
-                            let eta = if speed > 0 { remaining / speed } else { 0 };
+        let mut response = request.send().map_err(|e| {
+            MullamaError::HuggingFaceError(format!("Download request failed: {}", e))
+        })?;
 
-                            if let Some(ref callback) = progress_callback {
-                                callback(DownloadProgress {
-                                    downloaded,
-                                    total: expected_size,
-                                    speed_bps: speed,
-                                    eta_seconds: eta,
-                                    filename: filename_clone.clone(),
-                                });
-                            }
-                        }
-                        thread::sleep(Duration::from_millis(500));
-                    }
-                    Err(e) => {
-                        return Err(MullamaError::HuggingFaceError(format!(
-                            "Failed to check curl status: {}",
-                            e
-                        )));
-                    }
-                }
+        if !response.status().is_success() {
+            let _ = fs::remove_file(&temp_path);
+            return Err(MullamaError::HuggingFaceError(format!(
+                "Download failed: HTTP {}",
+                response.status()
+            )));
+        }
+
+        let mut file = fs::File::create(&temp_path).map_err(MullamaError::IoError)?;
+        let start_time = std::time::Instant::now();
+        let mut downloaded: u64 = 0;
+
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = response
+                .read(&mut buf)
+                .map_err(|e| MullamaError::HuggingFaceError(format!("Download error: {}", e)))?;
+            if n == 0 {
+                break;
             }
+            file.write_all(&buf[..n])
+                .map_err(|e| MullamaError::HuggingFaceError(format!("Write error: {}", e)))?;
+            downloaded += n as u64;
 
-            // Move temp file to final destination
-            fs::rename(&temp_path, dest).map_err(MullamaError::IoError)?;
-
-            // Call progress callback with completion
-            if let Some(callback) = progress_callback {
+            if let Some(ref callback) = progress_callback {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 {
+                    (downloaded as f64 / elapsed) as u64
+                } else {
+                    0
+                };
+                let remaining = expected_size.saturating_sub(downloaded);
+                let eta = if speed > 0 { remaining / speed } else { 0 };
                 callback(DownloadProgress {
-                    downloaded: expected_size,
+                    downloaded,
                     total: expected_size,
-                    speed_bps: 0,
-                    eta_seconds: 0,
+                    speed_bps: speed,
+                    eta_seconds: eta,
                     filename: filename.to_string(),
                 });
             }
-
-            Ok(())
         }
 
-        #[cfg(not(unix))]
-        {
-            Err(MullamaError::HuggingFaceError(
-                "Direct download not implemented for this platform. Please download manually."
-                    .to_string(),
-            ))
+        drop(file);
+        fs::rename(&temp_path, dest).map_err(MullamaError::IoError)?;
+
+        if let Some(callback) = progress_callback {
+            callback(DownloadProgress {
+                downloaded: expected_size,
+                total: expected_size,
+                speed_bps: 0,
+                eta_seconds: 0,
+                filename: filename.to_string(),
+            });
         }
+
+        Ok(())
     }
 
     /// Test a downloaded model
+    #[cfg(feature = "daemon")]
     pub fn test_model(&self, model_path: &Path) -> Result<ModelTestResult, MullamaError> {
         use std::sync::Arc;
         use std::time::Instant;
@@ -439,6 +425,7 @@ impl HFClient {
     }
 
     /// Get popular GGUF model repositories
+    #[cfg(feature = "daemon")]
     pub fn get_popular_gguf_models(&self, limit: usize) -> Result<Vec<HFModelInfo>, MullamaError> {
         let filters = ModelSearchFilters::new()
             .gguf_only()
@@ -449,6 +436,7 @@ impl HFClient {
     }
 
     /// Search for GGUF versions of a specific model
+    #[cfg(feature = "daemon")]
     pub fn find_gguf_versions(&self, model_name: &str) -> Result<Vec<HFModelInfo>, MullamaError> {
         let filters = ModelSearchFilters::new()
             .with_query(&format!("{} GGUF", model_name))
@@ -460,44 +448,35 @@ impl HFClient {
     }
 
     /// HTTP GET request helper
+    #[cfg(feature = "daemon")]
     fn http_get(&self, url: &str) -> Result<String, MullamaError> {
-        #[cfg(unix)]
-        {
-            use std::process::Command;
-
-            let mut cmd = Command::new("curl");
-            cmd.arg("-s") // Silent
-                .arg("-L") // Follow redirects
-                .arg("-H")
-                .arg(format!("User-Agent: {}", self.user_agent));
-
-            if let Some(ref token) = self.token {
-                cmd.arg("-H")
-                    .arg(format!("Authorization: Bearer {}", token));
-            }
-
-            cmd.arg(url);
-
-            let output = cmd.output().map_err(|e| {
-                MullamaError::HuggingFaceError(format!("Failed to run curl: {}", e))
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(&self.user_agent)
+            .build()
+            .map_err(|e| {
+                MullamaError::HuggingFaceError(format!("Failed to create HTTP client: {}", e))
             })?;
 
-            if !output.status.success() {
-                return Err(MullamaError::HuggingFaceError(format!(
-                    "HTTP request failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )));
-            }
-
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        let mut request = client.get(url);
+        if let Some(ref token) = self.token {
+            request = request.header("Authorization", format!("Bearer {}", token));
         }
 
-        #[cfg(not(unix))]
-        {
-            Err(MullamaError::HuggingFaceError(
-                "HTTP requests not implemented for this platform".to_string(),
-            ))
+        let response = request
+            .send()
+            .map_err(|e| MullamaError::HuggingFaceError(format!("HTTP request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(MullamaError::HuggingFaceError(format!(
+                "HTTP request failed: {} - {}",
+                response.status(),
+                response.text().unwrap_or_else(|_| "(no body)".to_string())
+            )));
         }
+
+        response
+            .text()
+            .map_err(|e| MullamaError::HuggingFaceError(format!("Failed to read response: {}", e)))
     }
 
     /// Parse model info from JSON

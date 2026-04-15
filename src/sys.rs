@@ -846,7 +846,6 @@ extern "C" {
     pub fn llama_sampler_init_top_k(k: i32) -> *mut llama_sampler;
     pub fn llama_sampler_init_top_p(p: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_min_p(p: c_float, min_keep: usize) -> *mut llama_sampler;
-    pub fn llama_sampler_init_tail_free(z: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_typical(p: c_float, min_keep: usize) -> *mut llama_sampler;
     pub fn llama_sampler_init_temp(t: c_float) -> *mut llama_sampler;
     pub fn llama_sampler_init_temp_ext(

@@ -48,6 +48,9 @@ ui/dist/
 ui/.vite/
 node_modules/
 
+# Pre-built native Node.js addons
+*.node
+
 # Environment files
 .env
 .env.local

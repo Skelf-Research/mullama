@@ -17,11 +17,11 @@
 //!     --image path/to/image.jpg
 //! ```
 
-use mullama::{Context, ContextParams, Model, MullamaError};
-use std::sync::Arc;
-
+use mullama::MullamaError;
 #[cfg(feature = "multimodal")]
-use mullama::{MtmdContext, MtmdParams};
+use mullama::{Context, ContextParams, Model, MtmdContext, MtmdParams};
+#[cfg(feature = "multimodal")]
+use std::sync::Arc;
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama Multimodal Example");

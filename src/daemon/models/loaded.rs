@@ -1,9 +1,8 @@
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::RwLock as TokioRwLock;
-
 use super::config::ModelConfig;
+use super::pool::ContextPool;
 use super::stats::ModelStats;
 use crate::daemon::protocol::ModelInfo;
 use crate::{Context, ContextParams, Model, MullamaError};
@@ -15,14 +14,13 @@ use crate::MtmdContext;
 pub struct LoadedModel {
     pub alias: String,
     pub model: Arc<Model>,
-    contexts: Vec<TokioRwLock<Context>>,
-    next_context: AtomicUsize,
+    pool: ContextPool,
     pub info: ModelInfo,
     pub active_requests: AtomicU32,
     pub config: ModelConfig,
     pub stats: ModelStats,
     #[cfg(feature = "multimodal")]
-    pub mtmd_context: Option<TokioRwLock<MtmdContext>>,
+    pub mtmd_context: Option<tokio::sync::RwLock<MtmdContext>>,
 }
 
 impl LoadedModel {
@@ -37,25 +35,17 @@ impl LoadedModel {
         config: ModelConfig,
         context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
-        let context_pool_size = context_pool_size.max(1);
-        let mut contexts = Vec::with_capacity(context_pool_size);
-        contexts.push(TokioRwLock::new(context));
-
-        for _ in 1..context_pool_size {
-            let ctx = Context::new(model.clone(), ctx_params.clone())?;
-            contexts.push(TokioRwLock::new(ctx));
-        }
+        let pool = ContextPool::new(model.clone(), context, ctx_params, context_pool_size)?;
 
         Ok(Self {
             alias,
             model,
-            contexts,
-            next_context: AtomicUsize::new(0),
+            pool,
             info,
             active_requests: AtomicU32::new(0),
             config,
             stats: ModelStats::new(),
-            mtmd_context: mtmd_context.map(TokioRwLock::new),
+            mtmd_context: mtmd_context.map(tokio::sync::RwLock::new),
         })
     }
 
@@ -69,20 +59,12 @@ impl LoadedModel {
         config: ModelConfig,
         context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
-        let context_pool_size = context_pool_size.max(1);
-        let mut contexts = Vec::with_capacity(context_pool_size);
-        contexts.push(TokioRwLock::new(context));
-
-        for _ in 1..context_pool_size {
-            let ctx = Context::new(model.clone(), ctx_params.clone())?;
-            contexts.push(TokioRwLock::new(ctx));
-        }
+        let pool = ContextPool::new(model.clone(), context, ctx_params, context_pool_size)?;
 
         Ok(Self {
             alias,
             model,
-            contexts,
-            next_context: AtomicUsize::new(0),
+            pool,
             info,
             active_requests: AtomicU32::new(0),
             config,
@@ -91,17 +73,15 @@ impl LoadedModel {
     }
 
     pub async fn acquire_context(&self) -> tokio::sync::RwLockWriteGuard<'_, Context> {
-        let idx = self.next_context.fetch_add(1, Ordering::Relaxed) % self.contexts.len();
-        self.contexts[idx].write().await
+        self.pool.acquire().await
     }
 
     pub async fn get_context(&self) -> tokio::sync::RwLockReadGuard<'_, Context> {
-        let idx = self.next_context.load(Ordering::Relaxed) % self.contexts.len();
-        self.contexts[idx].read().await
+        self.pool.read().await
     }
 
     pub fn pool_size(&self) -> usize {
-        self.contexts.len()
+        self.pool.size()
     }
 
     #[cfg(feature = "multimodal")]

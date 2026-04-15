@@ -13,8 +13,7 @@ use super::{
     LAYER_TEMPLATE, OLLAMA_CACHE_DIR, OLLAMA_REGISTRY_URL,
 };
 use crate::daemon::ollama::{
-    OllamaManifest, OllamaMessage, OllamaModel, OllamaModelIndex, OllamaModelRef,
-    OllamaParameters,
+    OllamaManifest, OllamaMessage, OllamaModel, OllamaModelIndex, OllamaModelRef, OllamaParameters,
 };
 use crate::MullamaError;
 

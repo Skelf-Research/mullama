@@ -35,7 +35,7 @@ default = []
 serde = []
 llama-cpp-tests = []
 multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio", "tokio-util"]
-format-conversion = ["multimodal", "ffmpeg-next"]
+format-conversion = ["multimodal", "ffmpeg-sys-next", "futures"]
 streaming-audio = ["multimodal", "cpal", "ringbuf"]
 cuda = []
 rocm = []
@@ -45,12 +45,12 @@ rpc = []
 async = ["tokio", "futures", "tokio-util"]
 streaming = ["async", "async-stream"]
 web = ["async", "axum", "tower", "tower-http"]
-websockets = ["async", "axum", "tokio-tungstenite"]
+websockets = ["async", "axum", "tokio-tungstenite", "uuid"]
 parallel = ["rayon"]
 late-interaction = []
 tokio-runtime = ["tokio", "tokio-util"]
 use-mimalloc = ["mimalloc"]
-daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding", "tokio-stream", "base64", "include_dir", "mime_guess", "tracing", "tracing-subscriber", "sled", "use-mimalloc"]
+daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding", "tokio-stream", "base64", "include_dir", "mime_guess", "tracing", "tracing-subscriber", "sled", "use-mimalloc", "zip"]
 embedded-ui = ["include_dir", "mime_guess"]
 tls = ["axum-server"]
 windows-optimization = ["windows"]
@@ -72,6 +72,7 @@ tempfile = "3.0"
 dirs = "5.0"
 mimalloc = { version = "0.1", default-features = false, optional = true }
 sha2 = "0.10"
+uuid = { version = "1.0", features = ["v4"], optional = true }
 
 # Rust-specific performance optimizations
 dashmap = "5.5"                                          # Lock-free concurrent HashMap
@@ -88,7 +89,7 @@ futures = { version = "0.3", optional = true }
 async-stream = { version = "0.3", optional = true }
 
 # Web framework integration
-axum = { version = "0.7", optional = true }
+axum = { version = "0.7", features = ["ws"], optional = true }
 tower = { version = "0.4", features = ["timeout", "limit"], optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 
@@ -114,12 +115,11 @@ dasp = { version = "0.11", features = ["all"], optional = true }
 cpal = { version = "0.15", optional = true }
 
 # Image processing (for multimodal)
-image = { version = "0.24", features = ["jpeg", "png", "webp", "tiff", "bmp"], optional = true }
+image = { version = "0.24", features = ["jpeg", "png", "webp", "tiff", "bmp", "gif"], optional = true }
 imageproc = { version = "0.23", optional = true }
 
 # Format conversion and streaming
-ffmpeg-next = { version = "6.0", optional = true }
-gstreamer = { version = "0.21", optional = true }
+ffmpeg-sys-next = { version = "6.0", path = "vendor/ffmpeg-sys-next", default-features = false, features = ["avcodec", "avformat", "swscale"], optional = true }
 
 # Real-time audio streaming
 ringbuf = { version = "0.3", optional = true }
@@ -132,9 +132,12 @@ crossterm = { version = "0.28", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
 
 # HTTP client for HuggingFace downloads
-reqwest = { version = "0.11", features = ["stream", "json"], optional = true }
+reqwest = { version = "0.11", features = ["stream", "json", "blocking"], optional = true }
 indicatif = { version = "0.17", optional = true }
 urlencoding = { version = "2.1", optional = true }
+
+# Archive format support for control vectors
+zip = { version = "2.2", optional = true }
 
 # Base64 encoding/decoding (for image data URIs)
 base64 = { version = "0.22", optional = true }

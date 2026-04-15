@@ -25,7 +25,7 @@ pub type AppState = Arc<Daemon>;
 pub use error::ApiError;
 pub use router::create_openai_router;
 pub use types::{
-    ChatChoice, ChatCompletionRequest, ChatCompletionResponse, CompletionChoice,
-    CompletionRequest, CompletionResponse, EmbeddingObject, EmbeddingsRequest,
-    EmbeddingsResponse, ErrorDetail, ErrorResponse, ModelObject, ModelsResponse,
+    ChatChoice, ChatCompletionRequest, ChatCompletionResponse, CompletionChoice, CompletionRequest,
+    CompletionResponse, EmbeddingObject, EmbeddingsRequest, EmbeddingsResponse, ErrorDetail,
+    ErrorResponse, ModelObject, ModelsResponse,
 };

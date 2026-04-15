@@ -162,9 +162,7 @@ pub(in crate::daemon::openai) async fn api_load_model(
     };
 
     let md = &daemon.config.model_defaults;
-    let gpu_layers = request
-        .gpu_layers
-        .unwrap_or(md.gpu_layers);
+    let gpu_layers = request.gpu_layers.unwrap_or(md.gpu_layers);
     let context_size = request
         .context_size
         .or_else(|| model_config.as_ref().and_then(|c| c.context_size))

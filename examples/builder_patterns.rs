@@ -7,7 +7,6 @@
 
 use mullama::builder::presets;
 use mullama::prelude::*;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), MullamaError> {
@@ -28,6 +27,7 @@ async fn main() -> Result<(), MullamaError> {
 
     // Example 5: Complex workflow
     demonstrate_complex_workflow().await?;
+    demonstrate_builder_patterns_showcase();
 
     println!("\n✨ All builder patterns demonstrated successfully!");
     Ok(())
@@ -39,7 +39,7 @@ async fn demonstrate_model_builder() -> Result<(), MullamaError> {
 
     // Basic model configuration
     println!("1️⃣ Basic model configuration:");
-    let basic_model_builder = ModelBuilder::new()
+    let _basic_model_builder = ModelBuilder::new()
         .path("path/to/model.gguf")
         .gpu_layers(16)
         .context_size(2048);
@@ -51,7 +51,7 @@ async fn demonstrate_model_builder() -> Result<(), MullamaError> {
 
     // Advanced model configuration
     println!("\n2️⃣ Advanced model configuration:");
-    let advanced_model_builder = ModelBuilder::new()
+    let _advanced_model_builder = ModelBuilder::new()
         .path("path/to/large_model.gguf")
         .gpu_layers(32)
         .context_size(4096)
@@ -68,7 +68,7 @@ async fn demonstrate_model_builder() -> Result<(), MullamaError> {
 
     // Model with preset
     println!("\n3️⃣ Model with performance preset:");
-    let performance_model_builder = ModelBuilder::new()
+    let _performance_model_builder = ModelBuilder::new()
         .path("path/to/model.gguf")
         .preset(presets::performance_optimized);
 
@@ -156,7 +156,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("==================");
 
     println!("1️⃣ Basic sampling configuration:");
-    let basic_sampler_builder = SamplerBuilder::new()
+    let _basic_sampler_builder = SamplerBuilder::new()
         .temperature(0.7)
         .top_k(40)
         .nucleus(0.9);
@@ -167,7 +167,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("      - Nucleus (top-p): 0.9");
 
     println!("\n2️⃣ Advanced sampling with penalties:");
-    let advanced_sampler_builder = SamplerBuilder::new()
+    let _advanced_sampler_builder = SamplerBuilder::new()
         .temperature(0.8)
         .top_k(50)
         .nucleus(0.95)
@@ -192,7 +192,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("      - Seed: 12345");
 
     println!("\n3️⃣ Creative sampling preset:");
-    let creative_sampler_builder = SamplerBuilder::new().preset(presets::creative_sampling);
+    let _creative_sampler_builder = SamplerBuilder::new().preset(presets::creative_sampling);
 
     println!("   ✅ Creative sampling configured");
     println!("      - High temperature for creativity");
@@ -200,7 +200,7 @@ async fn demonstrate_sampler_builder() -> Result<(), MullamaError> {
     println!("      - Adjusted penalties");
 
     println!("\n4️⃣ Precise sampling preset:");
-    let precise_sampler_builder = SamplerBuilder::new().preset(presets::precise_sampling);
+    let _precise_sampler_builder = SamplerBuilder::new().preset(presets::precise_sampling);
 
     println!("   ✅ Precise sampling configured");
     println!("      - Low temperature for consistency");
@@ -221,19 +221,19 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     println!("1️⃣ Model presets:");
 
     // Creative writing model
-    let creative_model = ModelBuilder::new()
+    let _creative_model = ModelBuilder::new()
         .path("creative_model.gguf")
         .preset(presets::creative_model);
     println!("   🎨 Creative model: 24 GPU layers, 4096 context");
 
     // Performance optimized model
-    let performance_model = ModelBuilder::new()
+    let _performance_model = ModelBuilder::new()
         .path("performance_model.gguf")
         .preset(presets::performance_optimized);
     println!("   ⚡ Performance model: Max GPU layers, no validation");
 
     // Memory optimized model
-    let memory_model = ModelBuilder::new()
+    let _memory_model = ModelBuilder::new()
         .path("memory_model.gguf")
         .preset(presets::memory_optimized);
     println!("   💾 Memory model: CPU only, optimized memory usage");
@@ -241,15 +241,15 @@ async fn demonstrate_presets() -> Result<(), MullamaError> {
     println!("\n2️⃣ Sampling presets:");
 
     // Creative sampling
-    let creative_sampling = SamplerBuilder::new().preset(presets::creative_sampling);
+    let _creative_sampling = SamplerBuilder::new().preset(presets::creative_sampling);
     println!("   🎨 Creative: temp=0.9, top_k=60, high diversity");
 
     // Precise sampling
-    let precise_sampling = SamplerBuilder::new().preset(presets::precise_sampling);
+    let _precise_sampling = SamplerBuilder::new().preset(presets::precise_sampling);
     println!("   🎯 Precise: temp=0.2, top_k=10, high consistency");
 
     // Balanced sampling
-    let balanced_sampling = SamplerBuilder::new().preset(presets::balanced_sampling);
+    let _balanced_sampling = SamplerBuilder::new().preset(presets::balanced_sampling);
     println!("   ⚖️  Balanced: temp=0.7, top_k=40, moderate settings");
 
     Ok(())
@@ -263,7 +263,7 @@ async fn demonstrate_complex_workflow() -> Result<(), MullamaError> {
 
     // Step 1: Configure model with chained builder
     println!("\n1️⃣ Model configuration:");
-    let model_builder = ModelBuilder::new()
+    let _model_builder = ModelBuilder::new()
         .path("path/to/model.gguf")
         .gpu_layers(32)
         .context_size(4096)
@@ -320,7 +320,7 @@ async fn demonstrate_complex_workflow() -> Result<(), MullamaError> {
         .parse()
         .unwrap_or(2048);
 
-    let conditional_model = ModelBuilder::new()
+    let _conditional_model = ModelBuilder::new()
         .path("model.gguf")
         .gpu_layers(if use_gpu { 32 } else { 0 })
         .context_size(context_size)

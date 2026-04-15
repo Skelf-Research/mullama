@@ -1,16 +1,13 @@
 use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
+use crate::DaemonAction;
 use mullama::daemon::spawn::default_log_path;
 use mullama::daemon::{
     daemon_status, is_daemon_running, spawn_daemon, stop_daemon, SpawnConfig, SpawnResult,
 };
 
-use crate::DaemonAction;
-
-pub(crate) fn handle_daemon_action(
-    action: DaemonAction,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         DaemonAction::Start {
             http_port,
@@ -86,6 +83,10 @@ pub(crate) fn daemon_start(
         log_file: Some(default_log_path()),
         ..Default::default()
     };
+
+    config.save().map_err(|e| {
+        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>
+    })?;
 
     match spawn_daemon(&config) {
         SpawnResult::AlreadyRunning => {
@@ -163,14 +164,62 @@ pub(crate) fn daemon_stop(socket: &str) -> Result<(), Box<dyn std::error::Error>
 }
 
 pub(crate) fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (http_port, gpu_layers, context_size) = if let Ok(info) = daemon_status(socket) {
+    let saved_config = mullama::daemon::SpawnConfig::load();
+
+    let (
+        http_port,
+        http_addr,
+        api_key,
+        require_api_key,
+        gpu_layers,
+        context_size,
+        context_pool_size,
+        flash_attn,
+        cache_type_k,
+        cache_type_v,
+    ) = if let Some(ref cfg) = saved_config {
+        (
+            cfg.http_port,
+            cfg.http_addr.clone(),
+            cfg.api_key.clone(),
+            cfg.require_api_key,
+            cfg.gpu_layers,
+            cfg.context_size,
+            cfg.context_pool_size,
+            cfg.flash_attn,
+            cfg.cache_type_k.clone(),
+            cfg.cache_type_v.clone(),
+        )
+    } else if let Ok(info) = daemon_status(socket) {
         let port = info
             .http_endpoint
             .and_then(|e| e.split(':').next_back().and_then(|p| p.parse().ok()))
             .unwrap_or(8080);
-        (port, 0, 4096)
+        (
+            port,
+            "127.0.0.1".to_string(),
+            None,
+            false,
+            0,
+            4096,
+            mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE,
+            false,
+            None,
+            None,
+        )
     } else {
-        (8080, 0, 4096)
+        (
+            8080,
+            "127.0.0.1".to_string(),
+            None,
+            false,
+            0,
+            4096,
+            mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE,
+            false,
+            None,
+            None,
+        )
     };
 
     if is_daemon_running(socket) {
@@ -179,16 +228,59 @@ pub(crate) fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Err
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    daemon_start(
-        socket,
+    let config = mullama::daemon::SpawnConfig {
+        socket: socket.to_string(),
         http_port,
-        "127.0.0.1",
-        None,
-        false,
+        http_addr,
+        api_key,
+        require_api_key,
         gpu_layers,
         context_size,
-        mullama::daemon::DEFAULT_CONTEXT_POOL_SIZE,
-    )?;
+        context_pool_size,
+        background: true,
+        log_file: Some(default_log_path()),
+        flash_attn,
+        cache_type_k,
+        cache_type_v,
+        ..Default::default()
+    };
+
+    config.save()?;
+
+    match spawn_daemon(&config) {
+        mullama::daemon::SpawnResult::AlreadyRunning => {
+            println!("Daemon is already running.");
+        }
+        mullama::daemon::SpawnResult::Spawned { pid } => {
+            print!("Waiting for daemon to start");
+            io::stdout().flush()?;
+
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(30);
+
+            while start.elapsed() < timeout {
+                if is_daemon_running(socket) {
+                    println!(" OK");
+                    println!();
+                    println!("Daemon restarted successfully!");
+                    if let Some(pid) = pid {
+                        println!("  PID:     {}", pid);
+                    }
+                    println!("  Socket:  {}", socket);
+                    return Ok(());
+                }
+                print!(".");
+                io::stdout().flush()?;
+                std::thread::sleep(Duration::from_millis(500));
+            }
+
+            println!(" FAILED");
+            eprintln!("Daemon did not start within {} seconds.", timeout.as_secs());
+        }
+        mullama::daemon::SpawnResult::Failed(e) => {
+            eprintln!("Failed to restart daemon: {}", e);
+        }
+    }
 
     Ok(())
 }
@@ -250,10 +342,7 @@ pub(crate) fn daemon_show_status(
     Ok(())
 }
 
-pub(crate) fn daemon_logs(
-    lines: usize,
-    follow: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn daemon_logs(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::Error>> {
     let log_path = default_log_path();
 
     if !log_path.exists() {

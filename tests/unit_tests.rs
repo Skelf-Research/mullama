@@ -4,11 +4,9 @@
 //! They test data structures, parameter validation, type safety, and API consistency.
 
 use mullama::*;
-use std::sync::Arc;
 
 #[cfg(test)]
 mod ffi_tests {
-    use super::*;
     use mullama::sys;
 
     #[test]

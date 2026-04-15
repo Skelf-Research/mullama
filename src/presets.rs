@@ -233,9 +233,7 @@ impl HardwarePreset {
             "cpu-low" | "cpu_low_memory" | "cpulowmemory" => Some(Self::CpuLowMemory),
             "cpu" | "cpu-standard" | "cpu_standard" | "cpustandard" => Some(Self::CpuStandard),
             "gpu-low" | "gpu_low_vram" | "gpulowvram" => Some(Self::GpuLowVram),
-            "gpu" | "gpu-medium" | "gpu_medium_vram" | "gpumediumvram" => {
-                Some(Self::GpuMediumVram)
-            }
+            "gpu" | "gpu-medium" | "gpu_medium_vram" | "gpumediumvram" => Some(Self::GpuMediumVram),
             "gpu-high" | "gpu_high_vram" | "gpuhighvram" => Some(Self::GpuHighVram),
             "apple" | "apple-silicon" | "apple_silicon" | "applesilicon" | "metal" => {
                 Some(Self::AppleSilicon)

@@ -22,24 +22,38 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 // Pre-compiled regex patterns (compile once, never panic at call site)
-static RE_SYSTEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.System\s*\}\}").unwrap());
-static RE_PROMPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Prompt\s*\}\}").unwrap());
-static RE_RESPONSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Response\s*\}\}").unwrap());
+static RE_SYSTEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*\.System\s*\}\}").unwrap());
+static RE_PROMPT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*\.Prompt\s*\}\}").unwrap());
+static RE_RESPONSE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*\.Response\s*\}\}").unwrap());
 static RE_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.First\s*\}\}").unwrap());
-static RE_CONTENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Content\s*\}\}").unwrap());
+static RE_CONTENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*\.Content\s*\}\}").unwrap());
 static RE_ROLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{\s*\.Role\s*\}\}").unwrap());
-static RE_TRIM_SYSTEM1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.System\s*-?\}\}").unwrap());
-static RE_TRIM_SYSTEM2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.System\s*-\}\}").unwrap());
-static RE_TRIM_PROMPT1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.Prompt\s*-?\}\}").unwrap());
-static RE_TRIM_PROMPT2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Prompt\s*-\}\}").unwrap());
-static RE_TRIM_RESPONSE1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-\s*\.Response\s*-?\}\}").unwrap());
-static RE_TRIM_RESPONSE2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Response\s*-\}\}").unwrap());
-static RE_IF_SYSTEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.System\s*-?\}\}").unwrap());
-static RE_IF_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.First\s*-?\}\}").unwrap());
-static RE_IF_NOT_FIRST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+not\s+\.First\s*-?\}\}").unwrap());
+static RE_TRIM_SYSTEM1: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-\s*\.System\s*-?\}\}").unwrap());
+static RE_TRIM_SYSTEM2: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*\.System\s*-\}\}").unwrap());
+static RE_TRIM_PROMPT1: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-\s*\.Prompt\s*-?\}\}").unwrap());
+static RE_TRIM_PROMPT2: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Prompt\s*-\}\}").unwrap());
+static RE_TRIM_RESPONSE1: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-\s*\.Response\s*-?\}\}").unwrap());
+static RE_TRIM_RESPONSE2: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*\.Response\s*-\}\}").unwrap());
+static RE_IF_SYSTEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.System\s*-?\}\}").unwrap());
+static RE_IF_FIRST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+\.First\s*-?\}\}").unwrap());
+static RE_IF_NOT_FIRST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*if\s+not\s+\.First\s*-?\}\}").unwrap());
 static RE_ELSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*else\s*-?\}\}").unwrap());
 static RE_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*end\s*-?\}\}").unwrap());
-static RE_RANGE_MESSAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?\s*range\s+\.Messages\s*-?\}\}").unwrap());
+static RE_RANGE_MESSAGES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{-?\s*range\s+\.Messages\s*-?\}\}").unwrap());
 static RE_REMAINING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{-?[^}]*-?\}\}").unwrap());
 static RE_MULTI_NEWLINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -164,8 +178,12 @@ impl GoTemplateConverter {
         result = RE_TRIM_SYSTEM2.replace_all(&result, "{system}").to_string();
         result = RE_TRIM_PROMPT1.replace_all(&result, "{user}").to_string();
         result = RE_TRIM_PROMPT2.replace_all(&result, "{user}").to_string();
-        result = RE_TRIM_RESPONSE1.replace_all(&result, "{assistant}").to_string();
-        result = RE_TRIM_RESPONSE2.replace_all(&result, "{assistant}").to_string();
+        result = RE_TRIM_RESPONSE1
+            .replace_all(&result, "{assistant}")
+            .to_string();
+        result = RE_TRIM_RESPONSE2
+            .replace_all(&result, "{assistant}")
+            .to_string();
 
         result
     }

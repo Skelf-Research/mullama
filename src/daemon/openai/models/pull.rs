@@ -27,9 +27,7 @@ pub(in crate::daemon::openai) async fn api_pull_model(
                 }),
             ));
         }
-        ResolvedModel::Unknown(name)
-            if !name.starts_with("hf:") && !name.contains('/') =>
-        {
+        ResolvedModel::Unknown(name) if !name.starts_with("hf:") && !name.contains('/') => {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(ModelOperationResponse {
@@ -46,16 +44,19 @@ pub(in crate::daemon::openai) async fn api_pull_model(
     }
 
     // Use the provider chain for resolution + download
-    let resolved_path = daemon.resolve_model_spec(&request.name).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ModelOperationResponse {
-                success: false,
-                message: format!("Pull failed: {}", e),
-                model: None,
-            }),
-        )
-    })?;
+    let resolved_path = daemon
+        .resolve_model_spec(&request.name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ModelOperationResponse {
+                    success: false,
+                    message: format!("Pull failed: {}", e),
+                    model: None,
+                }),
+            )
+        })?;
 
     let size = std::fs::metadata(&resolved_path.path)
         .map(|m| m.len())

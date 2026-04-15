@@ -1,6 +1,4 @@
-use mullama::daemon::{
-    resolve_model_name, GgufFileInfo, HfDownloader, HfModelSpec, ResolvedModel,
-};
+use mullama::daemon::{resolve_model_name, GgufFileInfo, HfDownloader, HfModelSpec, ResolvedModel};
 
 use crate::shared::format_size;
 
@@ -167,9 +165,7 @@ pub(crate) async fn search_models(
     Ok(())
 }
 
-pub(crate) async fn show_repo_info(
-    repo_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn show_repo_info(repo_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let downloader = HfDownloader::new()?;
 
     println!("Fetching info for {}...\n", repo_id);
@@ -193,9 +189,9 @@ pub(crate) async fn show_repo_info(
     }
 
     let quant_order = [
-        "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1", "Q8_0", "Q6_K", "Q3_K_M",
-        "Q3_K_S", "Q3_K_L", "Q2_K", "IQ4_XS", "IQ4_NL", "IQ3_M", "IQ3_S", "IQ3_XS", "IQ3_XXS",
-        "IQ2_M", "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_M", "IQ1_S", "F16", "F32", "Other",
+        "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1", "Q8_0", "Q6_K", "Q3_K_M", "Q3_K_S",
+        "Q3_K_L", "Q2_K", "IQ4_XS", "IQ4_NL", "IQ3_M", "IQ3_S", "IQ3_XS", "IQ3_XXS", "IQ2_M",
+        "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_M", "IQ1_S", "F16", "F32", "Other",
     ];
 
     for quant in quant_order {

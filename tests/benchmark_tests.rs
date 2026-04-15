@@ -6,13 +6,11 @@
 
 use mullama::*;
 use std::{
-    sync::Arc,
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 const BENCHMARK_ITERATIONS: usize = 1000;
-const PERFORMANCE_TIMEOUT_MS: u64 = 1000;
 
 #[cfg(test)]
 mod parameter_creation_benchmarks {

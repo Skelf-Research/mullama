@@ -43,10 +43,7 @@ fn extract_bitmaps_from_messages(
 }
 
 impl Daemon {
-    pub async fn handle_vision_chat_completion(
-        &self,
-        params: ChatCompletionParams,
-    ) -> Response {
+    pub async fn handle_vision_chat_completion(&self, params: ChatCompletionParams) -> Response {
         if let Err(resp) = self.validate_max_tokens(params.max_tokens) {
             return resp;
         }
@@ -67,8 +64,8 @@ impl Daemon {
         self.active_requests.fetch_add(1, Ordering::Relaxed);
 
         let sampler_params = self.build_chat_sampler(&loaded, &params);
-        let messages =
-            self.apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
+        let messages = self
+            .apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
 
         let mtmd_ref = match loaded.mtmd_context.as_ref() {
             Some(r) => r,
@@ -116,7 +113,12 @@ impl Daemon {
                     prompt_tokens as u64,
                     0,
                 );
-                super::build_chat_completion_response(&loaded.alias, text, prompt_tokens, completion_tokens)
+                super::build_chat_completion_response(
+                    &loaded.alias,
+                    text,
+                    prompt_tokens,
+                    completion_tokens,
+                )
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
         }
@@ -141,8 +143,8 @@ impl Daemon {
         }
 
         let sampler_params = self.build_chat_sampler(&loaded, &params);
-        let messages =
-            self.apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
+        let messages = self
+            .apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
 
         let bitmaps = {
             let mtmd_ref = loaded.mtmd_context.as_ref().ok_or_else(|| {
@@ -152,9 +154,8 @@ impl Daemon {
                 )
             })?;
             let mtmd_guard = mtmd_ref.read().await;
-            extract_bitmaps_from_messages(&messages, &mtmd_guard).map_err(|msg| {
-                Response::error(ErrorCode::InvalidRequest, msg)
-            })?
+            extract_bitmaps_from_messages(&messages, &mtmd_guard)
+                .map_err(|msg| Response::error(ErrorCode::InvalidRequest, msg))?
         };
 
         let prompt = self.build_vision_prompt(&loaded.model, &messages);

@@ -1,5 +1,3 @@
-use mullama::{ContextParams, Model};
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Mullama FFI test");
 

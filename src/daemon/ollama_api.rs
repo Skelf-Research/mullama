@@ -4,13 +4,16 @@
 //! (newline-delimited JSON) instead of SSE, matching Ollama's API format.
 
 use axum::{
+    body::Body,
     extract::{Json, State},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Router,
 };
+use futures::stream::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use super::openai::AppState;
 use super::server::Daemon;
@@ -188,9 +191,15 @@ pub fn create_ollama_router(daemon: Arc<Daemon>) -> Router {
 async fn ollama_generate(
     State(daemon): State<AppState>,
     Json(req): Json<OllamaGenerateRequest>,
-) -> impl IntoResponse {
+) -> Response {
     let model_alias = req.model.clone();
-    let max_tokens = req.options.as_ref().and_then(|o| o.num_predict).unwrap_or(128) as usize;
+    let max_tokens = req
+        .options
+        .as_ref()
+        .and_then(|o| o.num_predict)
+        .unwrap_or(128) as u32;
+
+    let should_stream = req.stream.unwrap_or(false);
 
     let loaded = match daemon.models.get(Some(&model_alias)).await {
         Ok(m) => m,
@@ -208,8 +217,84 @@ async fn ollama_generate(
         }
     };
 
-    let start = std::time::Instant::now();
     let sampler_params = options_to_sampler_params(&req.options);
+    let stop_sequences = loaded.config.stop_sequences.clone();
+
+    if should_stream {
+        let params = crate::daemon::protocol::CompletionParams {
+            model: Some(model_alias.clone()),
+            prompt: req.prompt,
+            max_tokens,
+            temperature: Some(sampler_params.temperature),
+            top_p: Some(sampler_params.top_p),
+            top_k: Some(sampler_params.top_k),
+            frequency_penalty: Some(sampler_params.penalty_freq),
+            presence_penalty: Some(sampler_params.penalty_present),
+            stream: false,
+            stop: stop_sequences,
+        };
+
+        match daemon.handle_completion_streaming(params).await {
+            Ok((rx, prompt_tokens, _request_id, model_name)) => {
+                let _created = crate::daemon::protocol::unix_timestamp_secs();
+                let model_name = Arc::new(model_name);
+                let model_alias = Arc::new(model_alias);
+                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens), |(mut stream, finished, model_name, model_alias, prompt_tokens)| async move {
+                    if finished {
+                        return None;
+                    }
+                    if let Some(chunk) = stream.next().await {
+                        let resp = OllamaGenerateResponse {
+                            model: model_name.to_string(),
+                            response: chunk.delta,
+                            done: false,
+                            total_duration: None,
+                            load_duration: None,
+                            prompt_eval_count: Some(prompt_tokens),
+                            eval_count: Some(1),
+                        };
+                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens)))
+                    } else {
+                        let final_resp = OllamaGenerateResponse {
+                            model: model_alias.to_string(),
+                            response: String::new(),
+                            done: true,
+                            total_duration: None,
+                            load_duration: None,
+                            prompt_eval_count: Some(prompt_tokens),
+                            eval_count: None,
+                        };
+                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens)))
+                    }
+                }).map(Ok::<_, std::convert::Infallible>);
+
+                return Response::builder()
+                    .header("content-type", "application/x-ndjson")
+                    .body(Body::from_stream(ndjson_body))
+                    .unwrap()
+                    .into_response();
+            }
+            Err(e) => {
+                let error_msg = if let crate::daemon::protocol::Response::Error { message, .. } = e {
+                    message
+                } else {
+                    "unknown error".to_string()
+                };
+                return Json(OllamaGenerateResponse {
+                    model: model_alias,
+                    response: format!("streaming error: {}", error_msg),
+                    done: true,
+                    total_duration: None,
+                    load_duration: None,
+                    prompt_eval_count: None,
+                    eval_count: None,
+                })
+                .into_response();
+            }
+        }
+    }
+
+    let start = std::time::Instant::now();
 
     let result = {
         let mut ctx = loaded.acquire_context().await;
@@ -232,7 +317,7 @@ async fn ollama_generate(
 
         let prompt_tokens = tokens.len() as u32;
         let gen_result = tokio::task::block_in_place(|| {
-            ctx.generate_with_params(&tokens, max_tokens, &sampler_params)
+            ctx.generate_with_params(&tokens, max_tokens as usize, &sampler_params)
         });
 
         match gen_result {
@@ -245,7 +330,7 @@ async fn ollama_generate(
                     total_duration: Some(elapsed.as_nanos() as u64),
                     load_duration: Some(0),
                     prompt_eval_count: Some(prompt_tokens),
-                    eval_count: Some(max_tokens as u32),
+                    eval_count: Some(max_tokens),
                 }
             }
             Err(e) => OllamaGenerateResponse {
@@ -266,9 +351,15 @@ async fn ollama_generate(
 async fn ollama_chat(
     State(daemon): State<AppState>,
     Json(req): Json<OllamaChatRequest>,
-) -> impl IntoResponse {
+) -> Response {
     let model_alias = req.model.clone();
-    let max_tokens = req.options.as_ref().and_then(|o| o.num_predict).unwrap_or(128) as usize;
+    let max_tokens = req
+        .options
+        .as_ref()
+        .and_then(|o| o.num_predict)
+        .unwrap_or(128) as u32;
+
+    let should_stream = req.stream.unwrap_or(false);
 
     let loaded = match daemon.models.get(Some(&model_alias)).await {
         Ok(m) => m,
@@ -288,8 +379,8 @@ async fn ollama_chat(
         }
     };
 
-    let start = std::time::Instant::now();
     let sampler_params = options_to_sampler_params(&req.options);
+    let stop_sequences = loaded.config.stop_sequences.clone();
 
     // Format messages as prompt using chat template
     let model = loaded.model.clone();
@@ -302,7 +393,6 @@ async fn ollama_chat(
     let prompt = match model.apply_chat_template(None, &msg_tuples, true) {
         Ok(p) => p,
         Err(_) => {
-            // Fallback: simple concatenation
             req.messages
                 .iter()
                 .map(|m| format!("{}: {}", m.role, m.content))
@@ -311,6 +401,88 @@ async fn ollama_chat(
                 + "\nassistant: "
         }
     };
+
+    if should_stream {
+        let params = crate::daemon::protocol::CompletionParams {
+            model: Some(model_alias.clone()),
+            prompt,
+            max_tokens,
+            temperature: Some(sampler_params.temperature),
+            top_p: Some(sampler_params.top_p),
+            top_k: Some(sampler_params.top_k),
+            frequency_penalty: Some(sampler_params.penalty_freq),
+            presence_penalty: Some(sampler_params.penalty_present),
+            stream: false,
+            stop: stop_sequences,
+        };
+
+        match daemon.handle_completion_streaming(params).await {
+            Ok((rx, prompt_tokens, _request_id, model_name)) => {
+                let model_name = Arc::new(model_name);
+                let model_alias = Arc::new(model_alias);
+                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens), |(mut stream, finished, model_name, model_alias, prompt_tokens)| async move {
+                    if finished {
+                        return None;
+                    }
+                    if let Some(chunk) = stream.next().await {
+                        let resp = OllamaChatResponse {
+                            model: model_name.to_string(),
+                            message: Some(OllamaChatMessage {
+                                role: "assistant".to_string(),
+                                content: chunk.delta,
+                            }),
+                            done: false,
+                            total_duration: None,
+                            prompt_eval_count: Some(prompt_tokens),
+                            eval_count: Some(1),
+                        };
+                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens)))
+                    } else {
+                        let final_resp = OllamaChatResponse {
+                            model: model_alias.to_string(),
+                            message: Some(OllamaChatMessage {
+                                role: "assistant".to_string(),
+                                content: String::new(),
+                            }),
+                            done: true,
+                            total_duration: None,
+                            prompt_eval_count: Some(prompt_tokens),
+                            eval_count: None,
+                        };
+                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens)))
+                    }
+                }).map(Ok::<_, std::convert::Infallible>);
+
+                return Response::builder()
+                    .header("content-type", "application/x-ndjson")
+                    .body(Body::from_stream(ndjson_body))
+                    .unwrap()
+                    .into_response();
+            }
+            Err(e) => {
+                let error_msg = if let crate::daemon::protocol::Response::Error { message, .. } = e {
+                    message
+                } else {
+                    "unknown error".to_string()
+                };
+                return Json(OllamaChatResponse {
+                    model: model_alias,
+                    message: Some(OllamaChatMessage {
+                        role: "assistant".to_string(),
+                        content: format!("streaming error: {}", error_msg),
+                    }),
+                    done: true,
+                    total_duration: None,
+                    prompt_eval_count: None,
+                    eval_count: None,
+                })
+                .into_response();
+            }
+        }
+    }
+
+    // Non-streaming path
+    let start = std::time::Instant::now();
 
     let result = {
         let mut ctx = loaded.acquire_context().await;
@@ -334,7 +506,7 @@ async fn ollama_chat(
 
         let prompt_tokens = tokens.len() as u32;
         let gen_result = tokio::task::block_in_place(|| {
-            ctx.generate_with_params(&tokens, max_tokens, &sampler_params)
+            ctx.generate_with_params(&tokens, max_tokens as usize, &sampler_params)
         });
 
         match gen_result {
@@ -349,7 +521,7 @@ async fn ollama_chat(
                     done: true,
                     total_duration: Some(elapsed.as_nanos() as u64),
                     prompt_eval_count: Some(prompt_tokens),
-                    eval_count: Some(max_tokens as u32),
+                    eval_count: Some(max_tokens),
                 }
             }
             Err(e) => OllamaChatResponse {
@@ -407,24 +579,62 @@ async fn ollama_show(
 }
 
 async fn ollama_copy(
-    State(_daemon): State<AppState>,
+    State(daemon): State<AppState>,
     Json(req): Json<OllamaCopyRequest>,
 ) -> impl IntoResponse {
-    // Model copy: create an alias for an existing model
-    let resp = serde_json::json!({
-        "status": format!("copied {} to {}", req.source, req.destination)
-    });
-    Json(resp)
+    let source_model = match daemon.models.get(Some(&req.source)).await {
+        Ok(m) => m,
+        Err(_) => {
+            let resp = serde_json::json!({
+                "error": format!("model '{}' not found", req.source)
+            });
+            return (axum::http::StatusCode::NOT_FOUND, Json(resp)).into_response();
+        }
+    };
+
+    let source_info = &source_model.info;
+    let source_path = source_info.path.clone();
+    let source_config = source_model.config.clone();
+
+    let mut load_config = crate::daemon::models::ModelLoadConfig::new(&req.destination, source_path);
+    load_config.gpu_layers = source_info.gpu_layers;
+    load_config.context_size = source_info.context_size;
+    load_config.model_config = Some(source_config);
+
+    match daemon.models.load(load_config).await {
+        Ok(_) => {
+            let resp = serde_json::json!({
+                "status": format!("copied {} to {}", req.source, req.destination)
+            });
+            Json(resp).into_response()
+        }
+        Err(e) => {
+            let resp = serde_json::json!({
+                "error": format!("failed to copy model: {}", e)
+            });
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response()
+        }
+    }
 }
 
 async fn ollama_delete(
-    State(_daemon): State<AppState>,
+    State(daemon): State<AppState>,
     Json(req): Json<OllamaDeleteRequest>,
 ) -> impl IntoResponse {
-    let resp = serde_json::json!({
-        "status": format!("deleted {}", req.name)
-    });
-    Json(resp)
+    match daemon.models.unload(&req.name).await {
+        Ok(_) => {
+            let resp = serde_json::json!({
+                "status": format!("deleted {}", req.name)
+            });
+            Json(resp).into_response()
+        }
+        Err(e) => {
+            let resp = serde_json::json!({
+                "error": format!("failed to delete model: {}", e)
+            });
+            (axum::http::StatusCode::NOT_FOUND, Json(resp)).into_response()
+        }
+    }
 }
 
 async fn ollama_embeddings(
@@ -451,14 +661,13 @@ async fn ollama_embeddings(
             }
 
             match ctx.get_embeddings() {
-                Some(emb) => {
-                    Json(OllamaEmbeddingsResponse {
-                        embedding: emb.to_vec(),
-                    })
-                    .into_response()
-                }
+                Some(emb) => Json(OllamaEmbeddingsResponse {
+                    embedding: emb.to_vec(),
+                })
+                .into_response(),
                 None => {
-                    let resp = serde_json::json!({"error": "embeddings not available for this model"});
+                    let resp =
+                        serde_json::json!({"error": "embeddings not available for this model"});
                     (axum::http::StatusCode::BAD_REQUEST, Json(resp)).into_response()
                 }
             }

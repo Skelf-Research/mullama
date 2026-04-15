@@ -12,7 +12,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} <model.gguf> <prompt>", args[0]);
-        eprintln!("Example: {} ./models/llama-3.2-1b-q4_k_m.gguf \"The meaning of life is\"", args[0]);
+        eprintln!(
+            "Example: {} ./models/llama-3.2-1b-q4_k_m.gguf \"The meaning of life is\"",
+            args[0]
+        );
         std::process::exit(1);
     }
     let model_path = &args[1];
@@ -73,7 +76,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let elapsed = start.elapsed();
     let tok_per_sec = generated_tokens as f64 / elapsed.as_secs_f64();
-    println!("\n\n--- {} tokens in {:.1}s ({:.1} tok/s) ---", generated_tokens, elapsed.as_secs_f64(), tok_per_sec);
+    println!(
+        "\n\n--- {} tokens in {:.1}s ({:.1} tok/s) ---",
+        generated_tokens,
+        elapsed.as_secs_f64(),
+        tok_per_sec
+    );
 
     mullama::backend_free();
     Ok(())

@@ -2,7 +2,10 @@ use std::sync::atomic::Ordering;
 
 use tokio::sync::mpsc;
 
-use super::super::{prompt::{merge_stop_sequences, resolve_chat_stop_sequences}, Daemon};
+use super::super::{
+    prompt::{merge_stop_sequences, resolve_chat_stop_sequences},
+    Daemon,
+};
 use crate::daemon::models::RequestGuard;
 use crate::daemon::protocol::{
     ChatCompletionParams, CompletionParams, ErrorCode, Response, StreamChunk,
@@ -21,8 +24,8 @@ impl Daemon {
         };
 
         let sampler_params = self.build_chat_sampler(&loaded, &params);
-        let messages =
-            self.apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
+        let messages = self
+            .apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let model_alias = loaded.alias.clone();
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
@@ -83,7 +86,12 @@ impl Daemon {
                     prompt_tokens as u64,
                     0,
                 );
-                super::build_chat_completion_response(&loaded.alias, text, prompt_tokens, completion_tokens)
+                super::build_chat_completion_response(
+                    &loaded.alias,
+                    text,
+                    prompt_tokens,
+                    completion_tokens,
+                )
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
         }
@@ -132,7 +140,12 @@ impl Daemon {
                     prompt_tokens as u64,
                     0,
                 );
-                super::build_completion_response(&loaded.alias, text, prompt_tokens, completion_tokens)
+                super::build_completion_response(
+                    &loaded.alias,
+                    text,
+                    prompt_tokens,
+                    completion_tokens,
+                )
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
         }
@@ -154,7 +167,13 @@ impl Daemon {
         let all_stops = merge_stop_sequences(loaded.config.stop_sequences.clone(), params.stop);
 
         match self
-            .generate_text_streaming(loaded, params.prompt, params.max_tokens, sampler_params, all_stops)
+            .generate_text_streaming(
+                loaded,
+                params.prompt,
+                params.max_tokens,
+                sampler_params,
+                all_stops,
+            )
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),

@@ -112,6 +112,7 @@ get_latest_version() {
 download_and_install() {
     FILENAME="${BINARY_NAME}-${PLATFORM}${GPU_VARIANT}.tar.gz"
     DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$FILENAME"
+    CHECKSUM_URL="https://github.com/$REPO/releases/download/v$VERSION/${FILENAME}.sha256"
 
     info "Downloading $FILENAME..."
 
@@ -128,6 +129,23 @@ download_and_install() {
 
     success "Downloaded successfully"
 
+    # Verify checksum
+    info "Verifying checksum..."
+    CHECKSUM_FILE="$TMP_DIR/${FILENAME}.sha256"
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_FILE" 2>/dev/null; then
+            verify_checksum "$TMP_DIR/$FILENAME" "$CHECKSUM_FILE"
+        else
+            warn "Checksum file not available, skipping verification"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q "$CHECKSUM_URL" -O "$CHECKSUM_FILE" 2>/dev/null; then
+            verify_checksum "$TMP_DIR/$FILENAME" "$CHECKSUM_FILE"
+        else
+            warn "Checksum file not available, skipping verification"
+        fi
+    fi
+
     # Extract
     info "Extracting..."
     tar -xzf "$TMP_DIR/$FILENAME" -C "$TMP_DIR"
@@ -141,6 +159,40 @@ download_and_install() {
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
     success "Installed $BINARY_NAME to $INSTALL_DIR"
+}
+
+# Verify SHA256 checksum
+verify_checksum() {
+    FILE="$1"
+    CHECKSUM_FILE="$2"
+
+    if [ ! -f "$CHECKSUM_FILE" ]; then
+        warn "Checksum file missing, skipping verification"
+        return
+    fi
+
+    EXPECTED=$(awk '{print $1}' "$CHECKSUM_FILE")
+    if [ -z "$EXPECTED" ]; then
+        warn "Empty checksum, skipping verification"
+        return
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$FILE" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$FILE" | awk '{print $1}')
+    elif command -v openssl >/dev/null 2>&1; then
+        ACTUAL=$(openssl dgst -sha256 "$FILE" | awk '{print $NF}')
+    else
+        warn "No checksum tool found (sha256sum, shasum, openssl), skipping verification"
+        return
+    fi
+
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        error "Checksum verification failed!\n  Expected: $EXPECTED\n  Actual:   $ACTUAL\n\nThe download may have been tampered with. Aborting."
+    fi
+
+    success "Checksum verified"
 }
 
 # Update PATH if necessary

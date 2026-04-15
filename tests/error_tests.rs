@@ -4,7 +4,6 @@
 //! They ensure the library handles failures gracefully and provides meaningful error messages.
 
 use mullama::*;
-use std::{path::Path, sync::Arc};
 
 #[cfg(test)]
 mod model_error_tests {
@@ -319,7 +318,7 @@ mod sampling_error_tests {
         let params = SamplerChainParams { no_perf: true };
 
         // Test chain operations should not panic
-        let chain = SamplerChain::new(params);
+        let _chain = SamplerChain::new(params);
         // Basic operations should work even without a model
     }
 }
@@ -437,35 +436,7 @@ mod memory_error_tests {
 
 #[cfg(test)]
 mod ffi_error_tests {
-    use super::*;
     use mullama::sys;
-
-    #[test]
-    #[cfg(feature = "llama-cpp-tests")]
-    fn test_null_pointer_handling() {
-        // Test that FFI functions handle null pointers gracefully
-        unsafe {
-            // These should not crash, even with null pointers
-            let _result = sys::llama_model_n_vocab(std::ptr::null());
-            let _result = sys::llama_model_n_ctx_train(std::ptr::null());
-            let _result = sys::llama_model_n_embd(std::ptr::null());
-        }
-        // If we reach here, null pointer handling didn't crash
-    }
-
-    #[test]
-    #[cfg(feature = "llama-cpp-tests")]
-    fn test_invalid_parameters() {
-        unsafe {
-            // Test with invalid but non-null parameters
-            let fake_ptr = 0x1 as *mut sys::llama_model;
-
-            // These should not crash immediately (might return error codes)
-            let _result = sys::llama_model_n_vocab(fake_ptr);
-            let _result = sys::llama_model_n_ctx_train(fake_ptr);
-        }
-        // If we reach here, invalid parameter handling didn't crash immediately
-    }
 
     #[test]
     fn test_backend_multiple_init_free() {

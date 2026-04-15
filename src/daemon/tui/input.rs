@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::InputMode;
 use super::app::TuiApp;
+use super::InputMode;
 
 impl TuiApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) {

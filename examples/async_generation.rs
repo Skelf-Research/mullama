@@ -6,10 +6,6 @@
 //! Run with: cargo run --example async_generation --features async
 
 use mullama::prelude::*;
-use std::sync::Arc;
-
-#[cfg(feature = "async")]
-use mullama::{AsyncContext, AsyncModel};
 
 #[tokio::main]
 async fn main() -> Result<(), MullamaError> {
@@ -22,7 +18,7 @@ async fn main() -> Result<(), MullamaError> {
         println!("📂 Loading model asynchronously...");
 
         // Note: Replace with actual model path
-        let model_path =
+        let _model_path =
             std::env::var("MODEL_PATH").unwrap_or_else(|_| "path/to/model.gguf".to_string());
 
         // This would load the model in a real scenario:
@@ -38,7 +34,7 @@ async fn main() -> Result<(), MullamaError> {
         // println!("   Layers: {}", info.n_layer);
 
         // Create context with custom parameters
-        let context_params = ContextParams {
+        let _context_params = ContextParams {
             n_ctx: 2048,
             n_batch: 512,
             n_threads: 8,
@@ -63,7 +59,7 @@ async fn main() -> Result<(), MullamaError> {
         for (i, prompt) in prompts.iter().enumerate() {
             // In a real scenario:
             // let model_clone = model.clone();
-            // let prompt_clone = prompt.to_string();
+            let prompt = prompt.to_string();
 
             let handle = tokio::spawn(async move {
                 println!("🤖 Task {}: Starting generation for: \"{}\"", i + 1, prompt);
@@ -100,6 +96,7 @@ async fn main() -> Result<(), MullamaError> {
 
         // Demonstrate advanced async patterns
         demonstrate_async_patterns().await?;
+        demonstrate_error_handling().await?;
     }
 
     #[cfg(not(feature = "async"))]
@@ -118,7 +115,7 @@ async fn demonstrate_async_patterns() -> Result<(), MullamaError> {
 
     // Pattern 1: Async model loading with custom parameters
     println!("1️⃣ Custom model loading...");
-    let model_params = ModelParams {
+    let _model_params = ModelParams {
         n_gpu_layers: 32,
         use_mmap: true,
         use_mlock: false,
@@ -133,7 +130,7 @@ async fn demonstrate_async_patterns() -> Result<(), MullamaError> {
 
     // Pattern 2: Concurrent context creation
     println!("2️⃣ Concurrent context creation...");
-    let context_configs = vec![
+    let _context_configs = vec![
         ContextParams {
             n_ctx: 1024,
             n_batch: 256,

@@ -768,7 +768,14 @@ pub extern "C" fn mullama_apply_chat_template(
     output: *mut c_char,
     max_output: size_t,
 ) -> c_int {
-    mullama_model_apply_chat_template(model, messages, n_messages, add_generation_prompt, output, max_output)
+    mullama_model_apply_chat_template(
+        model,
+        messages,
+        n_messages,
+        add_generation_prompt,
+        output,
+        max_output,
+    )
 }
 
 #[cfg(test)]

@@ -49,6 +49,10 @@ WORKDIR /home/mullama
 # Expose HTTP API port
 EXPOSE 8080
 
+# Health check against the OpenAI-compatible API
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/v1/models || exit 1
+
 # Default: start the daemon server
 ENTRYPOINT ["mullama"]
 CMD ["serve", "--host", "0.0.0.0", "--port", "8080"]

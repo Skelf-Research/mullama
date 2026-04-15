@@ -4,12 +4,11 @@
 //! which are then validated by a larger "target" model. This can significantly speed up
 //! generation while maintaining the quality of the larger model.
 
-use crate::error::MullamaError;
-use crate::{Model, Context};
-use crate::token::TokenId;
 use crate::context::ContextParams;
+use crate::error::MullamaError;
+use crate::token::TokenId;
+use crate::{Context, Model};
 use std::sync::Arc;
-use std::collections::VecDeque;
 
 /// Type alias for token
 pub type Token = TokenId;
@@ -185,8 +184,6 @@ impl SpeculativeDecoder {
 
     /// Perform a single speculative decoding step
     pub fn speculative_step(&mut self) -> Result<SpeculativeResult, MullamaError> {
-        let start_time = std::time::Instant::now();
-
         // Phase 1: Generate candidates with draft model
         let draft_start = std::time::Instant::now();
         let proposal = self.generate_draft_proposal()?;
@@ -225,7 +222,9 @@ impl SpeculativeDecoder {
             let logits = self.draft_context.get_logits();
 
             if logits.is_empty() {
-                return Err(MullamaError::GenerationError("Empty logits from draft model".to_string()));
+                return Err(MullamaError::GenerationError(
+                    "Empty logits from draft model".to_string(),
+                ));
             }
 
             // Apply temperature
@@ -272,17 +271,22 @@ impl SpeculativeDecoder {
             // Get target model's probability for this token
             let target_logits = self.target_context.get_logits();
             if target_logits.is_empty() {
-                return Err(MullamaError::GenerationError("Empty logits from target model".to_string()));
+                return Err(MullamaError::GenerationError(
+                    "Empty logits from target model".to_string(),
+                ));
             }
 
-            let target_scaled_logits = self.apply_temperature(target_logits, self.config.target_temperature);
+            let target_scaled_logits =
+                self.apply_temperature(target_logits, self.config.target_temperature);
             let target_prob = target_scaled_logits[candidate.token as usize].exp();
 
             // Accept/reject based on probability ratio
             let acceptance_ratio = target_prob / candidate.probability;
             let random_value: f32 = self.simple_random();
 
-            if random_value < acceptance_ratio.min(1.0) && acceptance_ratio >= self.config.acceptance_threshold {
+            if random_value < acceptance_ratio.min(1.0)
+                && acceptance_ratio >= self.config.acceptance_threshold
+            {
                 // Accept the token
                 accepted_tokens.push(candidate.token);
                 self.target_context.decode(&[candidate.token])?;
@@ -294,7 +298,8 @@ impl SpeculativeDecoder {
                 }
             } else {
                 // Reject token and resample from target model
-                let corrected_logits = self.correct_distribution(&target_scaled_logits, &proposal.candidates[..=i]);
+                let corrected_logits =
+                    self.correct_distribution(&target_scaled_logits, &proposal.candidates[..=i]);
                 let corrected_token = self.sample_from_logits(&corrected_logits)?;
 
                 accepted_tokens.push(corrected_token);
@@ -353,7 +358,8 @@ impl SpeculativeDecoder {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .subsec_nanos();
-        ((seed.wrapping_mul(1103515245).wrapping_add(12345)) & 0x7fffffff) as f32 / 0x7fffffff as f32
+        ((seed.wrapping_mul(1103515245).wrapping_add(12345)) & 0x7fffffff) as f32
+            / 0x7fffffff as f32
     }
 
     /// Correct the probability distribution after rejection
@@ -387,7 +393,7 @@ impl SpeculativeDecoder {
     }
 
     /// Update both contexts with accepted tokens
-    fn update_contexts(&mut self, accepted_tokens: &[Token]) -> Result<(), MullamaError> {
+    fn update_contexts(&mut self, _accepted_tokens: &[Token]) -> Result<(), MullamaError> {
         // Target context is already updated during validation
         // Update draft context to match - we need to sync state
         // Get target state and load into draft
@@ -414,8 +420,10 @@ impl SpeculativeDecoder {
         }
 
         // Update average lookahead
-        self.stats.avg_lookahead = (self.stats.avg_lookahead * (self.stats.speculation_rounds - 1) as f32
-            + self.config.lookahead_tokens as f32) / self.stats.speculation_rounds as f32;
+        self.stats.avg_lookahead = (self.stats.avg_lookahead
+            * (self.stats.speculation_rounds - 1) as f32
+            + self.config.lookahead_tokens as f32)
+            / self.stats.speculation_rounds as f32;
     }
 
     /// Validate that models are compatible for speculative decoding
@@ -423,14 +431,14 @@ impl SpeculativeDecoder {
         // Check vocabulary compatibility
         if target.vocab_size() != draft.vocab_size() {
             return Err(MullamaError::InvalidInput(
-                "Target and draft models must have the same vocabulary size".to_string()
+                "Target and draft models must have the same vocabulary size".to_string(),
             ));
         }
 
         // Check that both models use the same tokenizer
         if target.vocab_type() != draft.vocab_type() {
             return Err(MullamaError::InvalidInput(
-                "Target and draft models must use the same vocabulary type".to_string()
+                "Target and draft models must use the same vocabulary type".to_string(),
             ));
         }
 

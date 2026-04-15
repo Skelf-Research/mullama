@@ -15,7 +15,11 @@ pub(super) fn local_model_path(name: &str) -> PathBuf {
 pub(super) fn cached_model_short_name(model: &CachedModel) -> String {
     format!(
         "{}:{}",
-        model.repo_id.split('/').next_back().unwrap_or(&model.repo_id),
+        model
+            .repo_id
+            .split('/')
+            .next_back()
+            .unwrap_or(&model.repo_id),
         model.filename.trim_end_matches(".gguf")
     )
 }

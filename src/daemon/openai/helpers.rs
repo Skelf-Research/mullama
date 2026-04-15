@@ -28,7 +28,9 @@ pub(super) fn sse_response(
 ///
 /// Shared by all streaming endpoints that call `handle_*_streaming` methods
 /// which return `Result<_, Response>`.
-pub(super) fn protocol_err_to_api(resp: crate::daemon::protocol::Response) -> super::error::ApiError {
+pub(super) fn protocol_err_to_api(
+    resp: crate::daemon::protocol::Response,
+) -> super::error::ApiError {
     if let crate::daemon::protocol::Response::Error { message, .. } = resp {
         super::error::ApiError::new(message)
     } else {

@@ -135,18 +135,17 @@ pub mod web;
 pub mod websockets;
 
 // Advanced features
-pub mod grammar;
 pub mod gpu_advanced;
+pub mod grammar;
 pub mod hf;
-pub mod huggingface;
 pub mod lora;
 pub mod modelfile;
+pub mod presets;
 pub mod speculative;
 pub mod structured_output;
-pub mod presets;
 
 // Export Hugging Face types at crate root for convenience
-pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
+pub use hf::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
 
 // Export Modelfile types at crate root
 pub use modelfile::{
@@ -373,7 +372,9 @@ pub use capabilities::{
 pub use context::{Context, ContextParams, KvCacheType};
 pub use embedding::{EmbeddingUtil, Embeddings};
 pub use error::MullamaError;
-pub use memory::MemoryManager;
+pub use memory::{
+    ConstrainedMemoryConfig, MemoryManager, recommend_constrained_config,
+};
 pub use memory_monitor::{
     MemoryConfig, MemoryMonitor, MemoryPressure, MemoryStats, RecoveryManager, RecoveryResult,
     RecoveryStrategy,
@@ -438,12 +439,14 @@ pub use websockets::{
 };
 
 // Re-export advanced features
-pub use lora::{LoRAAdapter, LoRAManager};
-pub use grammar::{Grammar, GrammarRule};
 pub use control_vector::{ControlVector, ControlVectorManager};
-pub use speculative::{SpeculativeConfig, SpeculativeDecoder};
-pub use quantization::{QuantizationEngine, QuantizationParams, QuantizationType as QuantizationKind};
 pub use gpu_advanced::{AllocationStrategy, GpuDevice, GpuManager};
+pub use grammar::{Grammar, GrammarRule};
+pub use lora::{LoRAAdapter, LoRAManager};
+pub use quantization::{
+    QuantizationEngine, QuantizationParams, QuantizationType as QuantizationKind,
+};
+pub use speculative::{SpeculativeConfig, SpeculativeDecoder};
 
 // Re-export sys types for advanced users
 pub use sys::{

@@ -8,9 +8,7 @@
 use mullama::prelude::*;
 
 #[cfg(all(feature = "streaming", feature = "async"))]
-use futures::StreamExt;
-#[cfg(all(feature = "streaming", feature = "async"))]
-use mullama::{AsyncModel, StreamConfig, TokenData, TokenStream};
+use mullama::StreamConfig;
 #[cfg(all(feature = "streaming", feature = "async"))]
 use std::time::Instant;
 
@@ -25,7 +23,7 @@ async fn main() -> Result<(), MullamaError> {
         println!("📂 Loading model for streaming...");
 
         // Note: Replace with actual model path
-        let model_path =
+        let _model_path =
             std::env::var("MODEL_PATH").unwrap_or_else(|_| "path/to/model.gguf".to_string());
 
         // In real scenario:
@@ -38,6 +36,7 @@ async fn main() -> Result<(), MullamaError> {
         demonstrate_word_streaming().await?;
         demonstrate_text_only_streaming().await?;
         demonstrate_streaming_utilities().await?;
+        demonstrate_error_handling().await?;
     }
 
     #[cfg(not(all(feature = "streaming", feature = "async")))]
@@ -91,18 +90,12 @@ async fn demonstrate_basic_streaming() -> Result<(), MullamaError> {
         // Simulate token arrival
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let token_data = TokenData {
-            token_id: i as u32 + 1000,
-            text: token_text.to_string(),
-            position: i,
-            is_final: i == tokens.len() - 1,
-            probability: Some(0.8 + (i as f32 * 0.02)),
-        };
+        let is_final = i == tokens.len() - 1;
 
-        print!("{}", token_data.text);
+        print!("{}", token_text);
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-        if token_data.is_final {
+        if is_final {
             println!("\n🏁 Generation complete!");
             break;
         }
@@ -141,7 +134,7 @@ async fn demonstrate_configured_streaming() -> Result<(), MullamaError> {
         ),
     ];
 
-    let prompt = "Once upon a time in a land far away";
+    let _prompt = "Once upon a time in a land far away";
 
     for (name, config) in configs {
         println!("\n🎯 {} configuration:", name);

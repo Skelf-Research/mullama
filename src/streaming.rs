@@ -220,17 +220,28 @@ impl TokenStream {
 
             for token_pos in 0..config.max_tokens {
                 // Generate next token
-                let next_token = {
-                    // This would need to be made async-safe in a real implementation
+                let (next_token, token_prob) = {
                     let context_inner = context.into_inner();
                     let mut temp_context = context_inner;
-                    // Use -1 to sample from the last token's logits
                     let token = sampler.sample(&mut temp_context, -1);
                     sampler.accept(token);
 
-                    // Recreate async context (simplified for example)
+                    let prob = if config.include_probabilities {
+                        let logits = temp_context.get_logits_ith(-1);
+                        if !logits.is_empty() && (token as usize) < logits.len() {
+                            let token_logit = logits[token as usize];
+                            let max_logit = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                            let exp_sum: f32 = logits.iter().map(|l| (l - max_logit).exp()).sum();
+                            Some((token_logit - max_logit).exp() / exp_sum)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     context = AsyncContext::new(temp_context, model.model().clone());
-                    token
+                    (token, prob)
                 };
 
                 // Check for end of generation
@@ -251,11 +262,7 @@ impl TokenStream {
                     text,
                     position,
                     is_final,
-                    probability: if config.include_probabilities {
-                        Some(0.5) // Placeholder - would need actual probability calculation
-                    } else {
-                        None
-                    },
+                    probability: token_prob,
                 };
 
                 // Send token data

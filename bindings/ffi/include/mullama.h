@@ -29,7 +29,7 @@ typedef struct { volatile int value; } MullamaAtomicBool;
 #define MullamaMULLAMA_VERSION_MAJOR 0
 
 // Library version minor number
-#define MullamaMULLAMA_VERSION_MINOR 1
+#define MullamaMULLAMA_VERSION_MINOR 2
 
 // Library version patch number
 #define MullamaMULLAMA_VERSION_PATCH 0
@@ -72,6 +72,16 @@ typedef struct MullamaMullamaContextParams {
   bool offload_kqv;
   // Flash attention type (0=auto, 1=disabled, 2=enabled)
   int flash_attn;
+  // KV cache key type (ggml_type enum value, -1 = default/F16)
+  int type_k;
+  // KV cache value type (ggml_type enum value, -1 = default/F16)
+  int type_v;
+  // RoPE base frequency (0.0 = default)
+  float rope_freq_base;
+  // RoPE frequency scaling factor (0.0 = default)
+  float rope_freq_scale;
+  // KV cache defragmentation threshold (-1.0 = disabled)
+  float defrag_thold;
 } MullamaMullamaContextParams;
 
 // Opaque context handle for FFI
@@ -138,6 +148,8 @@ typedef struct MullamaMullamaModelParams {
   bool vocab_only;
   // Check tensor data integrity
   bool check_tensors;
+  // Split mode for multi-GPU (0=none, 1=layer, 2=row)
+  int split_mode;
 } MullamaMullamaModelParams;
 
 // Apply a chat template to format messages
@@ -209,7 +221,7 @@ size_t mullama_max_devices(void);
 // Number of bytes written, or negative required size
 int mullama_system_info(char *output, size_t max_output);
 
-// Get library version as a string
+// Get library version as a string (derived from Cargo.toml)
 const char *mullama_version(void);
 
 // Get library version major number
@@ -223,6 +235,34 @@ uint32_t mullama_version_patch(void);
 
 // Get current timestamp in microseconds
 int64_t mullama_time_us(void);
+
+// Get the number of available hardware presets
+int mullama_preset_count(void);
+
+// Get the name of a preset by index.
+// Returns null if index is out of range.
+// The returned pointer points to a static string valid for the lifetime of the program.
+const char *mullama_preset_name(int index);
+
+// Get the description of a preset by index.
+// Returns null if index is out of range.
+const char *mullama_preset_description(int index);
+
+// Get the recommended quantization format for a preset by index.
+// Returns null if index is out of range.
+const char *mullama_preset_recommended_quant(int index);
+
+// Get the recommended GPU layers for a preset by index.
+// Returns 0 if index is out of range.
+int mullama_preset_gpu_layers(int index);
+
+// Get the recommended context size for a preset by index.
+// Returns 0 if index is out of range.
+uint32_t mullama_preset_context_size(int index);
+
+// Detect the best preset for the current hardware.
+// Returns the preset index.
+int mullama_preset_detect(void);
 
 // Get default context parameters
 struct MullamaMullamaContextParams mullama_context_default_params(void);
@@ -559,6 +599,50 @@ int mullama_model_apply_chat_template(const MullamaMullamaModel *model,
                                       bool add_generation_prompt,
                                       char *output,
                                       size_t max_output);
+
+// Get the number of metadata key-value pairs in the model
+//
+// # Returns
+// Number of metadata entries, or 0 if model is null
+int mullama_model_metadata_count(const MullamaMullamaModel *model);
+
+// Get a metadata key by index
+//
+// # Arguments
+// * `model` - Model handle
+// * `index` - Metadata entry index (0-based)
+// * `output` - Output buffer for the key string
+// * `max_output` - Size of the output buffer
+//
+// # Returns
+// Number of bytes written, or negative required size if buffer too small
+int mullama_model_metadata_key(const MullamaMullamaModel *model,
+                               int index,
+                               char *output,
+                               size_t max_output);
+
+// Get a metadata value by index
+//
+// # Arguments
+// * `model` - Model handle
+// * `index` - Metadata entry index (0-based)
+// * `output` - Output buffer for the value string
+// * `max_output` - Size of the output buffer
+//
+// # Returns
+// Number of bytes written, or negative required size if buffer too small
+int mullama_model_metadata_value(const MullamaMullamaModel *model,
+                                 int index,
+                                 char *output,
+                                 size_t max_output);
+
+// Convenience alias: apply chat template (same as mullama_model_apply_chat_template)
+int mullama_apply_chat_template(const MullamaMullamaModel *model,
+                                const struct MullamaMullamaChatMessage *messages,
+                                int n_messages,
+                                bool add_generation_prompt,
+                                char *output,
+                                size_t max_output);
 
 // Get default sampler parameters
 struct MullamaMullamaSamplerParams mullama_sampler_default_params(void);

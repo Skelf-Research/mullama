@@ -8,11 +8,13 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use super::client::DaemonClient;
 use super::DEFAULT_SOCKET;
 
 /// Configuration for auto-spawning the daemon
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnConfig {
     /// Path to the mullama binary
     pub binary_path: Option<PathBuf>,
@@ -42,6 +44,7 @@ pub struct SpawnConfig {
     pub context_pool_size: usize,
 
     /// Timeout for waiting for daemon to be ready
+    #[serde(skip)]
     pub startup_timeout: Duration,
 
     /// Whether to run in background (daemonize)
@@ -77,6 +80,33 @@ impl Default for SpawnConfig {
             cache_type_k: None,
             cache_type_v: None,
         }
+    }
+}
+
+impl SpawnConfig {
+    fn config_dir() -> PathBuf {
+        dirs::cache_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("mullama")
+    }
+
+    fn config_path() -> PathBuf {
+        Self::config_dir().join("daemon_config.json")
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let dir = Self::config_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {}", e))?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(Self::config_path(), json)
+            .map_err(|e| format!("Failed to write config: {}", e))
+    }
+
+    pub fn load() -> Option<Self> {
+        let path = Self::config_path();
+        let content = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&content).ok()
     }
 }
 

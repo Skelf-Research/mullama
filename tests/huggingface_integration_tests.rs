@@ -12,7 +12,7 @@
 
 use mullama::context::ContextParams;
 use mullama::embedding::*;
-use mullama::huggingface::*;
+use mullama::hf::*;
 use mullama::lora::*;
 use mullama::Context;
 use mullama::*;
@@ -22,8 +22,6 @@ use std::time::Instant;
 
 /// Test configuration
 struct TestConfig {
-    /// Directory for test downloads
-    download_dir: PathBuf,
     /// HuggingFace client
     client: HFClient,
 }
@@ -34,10 +32,7 @@ impl TestConfig {
 
         let client = HFClient::with_download_dir(&download_dir).with_token_from_env();
 
-        Self {
-            download_dir,
-            client,
-        }
+        Self { client }
     }
 
     fn ensure_model(&self, model_id: &str) -> Result<PathBuf, MullamaError> {

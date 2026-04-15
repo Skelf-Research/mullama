@@ -7,6 +7,7 @@
 mod config;
 mod loaded;
 mod manager;
+mod pool;
 mod stats;
 
 pub use config::{ModelConfig, ModelLoadConfig, DEFAULT_CONTEXT_POOL_SIZE};

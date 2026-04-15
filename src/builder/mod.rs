@@ -55,13 +55,13 @@
 //! }
 //! ```
 
-mod model;
 mod context;
+mod model;
 mod sampler;
 
-pub use model::ModelBuilder;
 pub use context::ContextBuilder;
-pub use sampler::{SamplerBuilder, PenaltyBuilder};
+pub use model::ModelBuilder;
+pub use sampler::{PenaltyBuilder, SamplerBuilder};
 
 /// Preset configurations for builders
 pub mod presets {

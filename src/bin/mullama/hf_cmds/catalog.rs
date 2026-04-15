@@ -197,7 +197,9 @@ pub(crate) async fn remove_model(
         Some((model.repo_id.clone(), model.local_path.clone()))
     } else {
         let model_path = local_model_path(name);
-        model_path.exists().then_some(("local".to_string(), model_path))
+        model_path
+            .exists()
+            .then_some(("local".to_string(), model_path))
     };
 
     let (source, path) = match found {

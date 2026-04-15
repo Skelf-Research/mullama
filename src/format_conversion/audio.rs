@@ -326,10 +326,10 @@ impl AudioConverter {
     }
 
     async fn decode_with_symphonia(&self, data: &[u8]) -> Result<DecodedAudio, MullamaError> {
-        let cursor = Cursor::new(data);
+        let cursor = Cursor::new(data.to_vec());
         let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
-        let mut hint = Hint::new();
+        let hint = Hint::new();
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
 
@@ -392,7 +392,7 @@ impl AudioConverter {
                         }
                         AudioBufferRef::U24(buf) => {
                             for &sample in buf.chan(0) {
-                                samples.push(sample as f32 / 8388608.0);
+                                samples.push((sample.inner() as f32 - 8388608.0) / 8388608.0);
                             }
                         }
                         AudioBufferRef::U32(buf) => {
@@ -412,7 +412,7 @@ impl AudioConverter {
                         }
                         AudioBufferRef::S24(buf) => {
                             for &sample in buf.chan(0) {
-                                samples.push(sample as f32 / 8388608.0);
+                                samples.push(sample.inner() as f32 / 8388608.0);
                             }
                         }
                         AudioBufferRef::S32(buf) => {
@@ -570,7 +570,7 @@ impl AudioConverter {
     async fn generic_audio_conversion(
         &self,
         input_data: &[u8],
-        input_format: AudioFormatType,
+        _input_format: AudioFormatType,
         output_format: AudioFormatType,
         config: &ConversionConfig,
     ) -> Result<AudioConversionResult, MullamaError> {

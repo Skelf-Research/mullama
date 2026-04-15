@@ -297,6 +297,8 @@ pub mod handlers {
     use super::*;
     use axum::extract::State;
     use axum::response::Json;
+    #[cfg(feature = "streaming")]
+    use axum::response::Sse;
     use std::time::Instant;
 
     /// Generate text handler
@@ -706,9 +708,17 @@ pub mod utils {
             .map(std::string::ToString::to_string)
     }
 
-    /// Validate API key (placeholder implementation)
+    /// Validate API key against a configured key.
+    ///
+    /// For the daemon, use `HttpAuthState` middleware instead which validates
+    /// against the configured API key. This helper is for standalone web
+    /// service usage where a specific key must be provided.
+    pub fn validate_api_key_against(api_key: &str, expected: &str) -> bool {
+        !api_key.is_empty() && api_key == expected
+    }
+
+    #[deprecated(note = "Use validate_api_key_against with an explicit expected key")]
     pub fn validate_api_key(api_key: &str) -> bool {
-        // In a real implementation, you'd check against a database or configuration
         !api_key.is_empty()
     }
 }

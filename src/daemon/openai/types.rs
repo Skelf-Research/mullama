@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
-use crate::daemon::protocol::{ChatMessage, EmbeddingInput, Usage};
 use crate::daemon::protocol::ResponseFormat;
+use crate::daemon::protocol::{ChatMessage, EmbeddingInput, Usage};
 
 /// Chat completion request (OpenAI compatible)
 #[derive(Debug, Deserialize)]
@@ -236,7 +236,11 @@ impl From<crate::daemon::protocol::CompletionResponse> for CompletionResponse {
             object: resp.object,
             created: resp.created,
             model: resp.model,
-            choices: resp.choices.into_iter().map(CompletionChoice::from).collect(),
+            choices: resp
+                .choices
+                .into_iter()
+                .map(CompletionChoice::from)
+                .collect(),
             usage: resp.usage,
         }
     }

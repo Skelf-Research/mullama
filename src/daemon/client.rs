@@ -190,6 +190,7 @@ impl DaemonClient {
         cache_type_v: Option<String>,
         use_mmap: Option<bool>,
         use_mlock: bool,
+        n_batch: Option<u32>,
     ) -> Result<(String, ModelInfo), MullamaError> {
         match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.to_string(),
@@ -203,7 +204,7 @@ impl DaemonClient {
             cache_type_v,
             rope_freq_base: None,
             rope_freq_scale: None,
-            n_batch: None,
+            n_batch,
             defrag_thold: None,
             split_mode: None,
         }))? {

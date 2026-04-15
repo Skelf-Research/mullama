@@ -163,7 +163,8 @@ impl Daemon {
         match self.models.load(config).await {
             Ok(info) => {
                 let elapsed = load_start.elapsed();
-                self.store.record_model_load(&params.alias, elapsed.as_millis() as u64);
+                self.store
+                    .record_model_load(&params.alias, elapsed.as_millis() as u64);
                 Response::ModelLoaded {
                     alias: params.alias,
                     info,

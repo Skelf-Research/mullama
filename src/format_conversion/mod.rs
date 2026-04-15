@@ -36,10 +36,7 @@
 mod audio;
 mod image;
 
-use std::{
-    collections::HashMap,
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -118,7 +115,9 @@ pub struct ImageConversionResult {
 /// Real-time format converter for streaming data
 #[cfg(feature = "format-conversion")]
 pub struct StreamingConverter {
+    #[allow(dead_code)]
     audio_converter: AudioConverter,
+    #[allow(dead_code)]
     image_converter: ImageConverter,
     buffer_size: usize,
 }
@@ -198,12 +197,12 @@ impl StreamingConverter {
         frame_data: &[u8],
         input_format: AudioFormatType,
         output_format: AudioFormatType,
-        config: &ConversionConfig,
+        _config: &ConversionConfig,
     ) -> Result<Vec<u8>, MullamaError> {
         // For this demo, we'll simulate format conversion
         // In a real implementation, this would use appropriate codecs
         match (input_format, output_format) {
-            (AudioFormatType::WAV, AudioFormatType::MP3) => {
+            (AudioFormatType::Wav, AudioFormatType::Mp3) => {
                 // Simulate WAV to MP3 conversion with compression
                 Ok(frame_data
                     .iter()
@@ -211,7 +210,7 @@ impl StreamingConverter {
                     .cloned()
                     .collect())
             }
-            (AudioFormatType::MP3, AudioFormatType::WAV) => {
+            (AudioFormatType::Mp3, AudioFormatType::Wav) => {
                 // Simulate MP3 to WAV decompression
                 let mut expanded = Vec::with_capacity(frame_data.len() * 2);
                 for &byte in frame_data {
@@ -220,7 +219,7 @@ impl StreamingConverter {
                 }
                 Ok(expanded)
             }
-            (AudioFormatType::FLAC, AudioFormatType::WAV) => {
+            (AudioFormatType::Flac, AudioFormatType::Wav) => {
                 // Simulate FLAC decompression
                 Ok(frame_data.to_vec())
             }

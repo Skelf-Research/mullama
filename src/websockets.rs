@@ -39,7 +39,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        Path, State,
     },
     response::Response,
     routing::get,
@@ -47,13 +47,13 @@ use axum::{
 };
 
 #[cfg(feature = "websockets")]
-use tokio::{
-    sync::{broadcast, mpsc, RwLock},
-    time::{interval, Duration, Instant},
-};
+use futures::{SinkExt, StreamExt};
 
 #[cfg(feature = "websockets")]
-use tokio_tungstenite::tungstenite;
+use tokio::{
+    sync::{broadcast, RwLock},
+    time::{interval, Duration, Instant},
+};
 
 #[cfg(feature = "websockets")]
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ use std::{
 };
 
 #[cfg(all(feature = "websockets", feature = "async"))]
-use crate::{AsyncModel, MullamaError, StreamConfig, TokenStream};
+use crate::{AsyncModel, MullamaError};
 
 /// WebSocket server for real-time communication
 #[cfg(feature = "websockets")]
@@ -88,7 +88,7 @@ impl WebSocketServer {
     }
 
     /// Create router with WebSocket endpoints
-    pub fn create_router(&self) -> Router<AppState> {
+    pub fn create_router(&self) -> Router {
         Router::new()
             .route("/ws", get(websocket_handler))
             .route("/ws/chat/:room_id", get(chat_websocket_handler))
@@ -525,17 +525,20 @@ impl AudioProcessor {
         // 4. Normalize audio levels
 
         println!(
-            "🎵 Processing audio: {} bytes, {}Hz, {} channels",
+            "🎵 Processing audio: {} bytes, {}Hz/{}Hz, {} channels/{} channels, buffer {}",
             data.len(),
             format.sample_rate,
-            format.channels
+            self.sample_rate,
+            format.channels,
+            self.channels,
+            self.buffer_size
         );
 
         Ok(data.to_vec())
     }
 
     /// Convert audio to text (placeholder for STT integration)
-    pub async fn speech_to_text(&self, audio_data: &[u8]) -> Result<String, MullamaError> {
+    pub async fn speech_to_text(&self, _audio_data: &[u8]) -> Result<String, MullamaError> {
         // Placeholder for speech-to-text integration
         // This would integrate with services like Whisper, Google Speech-to-Text, etc.
         Ok("Transcribed text placeholder".to_string())
@@ -636,18 +639,20 @@ async fn handle_websocket(socket: WebSocket, state: AppState, connection_type: C
     // Handle incoming messages
     let connections_clone = state.connections.clone();
     let connection_id_clone = connection_id.clone();
+    let message_state = state.clone();
+    let ping_interval_duration = state.config.ping_interval;
 
     tokio::spawn(async move {
         while let Some(msg) = receiver_ws.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
                     if let Ok(ws_message) = serde_json::from_str::<WSMessage>(&text) {
-                        handle_message(ws_message, &state, &connection_id).await;
+                        handle_message(ws_message, &message_state, &connection_id).await;
                     }
                 }
                 Ok(Message::Binary(data)) => {
                     // Handle binary data (audio, etc.)
-                    if let Some(audio_processor) = &state.audio_processor {
+                    if let Some(audio_processor) = &message_state.audio_processor {
                         let format = AudioFormat {
                             sample_rate: 16000,
                             channels: 1,
@@ -679,7 +684,7 @@ async fn handle_websocket(socket: WebSocket, state: AppState, connection_type: C
     });
 
     // Keep connection alive and handle cleanup
-    let mut ping_interval = interval(state.config.ping_interval);
+    let mut ping_interval = interval(ping_interval_duration);
 
     loop {
         tokio::select! {
@@ -738,13 +743,16 @@ async fn handle_stream_websocket(socket: WebSocket, state: AppState, session_id:
 #[cfg(feature = "websockets")]
 async fn handle_message(message: WSMessage, state: &AppState, connection_id: &str) {
     match message {
-        WSMessage::Generate { prompt, config } => {
-            if let Some(model) = &state.model {
+        WSMessage::Generate {
+            prompt,
+            config: _config,
+        } => {
+            if let Some(_model) = &state.model {
                 // Handle generation request
                 println!("🤖 Generation request from {}: {}", connection_id, prompt);
 
                 // In real implementation, this would generate using the model
-                let response = WSMessage::Text {
+                let _response = WSMessage::Text {
                     content: format!("Generated response for: {}", prompt),
                 };
 
@@ -752,7 +760,10 @@ async fn handle_message(message: WSMessage, state: &AppState, connection_id: &st
                 // (This would require a way to send messages back to specific connections)
             }
         }
-        WSMessage::Audio { data, format } => {
+        WSMessage::Audio {
+            data,
+            format: _format,
+        } => {
             if let Some(audio_processor) = &state.audio_processor {
                 println!(
                     "🎵 Audio message from {}: {} bytes",
@@ -777,7 +788,7 @@ async fn handle_message(message: WSMessage, state: &AppState, connection_id: &st
         }
         WSMessage::Ping => {
             // Respond with Pong
-            let pong = WSMessage::Pong;
+            let _pong = WSMessage::Pong;
             // Send pong back (would need connection reference)
         }
         _ => {
