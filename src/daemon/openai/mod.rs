@@ -8,11 +8,11 @@ mod defaults;
 mod embeddings;
 mod error;
 mod helpers;
-mod middleware;
+pub mod middleware;
 mod models;
 mod router;
 mod system;
-mod types;
+pub mod types;
 mod ui;
 
 use std::sync::Arc;

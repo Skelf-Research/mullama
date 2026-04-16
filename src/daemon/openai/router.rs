@@ -8,6 +8,7 @@ use axum::{
     Router,
 };
 use tower::limit::ConcurrencyLimitLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::AppState;
@@ -49,6 +50,16 @@ pub fn create_openai_router(daemon: AppState) -> Router {
             daemon.config.http.max_concurrent_requests,
         ));
 
+    if daemon.config.http.enforce_api_key {
+        if let Some(api_key) = daemon.config.http.api_key.as_deref() {
+            let auth = super::middleware::HttpAuthState {
+                api_key: Arc::<str>::from(api_key),
+            };
+            protected =
+                protected.layer(from_fn_with_state(auth, super::middleware::require_api_key));
+        }
+    }
+
     if daemon.config.http.max_requests_per_second > 0 {
         let rate_limit_state = super::middleware::HttpRateLimitState {
             limit: daemon.config.http.max_requests_per_second,
@@ -61,16 +72,6 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         ));
     }
 
-    if daemon.config.http.enforce_api_key {
-        if let Some(api_key) = daemon.config.http.api_key.as_deref() {
-            let auth = super::middleware::HttpAuthState {
-                api_key: Arc::<str>::from(api_key),
-            };
-            protected =
-                protected.layer(from_fn_with_state(auth, super::middleware::require_api_key));
-        }
-    }
-
     let ollama_router = crate::daemon::ollama_api::create_ollama_router(daemon.clone());
 
     Router::new()
@@ -81,5 +82,11 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         .with_state(daemon)
         .merge(protected)
         .merge(ollama_router)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .layer(TraceLayer::new_for_http())
 }

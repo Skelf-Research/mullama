@@ -18,6 +18,8 @@ final class SamplerParams
     public float $penaltyFreq = 0.0;
     public float $penaltyPresent = 0.0;
     public int $penaltyLastN = 64;
+    public bool $penalizeNl = true;
+    public bool $ignoreEos = false;
     public int $seed = 0;
 
     public function __construct(array $params = [])
@@ -44,6 +46,8 @@ final class SamplerParams
             'penaltyFreq' => 0.0,
             'penaltyPresent' => 0.0,
             'penaltyLastN' => 0,
+            'penalizeNl' => true,
+            'ignoreEos' => false,
             'seed' => 0,
         ]);
     }
@@ -63,6 +67,8 @@ final class SamplerParams
             'penaltyFreq' => 0.1,
             'penaltyPresent' => 0.1,
             'penaltyLastN' => 128,
+            'penalizeNl' => true,
+            'ignoreEos' => false,
             'seed' => 0,
         ]);
     }
@@ -82,6 +88,8 @@ final class SamplerParams
             'penaltyFreq' => 0.0,
             'penaltyPresent' => 0.0,
             'penaltyLastN' => 32,
+            'penalizeNl' => true,
+            'ignoreEos' => false,
             'seed' => 0,
         ]);
     }

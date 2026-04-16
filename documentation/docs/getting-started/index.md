@@ -117,7 +117,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 === "Go"
 
     ```bash
-    go get github.com/skelf-research/mullama-go
+    go get github.com/cognisoc/mullama
     ```
 
     ```go title="main.go"
@@ -125,7 +125,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 
     import (
         "fmt"
-        "github.com/skelf-research/mullama-go"
+        "github.com/cognisoc/mullama"
     )
 
     func main() {
@@ -140,7 +140,7 @@ Get up and running with Mullama in under 5 minutes. Choose the path that matches
 === "PHP"
 
     ```bash
-    composer require skelf-research/mullama
+    composer require mullama/mullama
     ```
 
     ```php title="main.php"

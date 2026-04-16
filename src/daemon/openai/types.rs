@@ -190,7 +190,7 @@ pub(super) fn default_max_tokens() -> u32 {
     512
 }
 
-pub(super) fn unix_timestamp_secs() -> u64 {
+pub fn unix_timestamp_secs() -> u64 {
     crate::daemon::protocol::unix_timestamp_secs()
 }
 

@@ -322,13 +322,19 @@ impl JsonSchemaConverter {
                 t
             ))),
             None => {
-                // No type specified, allow any JSON value
-                Ok(format!(
+                let obj_rule = self.generate_rule_name("obj");
+                let arr_rule = self.generate_rule_name("arr");
+                self.rules.push(format!(
                     "{} ::= string | number | boolean | null | {} | {}",
-                    name,
-                    self.generate_rule_name("obj"),
-                    self.generate_rule_name("arr")
-                ))
+                    name, obj_rule, arr_rule
+                ));
+                self.rules
+                    .push(format!("{} ::= {{}} | {{ string : value }}", obj_rule));
+                self.rules
+                    .push(format!("{} ::= [] | [ value (\",\" value)*]", arr_rule));
+                self.rules
+                    .push("value ::= string | number | boolean | null | obj_1 | arr_2".to_string());
+                Ok(format!("{} ::= {}", name, name))
             }
         }
     }
@@ -499,12 +505,19 @@ impl JsonSchemaConverter {
         if min_length > 0 || max_length.is_some() {
             let char_rule = r#"[^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])"#;
 
-            if let Some(max) = max_length {
-                let content_rule = self.generate_rule_name(&format!("{}_content", name));
-                self.rules
-                    .push(format!("{} ::= ({}){{0,{}}}", content_rule, char_rule, max));
-                return Ok(format!("{} ::= \"\\\"\" {} \"\\\"\"", name, content_rule));
-            }
+            let content_rule = self.generate_rule_name(&format!("{}_content", name));
+            let repetition = if let Some(max) = max_length {
+                format!("{},{}", min_length, max)
+            } else if min_length > 0 {
+                format!("{},", min_length)
+            } else {
+                "0,".to_string()
+            };
+            self.rules.push(format!(
+                "{} ::= ({}){{{{{}}}}}",
+                content_rule, char_rule, repetition
+            ));
+            return Ok(format!("{} ::= \"\\\"\" {} \"\\\"\"", name, content_rule));
         }
 
         Ok(format!("{} ::= string", name))

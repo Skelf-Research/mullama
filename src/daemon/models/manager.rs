@@ -13,6 +13,12 @@ use crate::{Context, ContextParams, Model, ModelParams, MullamaError};
 #[cfg(feature = "multimodal")]
 use crate::{MtmdContext, MtmdParams};
 
+struct LoadedCore {
+    model: Arc<Model>,
+    context: Context,
+    ctx_params: ContextParams,
+}
+
 /// Multi-model manager with lock-free concurrent access
 pub struct ModelManager {
     models: DashMap<String, Arc<LoadedModel>>,
@@ -57,51 +63,68 @@ impl ModelManager {
             };
         }
 
-        let model = Arc::new(Model::load_with_params(&config.path, model_params)?);
+        let path = config.path.clone();
+        let info_path = config.path.clone();
+        let context_size = config.context_size;
+        let threads = config.threads;
+        let gpu_layers = config.gpu_layers;
+        let model_config = config.model_config.clone().unwrap_or_default();
+        let context_pool_size = config.context_pool_size;
+        let quantization = detect_quantization_from_path(&path);
+        let flash_attn = config.flash_attn;
+        let cache_type_k = config.cache_type_k.clone();
+        let cache_type_v = config.cache_type_v.clone();
+        let rope_freq_base = config.rope_freq_base;
+        let rope_freq_scale = config.rope_freq_scale;
+        let n_batch = config.n_batch;
+        let defrag_thold = config.defrag_thold;
 
-        let mut ctx_params = ContextParams {
-            n_ctx: config.context_size,
-            n_threads: config.threads,
-            n_threads_batch: config.threads,
-            ..ContextParams::default()
-        };
-        if config.flash_attn {
-            ctx_params.flash_attn_type =
-                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
-        }
-        if let Some(ref k) = config.cache_type_k {
-            if let Some(kt) = crate::context::KvCacheType::from_str(k) {
-                ctx_params.type_k = kt;
+        let load_result = tokio::task::spawn_blocking(move || -> Result<LoadedCore, MullamaError> {
+            let model = Arc::new(Model::load_with_params(&path, model_params)?);
+
+            let mut ctx_params = ContextParams {
+                n_ctx: context_size,
+                n_threads: threads,
+                n_threads_batch: threads,
+                ..ContextParams::default()
+            };
+            if flash_attn {
+                ctx_params.flash_attn_type =
+                    crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
             }
-        }
-        if let Some(ref v) = config.cache_type_v {
-            if let Some(vt) = crate::context::KvCacheType::from_str(v) {
-                ctx_params.type_v = vt;
+            if let Some(ref k) = cache_type_k {
+                if let Some(kt) = crate::context::KvCacheType::from_str(k) {
+                    ctx_params.type_k = kt;
+                }
             }
-        }
-        if let Some(base) = config.rope_freq_base {
-            ctx_params.rope_freq_base = base;
-        }
-        if let Some(scale) = config.rope_freq_scale {
-            ctx_params.rope_freq_scale = scale;
-        }
-        if let Some(batch) = config.n_batch {
-            ctx_params.n_batch = batch;
-        }
-        if let Some(thold) = config.defrag_thold {
-            ctx_params.defrag_thold = thold;
-        }
+            if let Some(ref v) = cache_type_v {
+                if let Some(vt) = crate::context::KvCacheType::from_str(v) {
+                    ctx_params.type_v = vt;
+                }
+            }
+            if let Some(base) = rope_freq_base {
+                ctx_params.rope_freq_base = base;
+            }
+            if let Some(scale) = rope_freq_scale {
+                ctx_params.rope_freq_scale = scale;
+            }
+            if let Some(batch) = n_batch {
+                ctx_params.n_batch = batch;
+            }
+            if let Some(thold) = defrag_thold {
+                ctx_params.defrag_thold = thold;
+            }
 
-        let context = Context::new(model.clone(), ctx_params.clone())?;
+            let context = Context::new(model.clone(), ctx_params.clone())?;
 
-        let info = ModelInfo {
-            path: config.path.clone(),
-            parameters: model.n_params(),
-            context_size: config.context_size,
-            vocab_size: model.n_vocab() as u32,
-            gpu_layers: config.gpu_layers,
-            quantization: detect_quantization_from_path(&config.path),
-        };
+            Ok(LoadedCore {
+                model,
+                context,
+                ctx_params,
+            })
+        }).await.map_err(|e| MullamaError::OperationFailed(format!("Model loading task failed: {}", e)))??;
+
+        let LoadedCore { model, context, ctx_params } = load_result;
 
         #[cfg(feature = "multimodal")]
         let mtmd_context = if let Some(ref mmproj_path) = config.mmproj_path {
@@ -125,7 +148,14 @@ impl ModelManager {
             None
         };
 
-        let model_config = config.model_config.clone().unwrap_or_default();
+        let info = ModelInfo {
+            path: info_path.clone(),
+            parameters: model.n_params(),
+            context_size,
+            vocab_size: model.n_vocab() as u32,
+            gpu_layers,
+            quantization,
+        };
 
         #[cfg(feature = "multimodal")]
         let loaded = Arc::new(LoadedModel::new(
@@ -136,7 +166,7 @@ impl ModelManager {
             mtmd_context,
             ctx_params,
             model_config,
-            config.context_pool_size,
+            context_pool_size,
         )?);
 
         #[cfg(not(feature = "multimodal"))]
@@ -147,7 +177,7 @@ impl ModelManager {
             info.clone(),
             ctx_params,
             model_config,
-            config.context_pool_size,
+            context_pool_size,
         )?);
 
         self.models.insert(config.alias.clone(), loaded);

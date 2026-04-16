@@ -13,10 +13,12 @@ namespace Mullama;
 class ModelParams
 {
     public function __construct(
-        public readonly int $gpuLayers = 0,
+        public readonly int $nGpuLayers = 0,
         public readonly bool $useMmap = true,
         public readonly bool $useMlock = false,
-        public readonly ?string $splitMode = null,
+        public readonly bool $vocabOnly = false,
+        public readonly bool $checkTensors = false,
+        public readonly int $splitMode = 0,
     ) {
     }
 
@@ -26,22 +28,24 @@ class ModelParams
     public static function fromPreset(HardwarePreset $preset): self
     {
         return new self(
-            gpuLayers: $preset->gpuLayers(),
+            nGpuLayers: $preset->gpuLayers(),
         );
     }
 
     /**
-     * Convert to array for FFI/API calls.
+     * Convert to array for Model::load().
      *
      * @return array<string, mixed>
      */
     public function toArray(): array
     {
         return [
-            'gpu_layers' => $this->gpuLayers,
-            'use_mmap' => $this->useMmap,
-            'use_mlock' => $this->useMlock,
-            'split_mode' => $this->splitMode,
+            'nGpuLayers' => $this->nGpuLayers,
+            'useMmap' => $this->useMmap,
+            'useMlock' => $this->useMlock,
+            'vocabOnly' => $this->vocabOnly,
+            'checkTensors' => $this->checkTensors,
+            'splitMode' => $this->splitMode,
         ];
     }
 }

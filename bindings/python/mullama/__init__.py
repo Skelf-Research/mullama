@@ -16,7 +16,9 @@ from mullama._mullama import (
     Model,
     Context,
     SamplerParams,
+    TokenIterator,
     EmbeddingGenerator,
+    HardwarePreset,
     cosine_similarity,
     backend_init,
     backend_free,
@@ -30,7 +32,9 @@ __all__ = [
     "Model",
     "Context",
     "SamplerParams",
+    "TokenIterator",
     "EmbeddingGenerator",
+    "HardwarePreset",
     "cosine_similarity",
     "backend_init",
     "backend_free",
@@ -42,3 +46,7 @@ __all__ = [
 
 # Auto-initialize backend on import
 backend_init()
+
+import atexit
+
+atexit.register(backend_free)

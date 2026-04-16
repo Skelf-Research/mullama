@@ -5,8 +5,11 @@
 //! `reqwest` HTTP client. This replaces the previous `curl` subprocess approach
 //! with a native cross-platform HTTP implementation.
 
+#[cfg(feature = "daemon")]
 use super::types::*;
+#[cfg(feature = "daemon")]
 use super::urlencoding;
+#[cfg(feature = "daemon")]
 use super::{HF_API_BASE, HF_MODELS_BASE};
 use crate::error::MullamaError;
 #[cfg(feature = "daemon")]
@@ -23,6 +26,7 @@ pub struct HFClient {
     /// Optional HF token for private models
     token: Option<String>,
     /// HTTP client user agent
+    #[allow(dead_code)]
     user_agent: String,
 }
 
@@ -480,6 +484,7 @@ impl HFClient {
     }
 
     /// Parse model info from JSON
+    #[cfg(feature = "daemon")]
     fn parse_model_info(&self, json: &serde_json::Value) -> Option<HFModelInfo> {
         let model_id = json
             .get("modelId")

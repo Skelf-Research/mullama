@@ -1,10 +1,47 @@
 """Type stubs for mullama Python bindings."""
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
 __version__: str
+
+class HardwarePreset:
+    """Hardware configuration preset for model deployment."""
+
+    @staticmethod
+    def cpu_low_memory() -> HardwarePreset: ...
+    @staticmethod
+    def cpu_standard() -> HardwarePreset: ...
+    @staticmethod
+    def gpu_low_vram() -> HardwarePreset: ...
+    @staticmethod
+    def gpu_medium_vram() -> HardwarePreset: ...
+    @staticmethod
+    def gpu_high_vram() -> HardwarePreset: ...
+    @staticmethod
+    def apple_silicon() -> HardwarePreset: ...
+    @staticmethod
+    def max_performance() -> HardwarePreset: ...
+    @staticmethod
+    def detect() -> HardwarePreset: ...
+    @staticmethod
+    def from_name(name: str) -> Optional[HardwarePreset]: ...
+    def name(self) -> str: ...
+    def description(self) -> str: ...
+    def recommended_quant(self) -> str: ...
+    def gpu_layers(self) -> int: ...
+    def context_size(self) -> int: ...
+    def flash_attn(self) -> bool: ...
+
+class TokenIterator:
+    """Iterator over generated tokens from streaming generation."""
+
+    def __iter__(self) -> Iterator[str]: ...
+    def __next__(self) -> str: ...
+    def __len__(self) -> int: ...
+    def collect(self) -> List[str]: ...
+    def text(self) -> str: ...
 
 class Model:
     """Model class for loading and managing LLM models."""
@@ -151,7 +188,6 @@ class Model:
         """Get the model name from metadata."""
         ...
 
-
 class SamplerParams:
     """Sampler parameters for text generation."""
 
@@ -164,6 +200,8 @@ class SamplerParams:
     penalty_freq: float
     penalty_present: float
     penalty_last_n: int
+    penalize_nl: bool
+    ignore_eos: bool
     seed: int
 
     def __init__(
@@ -177,6 +215,8 @@ class SamplerParams:
         penalty_freq: float = 0.0,
         penalty_present: float = 0.0,
         penalty_last_n: int = 64,
+        penalize_nl: bool = True,
+        ignore_eos: bool = False,
         seed: int = 0,
     ) -> None:
         """Create new sampler parameters.
@@ -191,6 +231,8 @@ class SamplerParams:
             penalty_freq: Frequency penalty (0.0 = disabled)
             penalty_present: Presence penalty (0.0 = disabled)
             penalty_last_n: Tokens to consider for penalties
+            penalize_nl: Whether to penalize newline tokens (default: True)
+            ignore_eos: Whether to ignore end-of-sequence tokens (default: False)
             seed: Random seed (0 = random)
         """
         ...
@@ -209,7 +251,6 @@ class SamplerParams:
     def precise() -> SamplerParams:
         """Create precise (low randomness) sampler params."""
         ...
-
 
 class Context:
     """Context for model inference."""
@@ -256,8 +297,8 @@ class Context:
         prompt: Union[str, List[int]],
         max_tokens: int = 100,
         params: Optional[SamplerParams] = None,
-    ) -> List[str]:
-        """Generate text with streaming (returns list of token strings).
+    ) -> TokenIterator:
+        """Generate text with streaming (returns an iterator of token strings).
 
         Args:
             prompt: Text prompt or list of token IDs
@@ -265,7 +306,7 @@ class Context:
             params: Optional sampler parameters
 
         Returns:
-            List of generated token strings
+            TokenIterator that yields generated token strings
         """
         ...
 
@@ -294,7 +335,6 @@ class Context:
     def n_batch(self) -> int:
         """Get the batch size."""
         ...
-
 
 class EmbeddingGenerator:
     """Embedding generator for creating text embeddings."""
@@ -341,10 +381,7 @@ class EmbeddingGenerator:
         """Get the embedding dimension."""
         ...
 
-
-def cosine_similarity(
-    a: NDArray[np.float32], b: NDArray[np.float32]
-) -> float:
+def cosine_similarity(a: NDArray[np.float32], b: NDArray[np.float32]) -> float:
     """Compute cosine similarity between two vectors.
 
     Args:
@@ -356,26 +393,21 @@ def cosine_similarity(
     """
     ...
 
-
 def backend_init() -> None:
     """Initialize the mullama backend."""
     ...
-
 
 def backend_free() -> None:
     """Free the mullama backend resources."""
     ...
 
-
 def supports_gpu_offload() -> bool:
     """Check if GPU offloading is supported."""
     ...
 
-
 def system_info() -> str:
     """Get system information."""
     ...
-
 
 def max_devices() -> int:
     """Get the maximum number of supported devices."""

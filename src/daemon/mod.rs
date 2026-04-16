@@ -64,7 +64,7 @@ pub use protocol::{
     ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
     CompletionChoice as IpcCompletionChoice, CompletionParams,
     CompletionResponse as IpcCompletionResponse, DaemonStats, DaemonStatus, EmbeddingInput,
-    ErrorCode, ModelDetailedStats, ModelInfo, ModelLoadParams, ModelStatus, Request, Response,
+    ErrorCode, MessageContent, ModelDetailedStats, ModelInfo, ModelLoadParams, ModelStatus, Request, Response,
     Usage,
 };
 
@@ -121,8 +121,8 @@ pub use registry::{
 
 // Anthropic API types
 pub use anthropic::{
-    AnthropicMessage, AnthropicUsage, ContentBlock, MessageContent, MessagesRequest,
-    MessagesResponse, ResponseContentBlock,
+    AnthropicMessage, AnthropicUsage, ContentBlock, MessageContent as AnthropicMessageContent,
+    MessagesRequest, MessagesResponse, ResponseContentBlock,
 };
 
 // Daemon spawn utilities

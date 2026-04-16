@@ -13,15 +13,13 @@ namespace Mullama;
 class ContextParams
 {
     public function __construct(
-        public readonly int $contextSize = 4096,
-        public readonly int $batchSize = 512,
-        public readonly int $threads = 0,
-        public readonly bool $flashAttn = false,
-        public readonly string $cacheTypeK = 'f16',
-        public readonly string $cacheTypeV = 'f16',
-        public readonly float $ropeFreqBase = 0.0,
-        public readonly float $ropeFreqScale = 0.0,
-        public readonly float $defragThold = -1.0,
+        public readonly int $nCtx = 0,
+        public readonly int $nBatch = 2048,
+        public readonly int $nUbatch = 512,
+        public readonly int $nThreads = 0,
+        public readonly bool $embeddings = false,
+        public readonly bool $offloadKqv = true,
+        public readonly int $flashAttn = 0,
     ) {
     }
 
@@ -31,28 +29,26 @@ class ContextParams
     public static function fromPreset(HardwarePreset $preset): self
     {
         return new self(
-            contextSize: $preset->contextSize(),
-            flashAttn: $preset->flashAttn(),
+            nCtx: $preset->contextSize(),
+            flashAttn: $preset->flashAttn() ? 2 : 0,
         );
     }
 
     /**
-     * Convert to array for FFI/API calls.
+     * Convert to array for Context constructor.
      *
      * @return array<string, mixed>
      */
     public function toArray(): array
     {
         return [
-            'context_size' => $this->contextSize,
-            'batch_size' => $this->batchSize,
-            'threads' => $this->threads,
-            'flash_attn' => $this->flashAttn,
-            'cache_type_k' => $this->cacheTypeK,
-            'cache_type_v' => $this->cacheTypeV,
-            'rope_freq_base' => $this->ropeFreqBase,
-            'rope_freq_scale' => $this->ropeFreqScale,
-            'defrag_thold' => $this->defragThold,
+            'nCtx' => $this->nCtx,
+            'nBatch' => $this->nBatch,
+            'nUbatch' => $this->nUbatch,
+            'nThreads' => $this->nThreads,
+            'embeddings' => $this->embeddings,
+            'offloadKqv' => $this->offloadKqv,
+            'flashAttn' => $this->flashAttn,
         ];
     }
 }

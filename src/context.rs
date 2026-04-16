@@ -1087,4 +1087,14 @@ unsafe impl Send for Context {}
 //    is thread-safe
 // 4. The underlying llama_context is never accessed through &Context
 //    without internal synchronization
+//
+// WARNING: This impl is technically unsound — llama_context is not
+// thread-safe for concurrent reads. This is accepted as a pragmatic
+// trade-off because: (a) the daemon architecture wraps Context in
+// Arc<RwLock<Context>> providing runtime synchronization, and (b)
+// the direct library API is used from a single thread per context.
+// If Context were !Sync, it could not be stored in Arc<RwLock<>>,
+// which is required by the daemon's model pooling design.
+// Do NOT call Context methods concurrently from multiple threads
+// without external synchronization (e.g., RwLock).
 unsafe impl Sync for Context {}

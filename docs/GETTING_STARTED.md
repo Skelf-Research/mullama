@@ -7,13 +7,13 @@ This guide will help you get up and running with Mullama quickly.
 **One-liner (Linux/macOS):**
 
 ```bash
-curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
+curl -fsSL https://mullama.cognisoc.com/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-iwr -useb https://skelfresearch.com/mullama/install.ps1 | iex
+iwr -useb https://mullama.cognisoc.com/install.ps1 | iex
 ```
 
 **Then run your first model:**
@@ -172,7 +172,7 @@ Test your setup with a simple build:
 
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/skelf-research/mullama.git
+git clone --recurse-submodules https://github.com/cognisoc/mullama.git
 cd mullama
 
 # Test basic build
@@ -554,7 +554,7 @@ async fn load_from_config() -> Result<AsyncModel, MullamaError> {
 
 ### Beginner
 1. **Try the examples**: Run `cargo run --example simple --features async`
-2. **Read the API docs**: Check out [docs.rs/mullama](https://docs.rs/mullama)
+2. **Read the API docs**: Check out [docs.cognisoc.com/mullama](https://docs.cognisoc.com/mullama)
 3. **Join the community**: Visit our [Discord](https://discord.gg/mullama)
 
 ### Intermediate
@@ -569,7 +569,7 @@ async fn load_from_config() -> Result<AsyncModel, MullamaError> {
 
 ### Learning Resources
 
-- 📚 **[API Documentation](https://docs.rs/mullama)** - Complete API reference
+- 📚 **[API Documentation](https://docs.cognisoc.com/mullama)** - Complete API reference
 - 🎯 **[Examples Directory](../examples/)** - Practical code examples
 - 📖 **[Integration Guide](./FEATURES.md)** - Detailed feature documentation
 - 💬 **[Community Discord](https://discord.gg/mullama)** - Get help and share projects

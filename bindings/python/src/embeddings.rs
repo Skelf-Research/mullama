@@ -29,7 +29,7 @@ impl PyEmbeddingGenerator {
         };
 
         let model_arc = model.inner.clone();
-        let context = Context::new(Arc::new((*model_arc).clone()), params).map_err(to_py_err)?;
+        let context = Context::new(model_arc.clone(), params).map_err(to_py_err)?;
 
         Ok(Self {
             context,

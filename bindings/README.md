@@ -9,7 +9,7 @@ This directory contains language bindings for the Mullama LLM library, providing
 | **C/C++** | [`ffi/`](./ffi) | Header + shared library | Stable |
 | **Python** | [`python/`](./python) | `mullama` on PyPI | Stable |
 | **Node.js** | [`node/`](./node) | `mullama` on npm | Stable |
-| **Go** | [`go/`](./go) | `github.com/skelf-research/mullama-go` | Stable |
+| **Go** | [`go/`](./go) | `github.com/cognisoc/mullama` | Stable |
 | **PHP** | [`php/`](./php) | `mullama/mullama` on Packagist | Stable |
 
 ## Architecture
@@ -68,7 +68,7 @@ console.log(text);
 ### Go
 
 ```go
-import "github.com/skelf-research/mullama-go"
+import "github.com/cognisoc/mullama"
 
 model, _ := mullama.LoadModel("./model.gguf", &mullama.ModelParams{NGpuLayers: 32})
 ctx, _ := mullama.NewContext(model, &mullama.ContextParams{NCtx: 2048})

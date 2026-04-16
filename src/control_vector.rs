@@ -504,7 +504,6 @@ impl ControlVector {
 
             let mut layers = Vec::new();
             let mut embedding_dim = 0usize;
-            let mut num_layers = 0usize;
 
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i).map_err(|e| {
@@ -541,7 +540,7 @@ impl ControlVector {
 
             layers.sort_by_key(|(idx, _)| *idx);
             let max_idx = layers.iter().map(|(idx, _)| *idx).max().unwrap_or(0);
-            num_layers = max_idx + 1;
+            let num_layers = max_idx + 1;
 
             let mut vector = Self::new(
                 "npz_control_vector".to_string(),
@@ -666,8 +665,38 @@ impl ControlVector {
                     ))
                 })?;
 
+            if offsets.len() < 2 {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "data_offsets for '{}' must have at least 2 elements, got {}",
+                    tensor_name,
+                    offsets.len()
+                )));
+            }
+
             let start = offsets[0].as_u64().unwrap_or(0) as usize;
             let end = offsets[1].as_u64().unwrap_or(0) as usize;
+
+            if start > end {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "Invalid data_offsets for '{}': start {} > end {}",
+                    tensor_name, start, end
+                )));
+            }
+
+            let data_end = body_offset.checked_add(end).ok_or_else(|| {
+                MullamaError::ControlVectorError(format!(
+                    "data_offsets overflow for '{}'",
+                    tensor_name
+                ))
+            })?;
+            if data_end > data.len() {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "data_offsets for '{}' exceed file size ({} > {})",
+                    tensor_name,
+                    data_end,
+                    data.len()
+                )));
+            }
 
             let dtype = info.get("dtype").and_then(|v| v.as_str()).unwrap_or("F32");
 
@@ -1053,6 +1082,7 @@ pub mod presets {
 }
 
 /// Parse NPY binary data (numpy .npy format) into f32 values
+#[cfg(feature = "daemon")]
 fn parse_npy_data(data: &[u8]) -> Result<Vec<f32>, MullamaError> {
     let magic = b"\x93NUMPY";
     if data.len() < magic.len() || &data[..magic.len()] != magic {
@@ -1099,6 +1129,7 @@ fn parse_npy_data(data: &[u8]) -> Result<Vec<f32>, MullamaError> {
 }
 
 /// Build NPY binary data from f32 values
+#[cfg(feature = "daemon")]
 fn build_npy_data(values: &[f32]) -> Vec<u8> {
     let dict_str = format!(
         "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",

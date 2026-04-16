@@ -18,7 +18,7 @@ Create `/etc/systemd/system/mullama.service`:
 ```ini
 [Unit]
 Description=Mullama LLM Inference Daemon
-Documentation=https://docs.skelfresearch.com/mullama/daemon/
+Documentation=https://docs.mullama.cognisoc.com/daemon/
 After=network.target
 Wants=network-online.target
 

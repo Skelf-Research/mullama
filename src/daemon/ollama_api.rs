@@ -12,6 +12,7 @@ use axum::{
 };
 use futures::stream::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -171,7 +172,7 @@ pub struct OllamaVersionResponse {
 
 /// Create the Ollama-compatible API router
 pub fn create_ollama_router(daemon: Arc<Daemon>) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/api/generate", post(ollama_generate))
         .route("/api/chat", post(ollama_chat))
         .route("/api/tags", get(ollama_tags))
@@ -181,7 +182,35 @@ pub fn create_ollama_router(daemon: Arc<Daemon>) -> Router {
         .route("/api/embeddings", post(ollama_embeddings))
         .route("/api/ps", get(ollama_ps))
         .route("/api/version", get(ollama_version))
-        .with_state(daemon)
+        .with_state(daemon.clone());
+
+    if daemon.config.http.enforce_api_key {
+        if let Some(api_key) = daemon.config.http.api_key.as_deref() {
+            let auth = crate::daemon::openai::middleware::HttpAuthState {
+                api_key: Arc::<str>::from(api_key),
+            };
+            router = router.layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::daemon::openai::middleware::require_api_key,
+            ));
+        }
+    }
+
+    if daemon.config.http.max_requests_per_second > 0 {
+        let rate_limit_state = crate::daemon::openai::middleware::HttpRateLimitState {
+            limit: daemon.config.http.max_requests_per_second,
+            second: Arc::new(AtomicU64::new(
+                crate::daemon::openai::types::unix_timestamp_secs(),
+            )),
+            count: Arc::new(AtomicU64::new(0)),
+        };
+        router = router.layer(axum::middleware::from_fn_with_state(
+            rate_limit_state,
+            crate::daemon::openai::middleware::enforce_rate_limit,
+        ));
+    }
+
+    router
 }
 
 // ============================================================================
@@ -204,16 +233,10 @@ async fn ollama_generate(
     let loaded = match daemon.models.get(Some(&model_alias)).await {
         Ok(m) => m,
         Err(_) => {
-            return Json(OllamaGenerateResponse {
-                model: model_alias,
-                response: format!("model '{}' not found", req.model),
-                done: true,
-                total_duration: None,
-                load_duration: None,
-                prompt_eval_count: None,
-                eval_count: None,
-            })
-            .into_response();
+            let resp = serde_json::json!({
+                "error": format!("model '{}' not found", req.model)
+            });
+            return (axum::http::StatusCode::NOT_FOUND, Json(resp)).into_response();
         }
     };
 
@@ -236,14 +259,14 @@ async fn ollama_generate(
 
         match daemon.handle_completion_streaming(params).await {
             Ok((rx, prompt_tokens, _request_id, model_name)) => {
-                let _created = crate::daemon::protocol::unix_timestamp_secs();
                 let model_name = Arc::new(model_name);
                 let model_alias = Arc::new(model_alias);
-                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens), |(mut stream, finished, model_name, model_alias, prompt_tokens)| async move {
+                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens, 0u32), |(mut stream, finished, model_name, model_alias, prompt_tokens, mut token_count)| async move {
                     if finished {
                         return None;
                     }
                     if let Some(chunk) = stream.next().await {
+                        token_count += 1;
                         let resp = OllamaGenerateResponse {
                             model: model_name.to_string(),
                             response: chunk.delta,
@@ -251,9 +274,9 @@ async fn ollama_generate(
                             total_duration: None,
                             load_duration: None,
                             prompt_eval_count: Some(prompt_tokens),
-                            eval_count: Some(1),
+                            eval_count: None,
                         };
-                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens)))
+                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens, token_count)))
                     } else {
                         let final_resp = OllamaGenerateResponse {
                             model: model_alias.to_string(),
@@ -262,9 +285,9 @@ async fn ollama_generate(
                             total_duration: None,
                             load_duration: None,
                             prompt_eval_count: Some(prompt_tokens),
-                            eval_count: None,
+                            eval_count: Some(token_count),
                         };
-                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens)))
+                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens, token_count)))
                     }
                 }).map(Ok::<_, std::convert::Infallible>);
 
@@ -280,68 +303,38 @@ async fn ollama_generate(
                 } else {
                     "unknown error".to_string()
                 };
-                return Json(OllamaGenerateResponse {
-                    model: model_alias,
-                    response: format!("streaming error: {}", error_msg),
-                    done: true,
-                    total_duration: None,
-                    load_duration: None,
-                    prompt_eval_count: None,
-                    eval_count: None,
-                })
-                .into_response();
+                let resp = serde_json::json!({"error": format!("streaming error: {}", error_msg)});
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response();
             }
         }
     }
 
+    // Non-streaming path: use daemon.generate_text() for accurate token counts
     let start = std::time::Instant::now();
 
-    let result = {
-        let mut ctx = loaded.acquire_context().await;
-        let model = loaded.model.clone();
-        let tokens = match model.tokenize(&req.prompt, true, false) {
-            Ok(t) => t,
-            Err(e) => {
-                return Json(OllamaGenerateResponse {
-                    model: model_alias,
-                    response: format!("tokenization error: {}", e),
-                    done: true,
-                    total_duration: None,
-                    load_duration: None,
-                    prompt_eval_count: None,
-                    eval_count: None,
-                })
-                .into_response();
-            }
-        };
-
-        let prompt_tokens = tokens.len() as u32;
-        let gen_result = tokio::task::block_in_place(|| {
-            ctx.generate_with_params(&tokens, max_tokens as usize, &sampler_params)
-        });
-
-        match gen_result {
-            Ok(text) => {
-                let elapsed = start.elapsed();
-                OllamaGenerateResponse {
-                    model: model_alias,
-                    response: text,
-                    done: true,
-                    total_duration: Some(elapsed.as_nanos() as u64),
-                    load_duration: Some(0),
-                    prompt_eval_count: Some(prompt_tokens),
-                    eval_count: Some(max_tokens),
-                }
-            }
-            Err(e) => OllamaGenerateResponse {
+    let result = match daemon.generate_text(
+        &loaded,
+        &req.prompt,
+        max_tokens,
+        sampler_params,
+        &stop_sequences,
+        None,
+    ).await {
+        Ok((text, prompt_tokens, completion_tokens)) => {
+            let elapsed = start.elapsed();
+            OllamaGenerateResponse {
                 model: model_alias,
-                response: format!("generation error: {}", e),
+                response: text,
                 done: true,
-                total_duration: None,
-                load_duration: None,
-                prompt_eval_count: None,
-                eval_count: None,
-            },
+                total_duration: Some(elapsed.as_nanos() as u64),
+                load_duration: Some(0),
+                prompt_eval_count: Some(prompt_tokens),
+                eval_count: Some(completion_tokens),
+            }
+        }
+        Err(e) => {
+            let resp = serde_json::json!({"error": format!("generation error: {}", e)});
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response();
         }
     };
 
@@ -364,18 +357,10 @@ async fn ollama_chat(
     let loaded = match daemon.models.get(Some(&model_alias)).await {
         Ok(m) => m,
         Err(_) => {
-            return Json(OllamaChatResponse {
-                model: model_alias,
-                message: Some(OllamaChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!("model '{}' not found", req.model),
-                }),
-                done: true,
-                total_duration: None,
-                prompt_eval_count: None,
-                eval_count: None,
-            })
-            .into_response();
+            let resp = serde_json::json!({
+                "error": format!("model '{}' not found", req.model)
+            });
+            return (axum::http::StatusCode::NOT_FOUND, Json(resp)).into_response();
         }
     };
 
@@ -420,11 +405,12 @@ async fn ollama_chat(
             Ok((rx, prompt_tokens, _request_id, model_name)) => {
                 let model_name = Arc::new(model_name);
                 let model_alias = Arc::new(model_alias);
-                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens), |(mut stream, finished, model_name, model_alias, prompt_tokens)| async move {
+                let ndjson_body = futures::stream::unfold((ReceiverStream::new(rx), false, model_name, model_alias, prompt_tokens, 0u32), |(mut stream, finished, model_name, model_alias, prompt_tokens, mut token_count)| async move {
                     if finished {
                         return None;
                     }
                     if let Some(chunk) = stream.next().await {
+                        token_count += 1;
                         let resp = OllamaChatResponse {
                             model: model_name.to_string(),
                             message: Some(OllamaChatMessage {
@@ -434,9 +420,9 @@ async fn ollama_chat(
                             done: false,
                             total_duration: None,
                             prompt_eval_count: Some(prompt_tokens),
-                            eval_count: Some(1),
+                            eval_count: None,
                         };
-                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens)))
+                        Some((format!("{}\n", serde_json::to_string(&resp).unwrap_or_default()), (stream, false, model_name, model_alias, prompt_tokens, token_count)))
                     } else {
                         let final_resp = OllamaChatResponse {
                             model: model_alias.to_string(),
@@ -447,9 +433,9 @@ async fn ollama_chat(
                             done: true,
                             total_duration: None,
                             prompt_eval_count: Some(prompt_tokens),
-                            eval_count: None,
+                            eval_count: Some(token_count),
                         };
-                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens)))
+                        Some((format!("{}\n", serde_json::to_string(&final_resp).unwrap_or_default()), (stream, true, model_name, model_alias, prompt_tokens, token_count)))
                     }
                 }).map(Ok::<_, std::convert::Infallible>);
 
@@ -465,76 +451,40 @@ async fn ollama_chat(
                 } else {
                     "unknown error".to_string()
                 };
-                return Json(OllamaChatResponse {
-                    model: model_alias,
-                    message: Some(OllamaChatMessage {
-                        role: "assistant".to_string(),
-                        content: format!("streaming error: {}", error_msg),
-                    }),
-                    done: true,
-                    total_duration: None,
-                    prompt_eval_count: None,
-                    eval_count: None,
-                })
-                .into_response();
+                let resp = serde_json::json!({"error": format!("streaming error: {}", error_msg)});
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response();
             }
         }
     }
 
-    // Non-streaming path
+    // Non-streaming path: use daemon.generate_text() for accurate token counts
     let start = std::time::Instant::now();
 
-    let result = {
-        let mut ctx = loaded.acquire_context().await;
-        let tokens = match model.tokenize(&prompt, true, false) {
-            Ok(t) => t,
-            Err(e) => {
-                return Json(OllamaChatResponse {
-                    model: model_alias,
-                    message: Some(OllamaChatMessage {
-                        role: "assistant".to_string(),
-                        content: format!("tokenization error: {}", e),
-                    }),
-                    done: true,
-                    total_duration: None,
-                    prompt_eval_count: None,
-                    eval_count: None,
-                })
-                .into_response();
-            }
-        };
-
-        let prompt_tokens = tokens.len() as u32;
-        let gen_result = tokio::task::block_in_place(|| {
-            ctx.generate_with_params(&tokens, max_tokens as usize, &sampler_params)
-        });
-
-        match gen_result {
-            Ok(text) => {
-                let elapsed = start.elapsed();
-                OllamaChatResponse {
-                    model: model_alias,
-                    message: Some(OllamaChatMessage {
-                        role: "assistant".to_string(),
-                        content: text,
-                    }),
-                    done: true,
-                    total_duration: Some(elapsed.as_nanos() as u64),
-                    prompt_eval_count: Some(prompt_tokens),
-                    eval_count: Some(max_tokens),
-                }
-            }
-            Err(e) => OllamaChatResponse {
+    let result = match daemon.generate_text(
+        &loaded,
+        &prompt,
+        max_tokens,
+        sampler_params,
+        &stop_sequences,
+        None,
+    ).await {
+        Ok((text, prompt_tokens, completion_tokens)) => {
+            let elapsed = start.elapsed();
+            OllamaChatResponse {
                 model: model_alias,
                 message: Some(OllamaChatMessage {
                     role: "assistant".to_string(),
-                    content: format!("generation error: {}", e),
+                    content: text,
                 }),
                 done: true,
-                total_duration: None,
-                prompt_eval_count: None,
-                eval_count: None,
-            },
+                total_duration: Some(elapsed.as_nanos() as u64),
+                prompt_eval_count: Some(prompt_tokens),
+                eval_count: Some(completion_tokens),
+            }
+        }
+        Err(e) => {
+            let resp = serde_json::json!({"error": format!("generation error: {}", e)});
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response();
         }
     };
 
@@ -542,17 +492,25 @@ async fn ollama_chat(
 }
 
 async fn ollama_tags(State(daemon): State<AppState>) -> impl IntoResponse {
-    let models: Vec<OllamaModelInfo> = daemon
-        .models
-        .list()
-        .into_iter()
-        .map(|(alias, info, _, _)| OllamaModelInfo {
-            name: alias,
-            size: Some(info.parameters),
-            digest: None,
-            modified_at: None,
-        })
-        .collect();
+    let models_info = daemon.models.list();
+    let models: Vec<OllamaModelInfo> = tokio::task::spawn_blocking(move || {
+        models_info
+            .into_iter()
+            .map(|(alias, info, _, _)| {
+                let file_size = std::fs::metadata(&info.path)
+                    .map(|m| m.len())
+                    .unwrap_or(info.parameters);
+                OllamaModelInfo {
+                    name: alias,
+                    size: Some(file_size),
+                    digest: None,
+                    modified_at: None,
+                }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
 
     Json(OllamaTagsResponse { models })
 }
@@ -620,8 +578,10 @@ async fn ollama_copy(
 async fn ollama_delete(
     State(daemon): State<AppState>,
     Json(req): Json<OllamaDeleteRequest>,
-) -> impl IntoResponse {
-    match daemon.models.unload(&req.name).await {
+) -> Response {
+    // Unload from memory first (not found is acceptable)
+    let model_alias = req.name.clone();
+    match daemon.models.unload(&model_alias).await {
         Ok(_) => {
             let resp = serde_json::json!({
                 "status": format!("deleted {}", req.name)
@@ -646,28 +606,20 @@ async fn ollama_embeddings(
             let model = loaded.model.clone();
             let mut ctx = loaded.acquire_context().await;
 
-            let tokens = match model.tokenize(&req.prompt, true, false) {
-                Ok(t) => t,
+            let result = tokio::task::block_in_place(|| -> Result<Vec<f32>, crate::MullamaError> {
+                let tokens = model.tokenize(&req.prompt, true, false)?;
+                ctx.decode(&tokens)?;
+                ctx.get_embeddings()
+                    .map(|emb| emb.to_vec())
+                    .ok_or_else(|| crate::MullamaError::OperationFailed(
+                        "embeddings not available for this model".to_string(),
+                    ))
+            });
+
+            match result {
+                Ok(embedding) => Json(OllamaEmbeddingsResponse { embedding }).into_response(),
                 Err(e) => {
-                    let resp = serde_json::json!({"error": format!("tokenization error: {}", e)});
-                    return (axum::http::StatusCode::BAD_REQUEST, Json(resp)).into_response();
-                }
-            };
-
-            let decode_result = tokio::task::block_in_place(|| ctx.decode(&tokens));
-            if let Err(e) = decode_result {
-                let resp = serde_json::json!({"error": format!("decode error: {}", e)});
-                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(resp)).into_response();
-            }
-
-            match ctx.get_embeddings() {
-                Some(emb) => Json(OllamaEmbeddingsResponse {
-                    embedding: emb.to_vec(),
-                })
-                .into_response(),
-                None => {
-                    let resp =
-                        serde_json::json!({"error": "embeddings not available for this model"});
+                    let resp = serde_json::json!({"error": e.to_string()});
                     (axum::http::StatusCode::BAD_REQUEST, Json(resp)).into_response()
                 }
             }
@@ -680,17 +632,25 @@ async fn ollama_embeddings(
 }
 
 async fn ollama_ps(State(daemon): State<AppState>) -> impl IntoResponse {
-    let models: Vec<OllamaRunningModel> = daemon
-        .models
-        .list()
-        .into_iter()
-        .map(|(alias, info, _, _)| OllamaRunningModel {
-            name: alias,
-            size: info.parameters,
-            digest: None,
-            expires_at: None,
-        })
-        .collect();
+    let models_info = daemon.models.list();
+    let models: Vec<OllamaRunningModel> = tokio::task::spawn_blocking(move || {
+        models_info
+            .into_iter()
+            .map(|(alias, info, _, _)| {
+                let vram_size = std::fs::metadata(&info.path)
+                    .map(|m| m.len())
+                    .unwrap_or(info.parameters);
+                OllamaRunningModel {
+                    name: alias,
+                    size: vram_size,
+                    digest: None,
+                    expires_at: None,
+                }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
 
     Json(OllamaPsResponse { models })
 }

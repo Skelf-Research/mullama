@@ -1,11 +1,11 @@
 #!/bin/sh
 # Mullama installer
-# Usage: curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
+# Usage: curl -fsSL https://mullama.cognisoc.com/install.sh | sh
 #
 # Drop-in Ollama replacement. All-in-one LLM toolkit.
-# https://github.com/skelf-research/mullama
+# https://github.com/cognisoc/mullama
 
 set -e
 
 # Delegate to the full installer script
-exec curl -fsSL https://raw.githubusercontent.com/skelf-research/mullama/main/scripts/install.sh | sh
+exec curl -fsSL https://raw.githubusercontent.com/cognisoc/mullama/main/scripts/install.sh | sh

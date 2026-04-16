@@ -1185,7 +1185,7 @@ cargo run --example complete_integration_demo --features full
 ### Resources
 
 - 📚 **[Getting Started Guide](./GETTING_STARTED.md)** - Step-by-step setup
-- 🎯 **[API Documentation](https://docs.rs/mullama)** - Complete reference
+- 🎯 **[API Documentation](https://docs.cognisoc.com/mullama)** - Complete reference
 - 💬 **[Community Discord](https://discord.gg/mullama)** - Get help and share projects
 
 Ready to build your next AI application? Pick a use case and start coding! 🚀

@@ -20,13 +20,7 @@ impl Daemon {
         response_format: Option<&ResponseFormat>,
     ) -> Result<(String, u32, u32), MullamaError> {
         let add_bos = loaded.model.add_bos_token();
-        let tokens = loaded.model.tokenize(prompt, add_bos, false)?;
-        let prompt_tokens = tokens.len() as u32;
-
         let grammar_gbnf = resolve_grammar(response_format);
-
-        let mut context = loaded.acquire_context().await;
-        let model = loaded.model.clone();
         let stop_sequences: Vec<String> = stop_sequences
             .iter()
             .filter(|s| !s.is_empty())
@@ -34,7 +28,13 @@ impl Daemon {
             .collect();
         let max_stop_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
 
+        let mut context = loaded.acquire_context().await;
+        let model = loaded.model.clone();
+
         let result = tokio::task::block_in_place(|| {
+            let tokens = model.tokenize(prompt, add_bos, false)?;
+            let prompt_tokens = tokens.len() as u32;
+
             context.kv_cache_clear();
 
             let mut sampler = sampler_params.build_chain(model.clone())?;
@@ -47,7 +47,7 @@ impl Daemon {
 
             context.decode(&tokens)?;
 
-            generate_tokens(
+            let gen_result = generate_tokens(
                 &mut *context,
                 &model,
                 &mut sampler,
@@ -55,12 +55,14 @@ impl Daemon {
                 &stop_sequences,
                 max_stop_len,
                 &TokenSink::Buffer,
-            )
+            )?;
+
+            Ok::<_, MullamaError>((gen_result, prompt_tokens))
         })?;
 
-        self.models.add_tokens(result.completion_tokens as u64);
+        self.models.add_tokens(result.0.completion_tokens as u64);
 
-        Ok((result.generated, prompt_tokens, result.completion_tokens))
+        Ok((result.0.generated, result.1, result.0.completion_tokens))
     }
 
     /// Generate text with streaming.
@@ -73,7 +75,10 @@ impl Daemon {
         stop_sequences: Vec<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String), MullamaError> {
         let add_bos = loaded.model.add_bos_token();
-        let tokens = loaded.model.tokenize(&prompt, add_bos, false)?;
+        let model_for_tokenize = loaded.model.clone();
+        let tokens = tokio::task::block_in_place(|| {
+            model_for_tokenize.tokenize(&prompt, add_bos, false)
+        })?;
         let prompt_tokens = tokens.len() as u32;
 
         let (setup, rx, request_id) = self.prepare_streaming(stop_sequences);

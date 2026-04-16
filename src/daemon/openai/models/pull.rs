@@ -79,10 +79,13 @@ pub(in crate::daemon::openai) async fn api_pull_model(
 
 /// Delete a model
 pub(in crate::daemon::openai) async fn api_delete_model(
-    State(_daemon): State<AppState>,
+    State(daemon): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<ModelOperationResponse>, (StatusCode, Json<ModelOperationResponse>)> {
     use crate::daemon::hf::HfDownloader;
+
+    // Unload the model from memory first (ignoring "not found" since it may not be loaded)
+    let _ = daemon.models.unload(&name).await;
 
     let downloader = HfDownloader::new().map_err(|e| {
         (

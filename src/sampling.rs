@@ -810,7 +810,12 @@ impl SamplerParams {
 // 2. llama_sampler operations are inherently thread-safe when properly synchronized
 unsafe impl Send for Sampler {}
 
-// SAFETY: Sampler can be shared between threads with proper synchronization
+// SAFETY: Sampler can be shared between threads with proper synchronization.
+// WARNING: llama_sampler_chain is NOT inherently thread-safe for concurrent
+// use. Sharing a Sampler across threads without external synchronization
+// (e.g., a Mutex or RwLock) can cause data races. This impl exists to allow
+// Sampler to be stored in Arc<Mutex<>> or Arc<RwLock<>> in the daemon
+// architecture, where synchronization is provided externally.
 unsafe impl Sync for Sampler {}
 
 // SAFETY: SamplerChain can be sent between threads because:
@@ -818,5 +823,7 @@ unsafe impl Sync for Sampler {}
 // 2. All operations are properly synchronized
 unsafe impl Send for SamplerChain {}
 
-// SAFETY: SamplerChain can be shared between threads with proper synchronization
+// SAFETY: Same rationale as Sampler Sync — requires external synchronization.
+// Do NOT call SamplerChain methods concurrently from multiple threads
+// without a Mutex or RwLock.
 unsafe impl Sync for SamplerChain {}

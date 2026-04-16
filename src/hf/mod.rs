@@ -8,10 +8,14 @@
 mod client;
 mod types;
 
+#[cfg(feature = "daemon")]
 use crate::error::MullamaError;
+
+#[cfg(feature = "daemon")]
 use std::path::{Path, PathBuf};
 
 /// Hugging Face Hub API base URL.
+#[cfg(feature = "daemon")]
 const HF_API_BASE: &str = "https://huggingface.co/api";
 const HF_MODELS_BASE: &str = "https://huggingface.co";
 
@@ -22,6 +26,7 @@ pub use types::{
 };
 
 /// URL encoding helper shared by the sync client surface.
+#[cfg(feature = "daemon")]
 mod urlencoding {
     pub fn encode(s: &str) -> String {
         let mut result = String::new();
@@ -43,6 +48,7 @@ mod urlencoding {
 }
 
 /// Convenience functions for common Hugging Face workflows.
+#[cfg(feature = "daemon")]
 pub mod quick {
     use super::*;
 
@@ -167,9 +173,9 @@ mod downloader {
     use indicatif::{ProgressBar, ProgressStyle};
     use reqwest::Client;
     use serde::{Deserialize, Serialize};
-    use std::fs::{self, File};
-    use std::io::Write;
     use std::path::{Path, PathBuf};
+    use tokio::fs::{self, File};
+    use tokio::io::AsyncWriteExt;
 
     /// Hugging Face API base URL for daemon download workflows.
     const HF_API_URL: &str = "https://huggingface.co/api";
@@ -346,7 +352,7 @@ mod downloader {
     impl HfDownloader {
         pub fn new() -> Result<Self, MullamaError> {
             let cache_dir = Self::default_cache_dir()?;
-            fs::create_dir_all(&cache_dir).map_err(|e| {
+            std::fs::create_dir_all(&cache_dir).map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to create cache dir: {}", e))
             })?;
 
@@ -362,7 +368,7 @@ mod downloader {
         }
 
         pub fn with_cache_dir(cache_dir: PathBuf) -> Result<Self, MullamaError> {
-            fs::create_dir_all(&cache_dir).map_err(|e| {
+            std::fs::create_dir_all(&cache_dir).map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to create cache dir: {}", e))
             })?;
 
@@ -415,7 +421,7 @@ mod downloader {
         fn load_index(&self) -> CacheIndex {
             let index_path = self.cache_dir.join("index.json");
             if index_path.exists() {
-                if let Ok(content) = fs::read_to_string(&index_path) {
+                if let Ok(content) = std::fs::read_to_string(&index_path) {
                     if let Ok(index) = serde_json::from_str(&content) {
                         return index;
                     }
@@ -429,7 +435,30 @@ mod downloader {
             let content = serde_json::to_string_pretty(index).map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to serialize index: {}", e))
             })?;
-            fs::write(&index_path, content).map_err(|e| {
+            std::fs::write(&index_path, content).map_err(|e| {
+                MullamaError::OperationFailed(format!("Failed to write index: {}", e))
+            })?;
+            Ok(())
+        }
+
+        async fn load_index_async(&self) -> CacheIndex {
+            let index_path = self.cache_dir.join("index.json");
+            if index_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&index_path).await {
+                    if let Ok(index) = serde_json::from_str(&content) {
+                        return index;
+                    }
+                }
+            }
+            CacheIndex::default()
+        }
+
+        async fn save_index_async(&self, index: &CacheIndex) -> Result<(), MullamaError> {
+            let index_path = self.cache_dir.join("index.json");
+            let content = serde_json::to_string_pretty(index).map_err(|e| {
+                MullamaError::OperationFailed(format!("Failed to serialize index: {}", e))
+            })?;
+            tokio::fs::write(&index_path, content).await.map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to write index: {}", e))
             })?;
             Ok(())
@@ -612,7 +641,7 @@ mod downloader {
             }
 
             let repo_dir = self.cache_dir.join(repo_id.replace('/', "--"));
-            fs::create_dir_all(&repo_dir).map_err(|e| {
+            fs::create_dir_all(&repo_dir).await.map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to create repo dir: {}", e))
             })?;
 
@@ -666,7 +695,7 @@ mod downloader {
             };
 
             let temp_path = local_path.with_extension("part");
-            let mut file = File::create(&temp_path).map_err(|e| {
+            let mut file = File::create(&temp_path).await.map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to create file: {}", e))
             })?;
 
@@ -678,6 +707,7 @@ mod downloader {
                     .map_err(|e| MullamaError::OperationFailed(format!("Download error: {}", e)))?;
 
                 file.write_all(&chunk)
+                    .await
                     .map_err(|e| MullamaError::OperationFailed(format!("Write error: {}", e)))?;
 
                 downloaded += chunk.len() as u64;
@@ -686,15 +716,20 @@ mod downloader {
                 }
             }
 
+            file.flush().await.map_err(|e| {
+                MullamaError::OperationFailed(format!("Failed to flush file: {}", e))
+            })?;
+            drop(file);
+
             if let Some(pb) = progress {
                 pb.finish_with_message("Download complete");
             }
 
-            fs::rename(&temp_path, &local_path).map_err(|e| {
+            fs::rename(&temp_path, &local_path).await.map_err(|e| {
                 MullamaError::OperationFailed(format!("Failed to finalize download: {}", e))
             })?;
 
-            let mut index = self.load_index();
+            let mut index = self.load_index_async().await;
             index
                 .models
                 .retain(|m| !(m.repo_id == repo_id && m.filename == filename));
@@ -706,7 +741,7 @@ mod downloader {
                 downloaded_at: chrono::Utc::now().to_rfc3339(),
                 etag,
             });
-            self.save_index(&index)?;
+            self.save_index_async(&index).await?;
 
             if show_progress {
                 println!("Saved to: {}", local_path.display());
@@ -743,7 +778,7 @@ mod downloader {
             {
                 let model = index.models.remove(pos);
                 if model.local_path.exists() {
-                    fs::remove_file(&model.local_path).map_err(|e| {
+                    std::fs::remove_file(&model.local_path).map_err(|e| {
                         MullamaError::OperationFailed(format!("Failed to remove file: {}", e))
                     })?;
                 }
@@ -755,10 +790,10 @@ mod downloader {
 
         pub fn clear_cache(&self) -> Result<(), MullamaError> {
             if self.cache_dir.exists() {
-                fs::remove_dir_all(&self.cache_dir).map_err(|e| {
+                std::fs::remove_dir_all(&self.cache_dir).map_err(|e| {
                     MullamaError::OperationFailed(format!("Failed to clear cache: {}", e))
                 })?;
-                fs::create_dir_all(&self.cache_dir).map_err(|e| {
+                std::fs::create_dir_all(&self.cache_dir).map_err(|e| {
                     MullamaError::OperationFailed(format!("Failed to recreate cache dir: {}", e))
                 })?;
             }
@@ -995,8 +1030,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "daemon")]
     fn test_url_encoding() {
-        assert_eq!(urlencoding::encode("hello world"), "hello%20world");
-        assert_eq!(urlencoding::encode("test-123"), "test-123");
+        assert_eq!(super::urlencoding::encode("hello world"), "hello%20world");
+        assert_eq!(super::urlencoding::encode("test-123"), "test-123");
     }
 }

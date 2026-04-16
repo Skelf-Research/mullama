@@ -29,7 +29,7 @@ typedef struct { volatile int value; } MullamaAtomicBool;
 #define MullamaMULLAMA_VERSION_MAJOR 0
 
 // Library version minor number
-#define MullamaMULLAMA_VERSION_MINOR 2
+#define MullamaMULLAMA_VERSION_MINOR 3
 
 // Library version patch number
 #define MullamaMULLAMA_VERSION_PATCH 0

@@ -1,10 +1,10 @@
 # Mullama installer script for Windows
-# Usage: iwr https://skelfresearch.com/mullama/install.ps1 -useb | iex
+# Usage: iwr https://mullama.cognisoc.com/install.ps1 -useb | iex
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$Repo = "skelf-research/mullama"
+$Repo = "cognisoc/mullama"
 $BinaryName = "mullama"
 $InstallDir = if ($env:MULLAMA_INSTALL_DIR) { $env:MULLAMA_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\Mullama" }
 

@@ -5,7 +5,7 @@ Thank you for your interest in contributing to Mullama! We welcome contributions
 ## 🚀 Quick Start
 
 1. **Fork** the repository
-2. **Clone** your fork: `git clone --recurse-submodules https://github.com/skelf-research/mullama.git`
+2. **Clone** your fork: `git clone --recurse-submodules https://github.com/cognisoc/mullama.git`
 3. **Create** a feature branch: `git checkout -b feature/amazing-feature`
 4. **Make** your changes
 5. **Test** your changes: `cargo test`
@@ -39,7 +39,7 @@ cargo install mdbook
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/skelf-research/mullama.git
+git clone --recurse-submodules https://github.com/cognisoc/mullama.git
 cd mullama
 
 # Build
@@ -422,10 +422,10 @@ For new features, please:
 
 ## 📞 Getting Help
 
-- **💬 Discussions**: [GitHub Discussions](https://github.com/skelf-research/mullama/discussions)
-- **🐛 Issues**: [GitHub Issues](https://github.com/skelf-research/mullama/issues)
-- **📚 Documentation**: [docs.rs/mullama](https://docs.rs/mullama)
-- **📧 Email**: support@skelfresearch.com
+- **💬 Discussions**: [GitHub Discussions](https://github.com/cognisoc/mullama/discussions)
+- **🐛 Issues**: [GitHub Issues](https://github.com/cognisoc/mullama/issues)
+- **📚 Documentation**: [docs.cognisoc.com/mullama](https://docs.cognisoc.com/mullama)
+- **📧 Email**: support@cognisoc.com
 
 ## 🎉 Recognition
 

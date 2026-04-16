@@ -35,7 +35,7 @@ use Mullama\SamplerParams;
 use Mullama\EmbeddingGenerator;
 
 // Initialize the backend (call once at startup)
-Mullama\Mullama::backendInit();
+Mullama\Mullama::initialize();
 
 // Load a model
 $model = Model::load('./model.gguf', [
@@ -61,7 +61,7 @@ echo $response;
 // Clean up
 $ctx->free();
 $model->free();
-Mullama\Mullama::backendFree();
+Mullama\Mullama::shutdown();
 ```
 
 ## API Reference
@@ -70,11 +70,11 @@ Mullama\Mullama::backendFree();
 
 ```php
 // Initialize/shutdown backend
-Mullama::backendInit();
-Mullama::backendFree();
+Mullama::initialize();
+Mullama::shutdown();
 
 // Get library version
-$version = Mullama::version();  // "0.1.0"
+$version = Mullama::version();  // e.g. "0.3.0"
 
 // System information
 $info = Mullama::systemInfo();

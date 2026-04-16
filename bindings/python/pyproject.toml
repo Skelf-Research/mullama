@@ -4,13 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "mullama"
-version = "0.1.0"
+version = "0.3.0"
 description = "Python bindings for Mullama LLM library - high-performance local LLM inference"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
 authors = [
-    { name = "Skelf Research", email = "support@skelfresearch.com" }
+    { name = "Cognisoc", email = "support@cognisoc.com" }
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -43,10 +43,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/skelf-research/mullama"
-Documentation = "https://docs.rs/mullama"
-Repository = "https://github.com/skelf-research/mullama"
-Issues = "https://github.com/skelf-research/mullama/issues"
+Homepage = "https://mullama.cognisoc.com"
+Documentation = "https://docs.cognisoc.com/mullama"
+Repository = "https://github.com/cognisoc/mullama"
+Issues = "https://github.com/cognisoc/mullama/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

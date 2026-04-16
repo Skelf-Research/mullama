@@ -1,8 +1,8 @@
 site_name: Mullama
 site_description: "Run LLMs locally with native performance. Drop-in Ollama replacement with Node.js, Python, Go, PHP, Rust, and C/C++ bindings, 7 GPU backends, and OpenAI + Anthropic compatible API server."
-site_url: https://docs.skelfresearch.com/mullama/
-repo_url: https://github.com/skelf-research/mullama
-repo_name: skelf-research/mullama
+site_url: https://docs.cognisoc.com/mullama/
+repo_url: https://github.com/cognisoc/mullama
+repo_name: cognisoc/mullama
 edit_uri: edit/main/documentation/docs/
 
 theme:
@@ -172,7 +172,7 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/skelf-research/mullama
+      link: https://github.com/cognisoc/mullama
   generator: false
 
 extra_css:

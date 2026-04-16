@@ -3,14 +3,19 @@ use std::path::PathBuf;
 
 use mullama::daemon::spawn::default_log_path;
 use mullama::daemon::{
-    resolve_model_name, resolve_model_path, spawn_daemon, ResolvedModel, SpawnConfig, SpawnResult,
-    TuiApp,
+    resolve_model_name, resolve_model_path, spawn_daemon, ChatMessage, MessageContent,
+    ResolvedModel, SpawnConfig, SpawnResult, TuiApp,
 };
 
 use crate::shared::{connect, derive_alias_from_path};
 
-pub(crate) fn run_chat(socket: &str, _timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let client = connect(socket)?;
+pub(crate) fn run_chat(socket: &str, timeout: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let connect_timeout = if timeout > 0 {
+        std::time::Duration::from_secs(timeout)
+    } else {
+        std::time::Duration::from_secs(5)
+    };
+    let client = mullama::daemon::DaemonClient::connect_with_timeout(socket, connect_timeout)?;
 
     match client.ping() {
         Ok((uptime, version)) => {
@@ -156,8 +161,10 @@ pub(crate) async fn run_model_with_prompt(
 
     if let Some(prompt_text) = prompt {
         if let Some(image_path) = image {
+            let http_addr = std::env::var("MULLAMA_HTTP_ADDR")
+                .unwrap_or_else(|_| format!("127.0.0.1:{}", http_port));
             run_vision_prompt(
-                http_port,
+                &http_addr,
                 prompt_text,
                 Some(&model_alias),
                 max_tokens,
@@ -187,6 +194,8 @@ pub(crate) async fn run_model_with_prompt(
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
 
+        let mut conversation: Vec<mullama::daemon::ChatMessage> = Vec::new();
+
         loop {
             print!(">>> ");
             stdout.flush()?;
@@ -204,20 +213,36 @@ pub(crate) async fn run_model_with_prompt(
                 "/?" | "/help" => {
                     eprintln!("Available commands:");
                     eprintln!("  /bye, /exit, /quit  - Exit interactive mode");
-                    eprintln!("  /clear              - Clear conversation");
+                    eprintln!("  /clear              - Clear conversation history");
                     eprintln!("  /?                  - Show this help");
                     continue;
                 }
                 "/clear" => {
+                    conversation.clear();
                     eprintln!("(Conversation cleared)");
                     continue;
                 }
                 _ => {}
             }
 
-            match client.chat(input, Some(&model_alias), max_tokens, temperature) {
+            conversation.push(ChatMessage {
+                role: "user".to_string(),
+                content: MessageContent::Text(input.to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+
+            match client.chat_completion(conversation.clone(), Some(&model_alias), max_tokens, temperature) {
                 Ok(result) => {
                     println!("{}", result.text);
+                    conversation.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: MessageContent::Text(result.text.clone()),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
                     if stats {
                         eprintln!(
                             "--- {} tokens in {}ms ({:.1} tok/s) ---",
@@ -228,6 +253,7 @@ pub(crate) async fn run_model_with_prompt(
                     }
                 }
                 Err(e) => {
+                    conversation.pop();
                     eprintln!("Error: {}", e);
                 }
             }
@@ -238,36 +264,8 @@ pub(crate) async fn run_model_with_prompt(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub(crate) fn run_prompt(
-    socket: &str,
-    prompt: &str,
-    model: Option<&str>,
-    max_tokens: u32,
-    temperature: f32,
-    stats: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = connect(socket)?;
-    let result = client.chat(prompt, model, max_tokens, temperature)?;
-
-    println!("{}", result.text);
-
-    if stats {
-        eprintln!();
-        eprintln!(
-            "--- {} tokens in {}ms ({:.1} tok/s) using {} ---",
-            result.completion_tokens,
-            result.duration_ms,
-            result.tokens_per_second(),
-            result.model
-        );
-    }
-
-    Ok(())
-}
-
 pub(crate) async fn run_vision_prompt(
-    http_port: u16,
+    http_addr: &str,
     prompt: &str,
     model: Option<&str>,
     max_tokens: u32,
@@ -314,7 +312,7 @@ pub(crate) async fn run_vision_prompt(
     });
 
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/v1/chat/completions", http_port);
+    let url = format!("http://{}/v1/chat/completions", http_addr);
 
     let mut request = client
         .post(&url)

@@ -150,7 +150,13 @@ impl Daemon {
             config = config.split_mode(mode.as_str());
         }
 
-        if let Some(ollama_config) = infer_ollama_model_config(&params.path) {
+        if let Some(ollama_config) = tokio::task::spawn_blocking({
+            let path = params.path.clone();
+            move || infer_ollama_model_config(&path)
+        })
+        .await
+        .unwrap_or(None)
+        {
             if params.context_size == 0 {
                 if let Some(ctx) = ollama_config.context_size {
                     resolved_context_size = ctx;

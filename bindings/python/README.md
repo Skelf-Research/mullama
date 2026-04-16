@@ -226,6 +226,8 @@ class SamplerParams:
         penalty_freq: float = 0.0,
         penalty_present: float = 0.0,
         penalty_last_n: int = 64,
+        penalize_nl: bool = True,
+        ignore_eos: bool = False,
         seed: int = 0,
     ): ...
 

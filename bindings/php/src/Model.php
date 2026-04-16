@@ -37,13 +37,25 @@ final class Model
     {
         $ffi = Mullama::ffi();
 
-        $cParams = $ffi->new('MullamaMullamaModelParams');
-        $cParams->n_gpu_layers = $params['nGpuLayers'] ?? 0;
-        $cParams->main_gpu = 0;
-        $cParams->use_mmap = $params['useMmap'] ?? true;
-        $cParams->use_mlock = $params['useMlock'] ?? false;
-        $cParams->vocab_only = $params['vocabOnly'] ?? false;
-        $cParams->check_tensors = false;
+        $cParams = $ffi->mullama_model_default_params();
+        if (isset($params['nGpuLayers'])) {
+            $cParams->n_gpu_layers = $params['nGpuLayers'];
+        }
+        if (isset($params['useMmap'])) {
+            $cParams->use_mmap = $params['useMmap'];
+        }
+        if (isset($params['useMlock'])) {
+            $cParams->use_mlock = $params['useMlock'];
+        }
+        if (isset($params['vocabOnly'])) {
+            $cParams->vocab_only = $params['vocabOnly'];
+        }
+        if (isset($params['checkTensors'])) {
+            $cParams->check_tensors = $params['checkTensors'];
+        }
+        if (isset($params['splitMode'])) {
+            $cParams->split_mode = $params['splitMode'];
+        }
 
         $ptr = $ffi->mullama_model_load($path, FFI::addr($cParams));
 
@@ -238,7 +250,11 @@ final class Model
         if ($this->ptr === null) {
             return 0;
         }
-        return (int) Mullama::ffi()->mullama_model_size($this->ptr);
+        $result = Mullama::ffi()->mullama_model_size($this->ptr);
+        if (is_object($result) && $result instanceof \FFI\CData) {
+            return (int) FFI::cast('int64_t', $result)->cdata;
+        }
+        return (int) $result;
     }
 
     /**
@@ -249,7 +265,11 @@ final class Model
         if ($this->ptr === null) {
             return 0;
         }
-        return (int) Mullama::ffi()->mullama_model_n_params($this->ptr);
+        $result = Mullama::ffi()->mullama_model_n_params($this->ptr);
+        if (is_object($result) && $result instanceof \FFI\CData) {
+            return (int) FFI::cast('int64_t', $result)->cdata;
+        }
+        return (int) $result;
     }
 
     /**

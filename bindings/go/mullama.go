@@ -17,7 +17,7 @@ import (
 	"errors"
 	"math"
 	"runtime"
-	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -78,7 +78,7 @@ func MaxDevices() int {
 func Version() string {
 	cStr := C.mullama_version()
 	if cStr == nil {
-		return "0.2.0"
+		return "0.3.0"
 	}
 	return C.GoString(cStr)
 }
@@ -172,15 +172,15 @@ func (m *Model) Tokenize(text string, addBos bool, special bool) ([]int32, error
 
 	// Allocate buffer for tokens (estimate max size)
 	maxTokens := len(text)*2 + 10
-	tokens := make([]C.int32_t, maxTokens)
+	tokens := make([]C.int, maxTokens)
 
-	n := C.mullama_tokenize(m.ptr, cText, (*C.int32_t)(&tokens[0]), C.int32_t(maxTokens), C.bool(addBos), C.bool(special))
+	n := C.mullama_tokenize(m.ptr, cText, &tokens[0], C.int(maxTokens), C.bool(addBos), C.bool(special))
 	if n < 0 {
 		return nil, errors.New(getLastError())
 	}
 
 	result := make([]int32, n)
-	for i := C.int32_t(0); i < n; i++ {
+	for i := C.int(0); i < n; i++ {
 		result[i] = int32(tokens[i])
 	}
 
@@ -188,7 +188,7 @@ func (m *Model) Tokenize(text string, addBos bool, special bool) ([]int32, error
 }
 
 // Detokenize converts token IDs back to text.
-func (m *Model) Detokenize(tokens []int32, removeSpecial bool, unparseSpecial bool) (string, error) {
+func (m *Model) Detokenize(tokens []int32) (string, error) {
 	if m.ptr == nil {
 		return "", ErrNullPointer
 	}
@@ -292,8 +292,8 @@ func (m *Model) Description() string {
 	if m.ptr == nil {
 		return ""
 	}
-	buf := make([]C.char, 256)
-	C.mullama_model_desc(m.ptr, (*C.char)(&buf[0]), 256)
+	buf := make([]C.char, 4096)
+	C.mullama_model_desc(m.ptr, (*C.char)(&buf[0]), C.size_t(len(buf)))
 	return C.GoString((*C.char)(&buf[0]))
 }
 
@@ -302,7 +302,7 @@ func (m *Model) TokenIsEOG(token int32) bool {
 	if m.ptr == nil {
 		return false
 	}
-	return bool(C.mullama_model_token_is_eog(m.ptr, C.int32_t(token)))
+	return bool(C.mullama_model_token_is_eog(m.ptr, C.int(token)))
 }
 
 // ContextParams contains parameters for context creation.
@@ -345,11 +345,11 @@ func NewContext(model *Model, params *ContextParams) (*Context, error) {
 	}
 
 	cParams := C.MullamaMullamaContextParams{
-		n_ctx:          C.uint32_t(params.NCtx),
-		n_batch:        C.uint32_t(params.NBatch),
-		n_threads:      C.int(params.NThreads),
+		n_ctx:           C.uint32_t(params.NCtx),
+		n_batch:         C.uint32_t(params.NBatch),
+		n_threads:       C.int(params.NThreads),
 		n_threads_batch: C.int(params.NThreads),
-		embeddings:     C.bool(params.Embeddings),
+		embeddings:      C.bool(params.Embeddings),
 	}
 
 	ptr := C.mullama_context_new(model.ptr, &cParams)
@@ -384,6 +384,8 @@ type SamplerParams struct {
 	PenaltyFreq    float32
 	PenaltyPresent float32
 	PenaltyLastN   int32
+	PenalizeNL     bool
+	IgnoreEOS      bool
 	Seed           uint32
 }
 
@@ -399,6 +401,8 @@ func DefaultSamplerParams() SamplerParams {
 		PenaltyFreq:    0.0,
 		PenaltyPresent: 0.0,
 		PenaltyLastN:   64,
+		PenalizeNL:     true,
+		IgnoreEOS:      false,
 		Seed:           0,
 	}
 }
@@ -415,6 +419,8 @@ func GreedySamplerParams() SamplerParams {
 		PenaltyFreq:    0.0,
 		PenaltyPresent: 0.0,
 		PenaltyLastN:   0,
+		PenalizeNL:     true,
+		IgnoreEOS:      false,
 		Seed:           0,
 	}
 }
@@ -431,6 +437,8 @@ func CreativeSamplerParams() SamplerParams {
 		PenaltyFreq:    0.1,
 		PenaltyPresent: 0.1,
 		PenaltyLastN:   128,
+		PenalizeNL:     true,
+		IgnoreEOS:      false,
 		Seed:           0,
 	}
 }
@@ -447,6 +455,8 @@ func PreciseSamplerParams() SamplerParams {
 		PenaltyFreq:    0.0,
 		PenaltyPresent: 0.0,
 		PenaltyLastN:   32,
+		PenalizeNL:     true,
+		IgnoreEOS:      false,
 		Seed:           0,
 	}
 }
@@ -482,16 +492,18 @@ func (c *Context) GenerateFromTokens(tokens []int32, maxTokens int, params *Samp
 	}
 
 	cParams := C.MullamaMullamaSamplerParams{
-		temperature:    C.float(params.Temperature),
-		top_k:          C.int(params.TopK),
-		top_p:          C.float(params.TopP),
-		min_p:          C.float(params.MinP),
-		typical_p:      C.float(params.TypicalP),
-		penalty_repeat: C.float(params.PenaltyRepeat),
-		penalty_freq:   C.float(params.PenaltyFreq),
+		temperature:     C.float(params.Temperature),
+		top_k:           C.int(params.TopK),
+		top_p:           C.float(params.TopP),
+		min_p:           C.float(params.MinP),
+		typical_p:       C.float(params.TypicalP),
+		penalty_repeat:  C.float(params.PenaltyRepeat),
+		penalty_freq:    C.float(params.PenaltyFreq),
 		penalty_present: C.float(params.PenaltyPresent),
-		penalty_last_n: C.int(params.PenaltyLastN),
-		seed:           C.uint32_t(params.Seed),
+		penalty_last_n:  C.int(params.PenaltyLastN),
+		penalize_nl:     C.bool(params.PenalizeNL),
+		ignore_eos:      C.bool(params.IgnoreEOS),
+		seed:            C.uint32_t(params.Seed),
 	}
 
 	// Allocate output buffer
@@ -508,9 +520,33 @@ func (c *Context) GenerateFromTokens(tokens []int32, maxTokens int, params *Samp
 }
 
 // StreamCallback is called for each generated token during streaming.
+// Return true to continue generation, false to stop.
 type StreamCallback func(token string) bool
 
+// streamCallbackHolder stores the active Go callback for the C trampoline.
+// Only one streaming generation can be active at a time globally.
+// Uses atomic pointer for lock-free access: GenerateStream sets the callback
+// before calling C, and goStreamCallback reads it without locking (safe
+// because only one stream runs at a time, enforced by the documented API contract).
+var streamCallbackHolder unsafe.Pointer
+
+//export goStreamCallback
+func goStreamCallback(token *C.char, userData unsafe.Pointer) C.bool {
+	cb := (*StreamCallback)(atomic.LoadPointer(&streamCallbackHolder))
+	if cb == nil {
+		return C.bool(false)
+	}
+	cont := (*cb)(C.GoString(token))
+	if cont {
+		return C.bool(true)
+	}
+	return C.bool(false)
+}
+
 // GenerateStream generates text with streaming using a callback.
+// For each generated token piece, the callback is invoked.
+// Return true to continue, false to stop.
+// Note: Only one streaming generation can be active at a time.
 func (c *Context) GenerateStream(prompt string, maxTokens int, params *SamplerParams, callback StreamCallback) error {
 	if c.ptr == nil {
 		return ErrNullPointer
@@ -526,41 +562,52 @@ func (c *Context) GenerateStream(prompt string, maxTokens int, params *SamplerPa
 		params = &p
 	}
 
+	// Store callback atomically, then clear after use.
+	// No lock is taken during the C call, avoiding the deadlock that would
+	// occur if goStreamCallback tried to acquire the same mutex.
+	atomic.StorePointer(&streamCallbackHolder, unsafe.Pointer(&callback))
+	defer atomic.StorePointer(&streamCallbackHolder, nil)
+
 	cTokens := make([]C.int, len(tokens))
 	for i, t := range tokens {
 		cTokens[i] = C.int(t)
 	}
 
 	cParams := C.MullamaMullamaSamplerParams{
-		temperature:    C.float(params.Temperature),
-		top_k:          C.int(params.TopK),
-		top_p:          C.float(params.TopP),
-		min_p:          C.float(params.MinP),
-		typical_p:      C.float(params.TypicalP),
-		penalty_repeat: C.float(params.PenaltyRepeat),
-		penalty_freq:   C.float(params.PenaltyFreq),
+		temperature:     C.float(params.Temperature),
+		top_k:           C.int(params.TopK),
+		top_p:           C.float(params.TopP),
+		min_p:           C.float(params.MinP),
+		typical_p:       C.float(params.TypicalP),
+		penalty_repeat:  C.float(params.PenaltyRepeat),
+		penalty_freq:    C.float(params.PenaltyFreq),
 		penalty_present: C.float(params.PenaltyPresent),
-		penalty_last_n: C.int(params.PenaltyLastN),
-		seed:           C.uint32_t(params.Seed),
+		penalty_last_n:  C.int(params.PenaltyLastN),
+		penalize_nl:     C.bool(params.PenalizeNL),
+		ignore_eos:      C.bool(params.IgnoreEOS),
+		seed:            C.uint32_t(params.Seed),
 	}
 
-	// For simplicity, we'll use the non-callback generate and return the result
-	maxOutput := maxTokens * 32
-	buf := make([]C.char, maxOutput)
-
-	n := C.mullama_generate(c.ptr, (*C.int)(&cTokens[0]), C.int(len(tokens)),
-		C.int(maxTokens), &cParams, (*C.char)(&buf[0]), C.size_t(maxOutput))
+	n := C.mullama_generate_streaming(
+		c.ptr,
+		(*C.int)(&cTokens[0]),
+		C.int(len(tokens)),
+		C.int(maxTokens),
+		&cParams,
+		(C.MullamaMullamaStreamCallback)(C.goStreamCallback),
+		nil,
+	)
 	if n < 0 {
 		return errors.New(getLastError())
 	}
 
-	// Call callback with the full result (simplified version)
-	result := C.GoString((*C.char)(&buf[0]))
-	if !callback(result) {
-		return nil
-	}
-
 	return nil
+}
+
+// GenerateStreamTokens generates text with streaming via the C FFI callback.
+// Alias for GenerateStream — both now use real token-by-token streaming.
+func (c *Context) GenerateStreamTokens(prompt string, maxTokens int, params *SamplerParams, callback StreamCallback) error {
+	return c.GenerateStream(prompt, maxTokens, params, callback)
 }
 
 // ClearCache clears the KV cache.
@@ -689,7 +736,7 @@ func (m *Model) ApplyChatTemplate(messages []struct{ Role, Content string }, add
 	}
 
 	// Convert messages to C structs
-	cMessages := make([]C.MullamaChatMessage, len(messages))
+	cMessages := make([]C.MullamaMullamaChatMessage, len(messages))
 	cStrings := make([]*C.char, len(messages)*2) // keep references alive
 
 	for i, msg := range messages {
@@ -709,7 +756,7 @@ func (m *Model) ApplyChatTemplate(messages []struct{ Role, Content string }, add
 	maxOutput := 8192
 	buf := make([]C.char, maxOutput)
 
-	n := C.mullama_apply_chat_template(m.ptr, (*C.MullamaChatMessage)(&cMessages[0]),
+	n := C.mullama_apply_chat_template(m.ptr, (*C.MullamaMullamaChatMessage)(&cMessages[0]),
 		C.int(len(messages)), C.bool(addGenerationPrompt),
 		(*C.char)(&buf[0]), C.size_t(maxOutput))
 	if n < 0 {
@@ -746,57 +793,6 @@ func (m *Model) Metadata() (map[string]string, error) {
 	}
 
 	return result, nil
-}
-
-// GenerateStream generates text with streaming via the C FFI callback.
-// For each generated token piece, the callback is invoked. Return true to continue, false to stop.
-func (c *Context) GenerateStreamTokens(prompt string, maxTokens int, params *SamplerParams, callback StreamCallback) error {
-	if c.ptr == nil {
-		return ErrNullPointer
-	}
-
-	tokens, err := c.model.Tokenize(prompt, true, false)
-	if err != nil {
-		return err
-	}
-
-	if params == nil {
-		p := DefaultSamplerParams()
-		params = &p
-	}
-
-	cTokens := make([]C.int, len(tokens))
-	for i, t := range tokens {
-		cTokens[i] = C.int(t)
-	}
-
-	cParams := C.MullamaMullamaSamplerParams{
-		temperature:     C.float(params.Temperature),
-		top_k:           C.int(params.TopK),
-		top_p:           C.float(params.TopP),
-		min_p:           C.float(params.MinP),
-		typical_p:       C.float(params.TypicalP),
-		penalty_repeat:  C.float(params.PenaltyRepeat),
-		penalty_freq:    C.float(params.PenaltyFreq),
-		penalty_present: C.float(params.PenaltyPresent),
-		penalty_last_n:  C.int(params.PenaltyLastN),
-		seed:            C.uint32_t(params.Seed),
-	}
-
-	// Use non-streaming generate and deliver result via callback
-	maxOutput := maxTokens * 32
-	buf := make([]C.char, maxOutput)
-
-	n := C.mullama_generate(c.ptr, (*C.int)(&cTokens[0]), C.int(len(tokens)),
-		C.int(maxTokens), &cParams, (*C.char)(&buf[0]), C.size_t(maxOutput))
-	if n < 0 {
-		return errors.New(getLastError())
-	}
-
-	result := C.GoString((*C.char)(&buf[0]))
-	callback(result)
-
-	return nil
 }
 
 // HardwarePreset represents a hardware configuration preset

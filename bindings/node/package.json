@@ -47,10 +47,15 @@
     "native",
     "napi"
   ],
-  "author": "Skelf Research <support@skelfresearch.com>",
+  "author": "Cognisoc <support@cognisoc.com>",
   "license": "MIT OR Apache-2.0",
+  "homepage": "https://docs.cognisoc.com/mullama/bindings/nodejs/",
+  "bugs": {
+    "url": "https://github.com/cognisoc/mullama/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/skelf-research/mullama"
+    "url": "https://github.com/cognisoc/mullama",
+    "directory": "bindings/node"
   }
 }

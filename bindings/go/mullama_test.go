@@ -3,6 +3,7 @@ package mullama
 import (
 	"math"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -19,8 +20,8 @@ func TestVersion(t *testing.T) {
 	if v == "" {
 		t.Error("Version should not be empty")
 	}
-	if v != "0.1.0" {
-		t.Errorf("Expected version 0.1.0, got %s", v)
+	if !strings.HasPrefix(v, "0.") {
+		t.Errorf("Expected version starting with 0., got %s", v)
 	}
 }
 
@@ -248,7 +249,7 @@ func TestTokenization(t *testing.T) {
 		t.Error("Tokenization should produce tokens")
 	}
 
-	decoded, err := model.Detokenize(tokens, false, false)
+	decoded, err := model.Detokenize(tokens)
 	if err != nil {
 		t.Fatalf("Detokenization failed: %v", err)
 	}

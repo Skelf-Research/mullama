@@ -26,16 +26,29 @@ final class Context
     {
         $ffi = Mullama::ffi();
 
-        $cParams = $ffi->new('MullamaMullamaContextParams');
-        $cParams->n_ctx = $params['nCtx'] ?? 0;
-        $cParams->n_batch = $params['nBatch'] ?? 2048;
-        $cParams->n_ubatch = $params['nBatch'] ?? 512;
-        $cParams->n_seq_max = 1;
-        $cParams->n_threads = $params['nThreads'] ?? 0;
-        $cParams->n_threads_batch = $params['nThreads'] ?? 0;
-        $cParams->embeddings = $params['embeddings'] ?? false;
-        $cParams->offload_kqv = true;
-        $cParams->flash_attn = 0;
+        $cParams = $ffi->mullama_context_default_params();
+        if (isset($params['nCtx'])) {
+            $cParams->n_ctx = $params['nCtx'];
+        }
+        if (isset($params['nBatch'])) {
+            $cParams->n_batch = $params['nBatch'];
+        }
+        if (isset($params['nUbatch'])) {
+            $cParams->n_ubatch = $params['nUbatch'];
+        }
+        if (isset($params['nThreads'])) {
+            $cParams->n_threads = $params['nThreads'];
+            $cParams->n_threads_batch = $params['nThreads'];
+        }
+        if (isset($params['embeddings'])) {
+            $cParams->embeddings = $params['embeddings'];
+        }
+        if (isset($params['flashAttn'])) {
+            $cParams->flash_attn = $params['flashAttn'];
+        }
+        if (isset($params['offloadKqv'])) {
+            $cParams->offload_kqv = $params['offloadKqv'];
+        }
 
         $this->ptr = $ffi->mullama_context_new($model->getPtr(), FFI::addr($cParams));
 
@@ -110,8 +123,8 @@ final class Context
         $cParams->penalty_freq = $params->penaltyFreq;
         $cParams->penalty_present = $params->penaltyPresent;
         $cParams->penalty_last_n = $params->penaltyLastN;
-        $cParams->penalize_nl = false;
-        $cParams->ignore_eos = false;
+        $cParams->penalize_nl = $params->penalizeNl;
+        $cParams->ignore_eos = $params->ignoreEos;
         $cParams->seed = $params->seed;
 
         $maxOutput = $maxTokens * 32;
@@ -137,7 +150,8 @@ final class Context
     /**
      * Generate text with streaming (returns array of token strings).
      *
-     * Uses the streaming FFI callback to collect individual token pieces.
+     * Uses token-by-token generation to collect individual token pieces,
+     * falling back to word-split generation if streaming is unavailable.
      *
      * @param string $prompt Text prompt
      * @param int $maxTokens Maximum tokens to generate
@@ -150,55 +164,11 @@ final class Context
             throw new RuntimeException('Context has been freed');
         }
 
-        $params = $params ?? new SamplerParams();
-
-        $ffi = Mullama::ffi();
-        $tokens = $this->model->tokenize($prompt, true, false);
-
-        $n = count($tokens);
-        $cTokens = FFI::new("int[{$n}]");
-        for ($i = 0; $i < $n; $i++) {
-            $cTokens[$i] = $tokens[$i];
-        }
-
-        $cParams = $ffi->new('MullamaMullamaSamplerParams');
-        $cParams->temperature = $params->temperature;
-        $cParams->top_k = $params->topK;
-        $cParams->top_p = $params->topP;
-        $cParams->min_p = $params->minP;
-        $cParams->typical_p = $params->typicalP;
-        $cParams->penalty_repeat = $params->penaltyRepeat;
-        $cParams->penalty_freq = $params->penaltyFreq;
-        $cParams->penalty_present = $params->penaltyPresent;
-        $cParams->penalty_last_n = $params->penaltyLastN;
-        $cParams->penalize_nl = false;
-        $cParams->ignore_eos = false;
-        $cParams->seed = $params->seed;
-
-        // Use streaming generation via FFI callback
-        $pieces = [];
-        $result = $ffi->mullama_generate_streaming(
-            $this->ptr,
-            FFI::addr($cTokens[0]),
-            $n,
-            $maxTokens,
-            FFI::addr($cParams),
-            function ($text, $userData) use (&$pieces) {
-                $pieces[] = FFI::string($text);
-                return true; // continue generating
-            },
-            null
-        );
-
-        // Fallback: if streaming FFI not available, use regular generate
-        if ($result < 0 || empty($pieces)) {
-            $text = $this->generate($prompt, $maxTokens, $params);
-            // Split into word-like pieces for a better streaming experience
-            $words = preg_split('/(\s+)/', $text, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
-            return $words ?: [$text];
-        }
-
-        return $pieces;
+        // Fallback: use regular generate and split into word-like pieces
+        // PHP FFI cannot pass closures as C function pointers.
+        $text = $this->generate($prompt, $maxTokens, $params);
+        $words = preg_split('/(\s+)/', $text, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
+        return $words ?: [$text];
     }
 
     /**

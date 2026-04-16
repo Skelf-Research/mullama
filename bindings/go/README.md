@@ -5,7 +5,7 @@ High-performance Go bindings for the Mullama LLM library, enabling fast local in
 ## Installation
 
 ```bash
-go get github.com/skelf-research/mullama
+go get github.com/cognisoc/mullama
 ```
 
 **Note**: This package requires the Mullama FFI library to be built and available. See [Building from Source](#building-from-source) below.
@@ -19,7 +19,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/skelf-research/mullama"
+    "github.com/cognisoc/mullama"
 )
 
 func main() {
@@ -96,7 +96,7 @@ tokens, err := model.Tokenize("Hello, world!", true, false)
 fmt.Printf("Tokens: %v\n", tokens)
 
 // Detokenize back to text
-text, err := model.Detokenize(tokens, false, false)
+text, err := model.Detokenize(tokens)
 fmt.Printf("Text: %s\n", text)
 ```
 
@@ -151,7 +151,7 @@ type ModelParams struct {
 func LoadModel(path string, params *ModelParams) (*Model, error)
 func (m *Model) Free()
 func (m *Model) Tokenize(text string, addBos, special bool) ([]int32, error)
-func (m *Model) Detokenize(tokens []int32, removeSpecial, unparseSpecial bool) (string, error)
+func (m *Model) Detokenize(tokens []int32) (string, error)
 
 // Properties
 func (m *Model) NCtxTrain() int32
@@ -202,6 +202,8 @@ type SamplerParams struct {
     PenaltyFreq    float32 // Default: 0.0
     PenaltyPresent float32 // Default: 0.0
     PenaltyLastN   int32   // Default: 64
+    PenalizeNL     bool    // Default: true
+    IgnoreEOS      bool    // Default: false
     Seed           uint32  // Default: 0 (random)
 }
 
@@ -254,6 +256,16 @@ go test -v
 
 # With model
 MULLAMA_TEST_MODEL=/path/to/model.gguf go test -v
+```
+
+## Publishing
+
+The Go module is published at `github.com/cognisoc/mullama`. To release a new version:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+GOPROXY=https://proxy.golang.org go list -m github.com/cognisoc/mullama@v0.3.0
 ```
 
 ## License

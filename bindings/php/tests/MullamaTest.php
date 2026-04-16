@@ -33,7 +33,7 @@ final class MullamaTest extends TestCase
     {
         $version = Mullama::version();
         $this->assertIsString($version);
-        $this->assertEquals('0.1.0', $version);
+        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+$/', $version);
     }
 
     public function testSystemInfo(): void

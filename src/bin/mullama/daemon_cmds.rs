@@ -30,8 +30,8 @@ pub(crate) fn handle_daemon_action(action: DaemonAction) -> Result<(), Box<dyn s
                 context_pool_size,
             )?;
         }
-        DaemonAction::Stop { socket, force: _ } => {
-            daemon_stop(&socket)?;
+        DaemonAction::Stop { socket, force } => {
+            daemon_stop(&socket, force)?;
         }
         DaemonAction::Restart { socket } => {
             daemon_restart(&socket)?;
@@ -129,7 +129,7 @@ pub(crate) fn daemon_start(
     Ok(())
 }
 
-pub(crate) fn daemon_stop(socket: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn daemon_stop(socket: &str, force: bool) -> Result<(), Box<dyn std::error::Error>> {
     if !is_daemon_running(socket) {
         println!("Daemon is not running.");
         return Ok(());
@@ -151,12 +151,41 @@ pub(crate) fn daemon_stop(socket: &str) -> Result<(), Box<dyn std::error::Error>
                 std::thread::sleep(Duration::from_millis(100));
             }
 
-            println!("TIMEOUT");
-            eprintln!("Daemon did not stop within {} seconds.", timeout.as_secs());
+            if force {
+                match std::process::Command::new("pkill")
+                    .arg("-f")
+                    .arg("mullama serve")
+                    .output()
+                {
+                    Ok(_) => {
+                        println!("OK (force killed)");
+                    }
+                    Err(kill_err) => {
+                        println!("FAILED (kill error: {})", kill_err);
+                    }
+                }
+            } else {
+                println!("TIMEOUT");
+                eprintln!(
+                    "Daemon did not stop within {} seconds. Use --force to kill.",
+                    timeout.as_secs()
+                );
+            }
         }
         Err(e) => {
-            println!("FAILED");
-            eprintln!("Error: {}", e);
+            if force {
+                match std::process::Command::new("pkill")
+                    .arg("-f")
+                    .arg("mullama serve")
+                    .output()
+                {
+                    Ok(_) => println!("OK (force killed)"),
+                    Err(kill_err) => println!("FAILED (kill error: {})", kill_err),
+                }
+            } else {
+                println!("FAILED");
+                eprintln!("Error: {}", e);
+            }
         }
     }
 
@@ -224,7 +253,7 @@ pub(crate) fn daemon_restart(socket: &str) -> Result<(), Box<dyn std::error::Err
 
     if is_daemon_running(socket) {
         println!("Stopping daemon...");
-        daemon_stop(socket)?;
+        daemon_stop(socket, false)?;
         std::thread::sleep(Duration::from_millis(500));
     }
 

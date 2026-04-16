@@ -7,6 +7,36 @@ use super::super::AppState;
 use super::types::{LoadModelRequest, ModelOperationResponse};
 use crate::daemon::models::ModelConfig;
 
+fn validate_local_path(path: &std::path::Path) -> Result<std::path::PathBuf, (StatusCode, String)> {
+    let canonical = std::fs::canonicalize(path).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid path '{}': {}", path.display(), e),
+        )
+    })?;
+
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+    let allowed_dirs = [
+        home.join(".mullama"),
+        dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp/mullama")),
+        std::path::PathBuf::from("/tmp"),
+    ];
+
+    let allowed = allowed_dirs.iter().any(|d| canonical.starts_with(d));
+
+    if !allowed && !canonical.extension().map_or(false, |ext| ext == "gguf") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Path '{}' is outside allowed model directories. Use ~/.mullama/models/ or the model cache directory.",
+                path.display()
+            ),
+        ));
+    }
+
+    Ok(canonical)
+}
+
 /// Load a model into the daemon
 pub(in crate::daemon::openai) async fn api_load_model(
     State(daemon): State<AppState>,
@@ -65,7 +95,16 @@ pub(in crate::daemon::openai) async fn api_load_model(
                 ));
             }
         }
-        ResolvedModel::LocalPath(path) => (path.display().to_string(), request.name.clone(), None),
+        ResolvedModel::LocalPath(path) => {
+            let validated = validate_local_path(&path).map_err(|(status, msg)| {
+                (status, Json(ModelOperationResponse {
+                    success: false,
+                    message: msg,
+                    model: None,
+                }))
+            })?;
+            (validated.display().to_string(), request.name.clone(), None)
+        }
         ResolvedModel::Ollama { name, tag } => {
             let client = crate::daemon::ollama::OllamaClient::new().map_err(|e| {
                 (
@@ -143,20 +182,30 @@ pub(in crate::daemon::openai) async fn api_load_model(
                     model.filename.trim_end_matches(".gguf")
                 );
                 (model.local_path.display().to_string(), short_name, None)
-            } else if std::path::Path::new(&name).exists() {
-                (name.clone(), name, None)
             } else {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    Json(ModelOperationResponse {
-                        success: false,
-                        message: format!(
-                            "Model '{}' not found. Pull it first or provide a valid path.",
-                            name
-                        ),
-                        model: None,
-                    }),
-                ));
+                let local_path = std::path::Path::new(&name);
+                if local_path.exists() {
+                    let validated = validate_local_path(local_path).map_err(|(status, msg)| {
+                        (status, Json(ModelOperationResponse {
+                            success: false,
+                            message: msg,
+                            model: None,
+                        }))
+                    })?;
+                    (validated.display().to_string(), name, None)
+                } else {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ModelOperationResponse {
+                            success: false,
+                            message: format!(
+                                "Model '{}' not found. Pull it first or provide a valid path.",
+                                name
+                            ),
+                            model: None,
+                        }),
+                    ));
+                }
             }
         }
     };

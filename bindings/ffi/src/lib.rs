@@ -155,7 +155,7 @@ pub extern "C" fn mullama_system_info(
 /// Library version major number
 pub const MULLAMA_VERSION_MAJOR: u32 = 0;
 /// Library version minor number
-pub const MULLAMA_VERSION_MINOR: u32 = 2;
+pub const MULLAMA_VERSION_MINOR: u32 = 3;
 /// Library version patch number
 pub const MULLAMA_VERSION_PATCH: u32 = 0;
 

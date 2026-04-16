@@ -14,6 +14,8 @@ pub struct PySamplerParams {
     pub penalty_freq: f32,
     pub penalty_present: f32,
     pub penalty_last_n: i32,
+    pub penalize_nl: bool,
+    pub ignore_eos: bool,
     pub seed: u32,
 }
 
@@ -30,6 +32,8 @@ impl PySamplerParams {
         penalty_freq=0.0,
         penalty_present=0.0,
         penalty_last_n=64,
+        penalize_nl=true,
+        ignore_eos=false,
         seed=0
     ))]
     fn new(
@@ -42,6 +46,8 @@ impl PySamplerParams {
         penalty_freq: f32,
         penalty_present: f32,
         penalty_last_n: i32,
+        penalize_nl: bool,
+        ignore_eos: bool,
         seed: u32,
     ) -> Self {
         PySamplerParams {
@@ -54,6 +60,8 @@ impl PySamplerParams {
             penalty_freq,
             penalty_present,
             penalty_last_n,
+            penalize_nl,
+            ignore_eos,
             seed,
         }
     }
@@ -70,6 +78,8 @@ impl PySamplerParams {
             penalty_freq: 0.0,
             penalty_present: 0.0,
             penalty_last_n: 0,
+            penalize_nl: true,
+            ignore_eos: false,
             seed: 0,
         }
     }
@@ -86,6 +96,8 @@ impl PySamplerParams {
             penalty_freq: 0.1,
             penalty_present: 0.1,
             penalty_last_n: 128,
+            penalize_nl: true,
+            ignore_eos: false,
             seed: 0,
         }
     }
@@ -102,6 +114,8 @@ impl PySamplerParams {
             penalty_freq: 0.0,
             penalty_present: 0.0,
             penalty_last_n: 32,
+            penalize_nl: true,
+            ignore_eos: false,
             seed: 0,
         }
     }
@@ -156,8 +170,9 @@ impl From<&PySamplerParams> for SamplerParams {
             penalty_freq: p.penalty_freq,
             penalty_present: p.penalty_present,
             penalty_last_n: p.penalty_last_n,
+            penalize_nl: p.penalize_nl,
+            ignore_eos: p.ignore_eos,
             seed: p.seed,
-            ..Default::default()
         }
     }
 }

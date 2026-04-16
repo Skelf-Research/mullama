@@ -5,10 +5,9 @@
 [![Crates.io](https://img.shields.io/crates/v/mullama)](https://crates.io/crates/mullama)
 [![PyPI](https://img.shields.io/pypi/v/mullama)](https://pypi.org/project/mullama/)
 [![npm](https://img.shields.io/npm/v/mullama)](https://www.npmjs.com/package/mullama)
-[![CI](https://img.shields.io/github/actions/workflow/status/skelf-research/mullama/ci.yml?branch=main&label=CI)](https://github.com/skelf-research/mullama/actions)
-[![Documentation](https://img.shields.io/badge/docs-skelfresearch.com-blue)](https://docs.skelfresearch.com/mullama/)
+[![CI](https://img.shields.io/github/actions/workflow/status/cognisoc/mullama/ci.yml?branch=main&label=CI)](https://github.com/cognisoc/mullama/actions)
+[![Documentation](https://img.shields.io/badge/docs-cognisoc.com-blue)](https://docs.cognisoc.com/mullama/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Discord](https://img.shields.io/discord/1234567890?label=Discord&color=5865F2)](https://discord.gg/skelfresearch)
 
 Mullama is a local LLM server and library that works just like Ollama — same CLI commands, same model format, same Modelfile syntax — but with native language bindings for Python, Node.js, Go, PHP, Rust, and C/C++. Embed inference directly in your app with zero HTTP overhead, or run it as a server with OpenAI and Anthropic-compatible APIs.
 
@@ -16,17 +15,17 @@ Mullama is a local LLM server and library that works just like Ollama — same C
 
 ```bash
 # One-liner (Linux/macOS)
-curl -fsSL https://skelfresearch.com/mullama/install.sh | sh
+curl -fsSL https://mullama.cognisoc.com/install.sh | sh
 
 # Windows (PowerShell)
-iwr -useb https://skelfresearch.com/mullama/install.ps1 | iex
+iwr -useb https://mullama.cognisoc.com/install.ps1 | iex
 
 # Or via package managers
 pip install mullama          # Python
 npm install mullama          # Node.js
 cargo add mullama            # Rust
-go get github.com/skelf-research/mullama-go   # Go
-composer require skelf-research/mullama        # PHP
+go get github.com/cognisoc/mullama   # Go
+composer require mullama/mullama      # PHP
 ```
 
 ## Quick Start
@@ -84,11 +83,11 @@ println!("{}", response);
 **Go:**
 
 ```go
-import mullama "github.com/skelf-research/mullama-go"
+import "github.com/cognisoc/mullama"
 
-model, _ := mullama.LoadModel("llama3.2-1b.gguf", mullama.WithGPULayers(32))
-ctx, _ := model.NewContext(mullama.ContextConfig{ContextSize: 4096})
-response, _ := ctx.Generate("Hello, AI!")
+model, _ := mullama.LoadModel("llama3.2-1b.gguf", &mullama.ModelParams{NGPULayers: 32})
+ctx, _ := mullama.NewContext(model, &mullama.ContextParams{NCtx: 4096})
+response, _ := ctx.Generate("Hello, AI!", 256, nil)
 fmt.Println(response)
 ```
 
@@ -98,13 +97,13 @@ fmt.Println(response)
 use Mullama\Model;
 use Mullama\Context;
 
-$model = Model::load('llama3.2-1b.gguf', ['gpu_layers' => 32]);
-$ctx = new Context($model, ['n_ctx' => 4096]);
+$model = Model::load('llama3.2-1b.gguf', ['nGpuLayers' => 32]);
+$ctx = new Context($model, ['nCtx' => 4096]);
 $response = $ctx->generate('Hello, AI!');
 echo $response;
 ```
 
-See the [bindings documentation](https://docs.skelfresearch.com/mullama/bindings/) for full API details.
+See the [bindings documentation](https://docs.cognisoc.com/mullama/bindings/) for full API details.
 
 ## Why Mullama?
 
@@ -141,7 +140,7 @@ See the [bindings documentation](https://docs.skelfresearch.com/mullama/bindings
 | Built-in Web UI | Yes | No |
 | Built-in TUI chat | Yes | No |
 
-[Full comparison](https://docs.skelfresearch.com/mullama/comparison/vs-ollama/) | [Migration guide](https://docs.skelfresearch.com/mullama/comparison/migration-from-ollama/)
+[Full comparison](https://docs.cognisoc.com/mullama/comparison/vs-ollama/) | [Migration guide](https://docs.cognisoc.com/mullama/comparison/migration-from-ollama/)
 
 ## GPU Acceleration
 
@@ -166,14 +165,14 @@ export LLAMA_RPC=1       # Distributed RPC backend
 
 ## Documentation
 
-Full documentation is available at **[docs.skelfresearch.com/mullama](https://docs.skelfresearch.com/mullama/)**.
+Full documentation is available at **[docs.cognisoc.com/mullama](https://docs.cognisoc.com/mullama/)**.
 
 Guides cover installation, library usage, daemon configuration, language bindings, advanced features, API reference, and tutorials.
 
 ## Contributing
 
 ```bash
-git clone --recurse-submodules https://github.com/skelf-research/mullama.git
+git clone --recurse-submodules https://github.com/cognisoc/mullama.git
 cd mullama
 cargo test --all-features
 ```
