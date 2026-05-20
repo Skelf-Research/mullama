@@ -17,17 +17,18 @@ keywords = ["llm", "llama", "ai", "inference", "bindings"]
 categories = ["api-bindings", "science", "text-processing"]
 build = "build.rs"
 include = [
-    "src/**/*",
-    "examples/**/*",
-    "tests/**/*",
-    "configs/modelfiles/**/*",
-    "build.rs",
-    "wrapper.h",
-    "Cargo.toml",
-    "Cargo.lock",
-    "LICENSE",
-    "README.md",
-    "CONTRIBUTING.md",
+    "/src/**/*",
+    "/examples/**/*",
+    "/tests/**/*",
+    "/configs/modelfiles/**/*",
+    "/build.rs",
+    "/wrapper.h",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/CHANGELOG.md",
 ]
 
 [features]
