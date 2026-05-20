@@ -94,10 +94,31 @@ impl ModelRegistry {
         Self::default()
     }
 
-    /// Load registry from the embedded TOML file
-    pub fn load_embedded() -> Result<Self, RegistryError> {
-        let toml_content = include_str!("../../configs/models.toml");
-        Self::from_toml(toml_content)
+    /// Load the registry from standard locations.
+    ///
+    /// Lookup order:
+    /// 1. `MULLAMA_REGISTRY` environment variable (path to a TOML file).
+    /// 2. `<config_dir>/mullama/models.toml` — XDG config on Linux,
+    ///    `~/Library/Application Support` on macOS, `%APPDATA%` on Windows.
+    ///
+    /// If no file is found, returns an empty registry. Local paths and
+    /// explicit `hf:` / `ollama:` prefixes still resolve without a registry;
+    /// only the short-name aliases (e.g. `llama3.2:1b`) need one.
+    pub fn load_default() -> Result<Self, RegistryError> {
+        if let Some(path) = Self::default_path() {
+            if path.exists() {
+                return Self::from_file(path);
+            }
+        }
+        Ok(Self::new())
+    }
+
+    /// Path the default loader will inspect, if one can be determined.
+    pub fn default_path() -> Option<PathBuf> {
+        if let Ok(p) = std::env::var("MULLAMA_REGISTRY") {
+            return Some(PathBuf::from(p));
+        }
+        dirs::config_dir().map(|d| d.join("mullama").join("models.toml"))
     }
 
     /// Load registry from a TOML string
@@ -317,7 +338,7 @@ static REGISTRY: std::sync::OnceLock<ModelRegistry> = std::sync::OnceLock::new()
 /// Get the global registry instance
 pub fn registry() -> &'static ModelRegistry {
     REGISTRY.get_or_init(|| {
-        ModelRegistry::load_embedded().unwrap_or_else(|e| {
+        ModelRegistry::load_default().unwrap_or_else(|e| {
             eprintln!("Warning: Failed to load model registry: {}", e);
             ModelRegistry::new()
         })
@@ -449,15 +470,26 @@ impl ResolvedModel {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_load_embedded_registry() {
-        let reg = ModelRegistry::load_embedded().unwrap();
-        assert!(!reg.aliases.is_empty());
+    fn test_registry() -> ModelRegistry {
+        let toml = r#"
+[aliases."llama3.2:1b"]
+repo = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+default_file = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Compact and fast"
+tags = ["chat", "instruct", "fast", "coding"]
+
+[quantizations]
+q4 = ["Q4_K_M", "Q4_K_S"]
+q8 = ["Q8_0"]
+default_order = ["Q4_K_M", "Q4_K_S"]
+"#;
+        ModelRegistry::from_toml(toml).expect("inline test registry must parse")
     }
 
     #[test]
     fn test_parse_alias() {
-        let reg = ModelRegistry::load_embedded().unwrap();
+        let reg = test_registry();
         let spec = reg.parse_spec("llama3.2:1b");
 
         assert_eq!(spec.name, "llama3.2:1b");
@@ -468,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_quantization() {
-        let reg = ModelRegistry::load_embedded().unwrap();
+        let reg = test_registry();
         let spec = reg.parse_spec("llama3.2:1b-q8");
 
         assert_eq!(spec.name, "llama3.2:1b");
@@ -477,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_parse_hf_spec() {
-        let reg = ModelRegistry::load_embedded().unwrap();
+        let reg = test_registry();
         let spec = reg.parse_spec("hf:TheBloke/Llama-2-7B-GGUF");
 
         assert!(spec.is_hf_spec);
@@ -487,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_parse_local_path() {
-        let reg = ModelRegistry::load_embedded().unwrap();
+        let reg = test_registry();
 
         let spec1 = reg.parse_spec("./model.gguf");
         assert!(spec1.is_local_path);
@@ -501,19 +533,13 @@ mod tests {
 
     #[test]
     fn test_search() {
-        let reg = ModelRegistry::load_embedded().unwrap();
+        let reg = test_registry();
 
         let results = reg.search("llama");
         assert!(!results.is_empty());
 
         let results = reg.search("coding");
         assert!(!results.is_empty());
-    }
-
-    #[test]
-    fn test_resolve_alias() {
-        let resolved = resolve_model_name("llama3.2:1b");
-        assert!(resolved.is_hf());
     }
 
     #[test]
@@ -526,5 +552,17 @@ mod tests {
     fn test_resolve_ollama_user_model() {
         let resolved = resolve_model_name("user/model:tag");
         assert!(resolved.is_ollama());
+    }
+
+    #[test]
+    fn test_load_default_no_file_is_empty() {
+        // With no MULLAMA_REGISTRY pointing at a real file and no config-dir
+        // file present, load_default() must succeed with an empty registry
+        // rather than failing.
+        let nonexistent = std::env::temp_dir().join("mullama-nonexistent-registry.toml");
+        std::env::set_var("MULLAMA_REGISTRY", &nonexistent);
+        let reg = ModelRegistry::load_default().unwrap();
+        std::env::remove_var("MULLAMA_REGISTRY");
+        assert!(reg.aliases.is_empty());
     }
 }

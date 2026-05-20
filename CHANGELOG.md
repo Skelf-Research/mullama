@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - 2026-05-20
+
+### Fixed
+- **Packaging**: `0.3.0` failed to build from crates.io with the `daemon` feature because `configs/models.toml` was not in the published include list. The daemon's model registry no longer embeds that TOML via `include_str!`.
+
+### Changed
+- **Model registry lookup**: `ModelRegistry::load_embedded()` is removed. The daemon now loads the registry via `ModelRegistry::load_default()`, which searches:
+  1. `$MULLAMA_REGISTRY` (path to a TOML file), then
+  2. `<config_dir>/mullama/models.toml` (e.g. `~/.config/mullama/models.toml` on Linux, `~/Library/Application Support/mullama/models.toml` on macOS, `%APPDATA%\mullama\models.toml` on Windows).
+
+  If neither is found, an empty registry is used. Local paths and explicit `hf:` / `ollama:` prefixes still resolve without a registry; only the short-name aliases (e.g. `llama3.2:1b`) require one. The repository's `configs/models.toml` is still shipped as a starter file users can copy into their config directory.
+
 ## [0.3.0] - 2026-04-02
 
 ### Added
