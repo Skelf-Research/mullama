@@ -1,7 +1,7 @@
 {
   "name": "mullama",
   "version": "0.3.1",
-  "description": "High-performance Node.js bindings for Mullama LLM library - local inference with GGUF models",
+  "description": "Local LLM inference for Node.js — run Llama, Qwen, DeepSeek, Mistral, Phi, and Gemma GGUF models with native llama.cpp performance. Drop-in alternative to node-llama-cpp and ollama.",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
@@ -40,7 +40,17 @@
   "keywords": [
     "llm",
     "llama",
+    "llama-cpp",
     "gguf",
+    "local-llm",
+    "ollama",
+    "ollama-alternative",
+    "node-llama-cpp",
+    "embeddings",
+    "chat",
+    "streaming",
+    "typescript",
+    "electron",
     "inference",
     "ai",
     "machine-learning",

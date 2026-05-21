@@ -9,7 +9,7 @@ homepage = "https://mullama.cognisoc.com"
 documentation = "https://docs.cognisoc.com/mullama"
 authors = ["Cognisoc <support@cognisoc.com>"]
 readme = "README.md"
-keywords = ["llm", "ffi", "bindings", "llama"]
+keywords = ["llm", "llama-cpp", "gguf", "c-abi", "ffi"]
 categories = ["api-bindings", "external-ffi-bindings"]
 
 [lib]

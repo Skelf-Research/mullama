@@ -1,206 +1,135 @@
 # Mullama Language Bindings
 
-This directory contains language bindings for the Mullama LLM library, providing consistent APIs across multiple programming languages.
+This directory contains the language bindings for the Mullama LLM library. All bindings share a common C ABI layer (`ffi/`) so the same `llama.cpp`-backed engine is reachable from Rust, Python, Node.js, Go, PHP, and C/C++.
 
-## Supported Languages
+## Supported languages
 
 | Language | Directory | Package | Status |
-|----------|-----------|---------|--------|
-| **C/C++** | [`ffi/`](./ffi) | Header + shared library | Stable |
-| **Python** | [`python/`](./python) | `mullama` on PyPI | Stable |
-| **Node.js** | [`node/`](./node) | `mullama` on npm | Stable |
-| **Go** | [`go/`](./go) | `github.com/cognisoc/mullama` | Stable |
-| **PHP** | [`php/`](./php) | `mullama/mullama` on Packagist | Stable |
+|---|---|---|---|
+| **Rust** (core) | `../src/` | [`mullama` on crates.io](https://crates.io/crates/mullama) | Stable |
+| **C / C++** | [`ffi/`](./ffi) | [`mullama-ffi` on crates.io](https://crates.io/crates/mullama-ffi) + `mullama.h` | Stable |
+| **Python** | [`python/`](./python) | [`mullama` on PyPI](https://pypi.org/project/mullama/) | Stable |
+| **Node.js / TypeScript** | [`node/`](./node) | [`mullama` on npm](https://www.npmjs.com/package/mullama) | Stable |
+| **Go** | [`go/`](./go) | [`github.com/cognisoc/mullama` on pkg.go.dev](https://pkg.go.dev/github.com/cognisoc/mullama) | Stable |
+| **PHP** | [`php/`](./php) | [`mullama/mullama` on Packagist](https://packagist.org/packages/mullama/mullama) | Beta |
+
+## Pick the right binding
+
+```
+Building in …             Use
+────────────────────────────────────────────────
+Rust app                  mullama (crates.io)        — direct, no FFI hop
+Python app / Jupyter      mullama (PyPI)             — PyO3, in-process
+Node.js / TS / Electron   mullama (npm)              — napi-rs, in-process
+Bun / Deno                mullama (npm)              — works via Node-API shim
+Go service / CLI          github.com/cognisoc/mullama — CGO + FFI library
+PHP / Laravel / Symfony   mullama/mullama (Packagist) — PHP FFI extension
+C / C++ / new binding     mullama-ffi (crates.io) + mullama.h
+Mobile (Android/iOS)      mullama-ffi static library — bundled with JNI / Swift
+Browser (WASM)            not supported yet (roadmap)
+```
+
+If you only need an **HTTP API**, you don't need a binding at all — run `mullama serve` and point any OpenAI- or Anthropic-compatible client at `http://localhost:11434`.
 
 ## Architecture
 
-All bindings share a common C ABI layer (`ffi/`) that provides:
-
-- Memory-safe handle management using Arc reference counting
-- Thread-local error messages
-- Callback-based streaming
-- ~50 FFI functions covering the full Mullama API
+All bindings share the same C ABI surface:
 
 ```
 ┌─────────────────────────────────────┐
-│         mullama (Rust core)          │
+│         mullama (Rust core)         │
 └────────────────┬────────────────────┘
                  │
 ┌────────────────┴────────────────────┐
-│         mullama-ffi (C ABI)          │
-│  Handle management, error codes      │
+│         mullama-ffi (C ABI)         │
+│  Handle management, error codes,    │
+│  streaming callbacks, cancellation  │
 └────────────────┬────────────────────┘
                  │
-   ┌─────────┬───┴───┬─────────┬─────────┐
-   │         │       │         │         │
-┌──▼───┐ ┌───▼──┐ ┌──▼───┐ ┌───▼──┐ ┌───▼──┐
-│napi-rs│ │ PyO3 │ │PHP FFI│ │ cgo  │ │  C   │
-│Node.js│ │Python│ │ PHP   │ │ Go   │ │ C++  │
-└──────┘ └──────┘ └──────┘ └──────┘ └──────┘
+   ┌─────────┬───┴───┬─────────┬────────┐
+   │         │       │         │        │
+┌──▼────┐ ┌──▼───┐ ┌─▼───┐ ┌───▼──┐ ┌───▼──┐
+│napi-rs│ │ PyO3 │ │PHP  │ │ cgo  │ │  C/  │
+│Node.js│ │Python│ │FFI  │ │ Go   │ │  C++ │
+└───────┘ └──────┘ └─────┘ └──────┘ └──────┘
 ```
 
-## Quick Start
+Memory-safe handles, thread-local error messages, callback-based streaming, and roughly 50 FFI functions covering the full Mullama surface — see [`ffi/README.md`](./ffi/README.md) for details.
 
-### Python
+## Quick-start parity
 
-```python
-from mullama import Model, Context, SamplerParams
+Every binding exposes the same concepts (model, context, sampler, embeddings) under language-idiomatic names:
 
-model = Model.load("./model.gguf", n_gpu_layers=32)
-ctx = Context(model, n_ctx=2048)
+| Concept | Rust | Python | Node.js | Go | PHP | C |
+|---|---|---|---|---|---|---|
+| Load model | `Model::load()` | `Model.load()` | `Model.load()` | `LoadModel()` | `Model::load()` | `mullama_model_load()` |
+| Create context | `Context::new()` | `Context()` | `new Context()` | `NewContext()` | `new Context()` | `mullama_context_new()` |
+| Generate | `ctx.generate()` | `ctx.generate()` | `ctx.generate()` | `ctx.Generate()` | `$ctx->generate()` | `mullama_generate()` |
+| Stream | `ctx.generate_stream()` | `ctx.generate_stream()` | `ctx.generateStream()` | `ctx.GenerateStream()` | `$ctx->generateStream()` | `mullama_generate_streaming()` |
+| Tokenize | `model.tokenize()` | `model.tokenize()` | `model.tokenize()` | `model.Tokenize()` | `$model->tokenize()` | `mullama_tokenize()` |
+| Embed | `EmbeddingGenerator::new()` | `EmbeddingGenerator()` | `new EmbeddingGenerator()` | `NewEmbeddingGenerator()` | `new EmbeddingGenerator()` | `mullama_embedding_generator_new()` |
 
-for token in ctx.generate_stream("Once upon a time", max_tokens=100):
-    print(token, end="", flush=True)
-```
+Sampler presets (`greedy`, `precise`, `default`, `creative`) are available in every binding under the same names.
 
-### Node.js
+## Platform support
 
-```javascript
-import { JsModel, JsContext, samplerParamsGreedy } from 'mullama';
+Pre-built artifacts ship for every release:
 
-const model = await JsModel.load('./model.gguf', { nGpuLayers: 32 });
-const ctx = new JsContext(model, { nCtx: 2048 });
+| Platform | CPU | CUDA | Metal | Vulkan | ROCm |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Linux x86_64 | ✓ | ✓ | – | ✓ (build) | ✓ (build) |
+| Linux aarch64 | ✓ | – | – | ✓ (build) | – |
+| macOS x86_64 | ✓ | – | – | – | – |
+| macOS aarch64 | ✓ | – | ✓ | – | – |
+| Windows x86_64 | ✓ | ✓ (build) | – | ✓ (build) | – |
 
-const text = ctx.generate("Once upon a time", 100, samplerParamsGreedy());
-console.log(text);
-```
+"build" = supported via `cargo build` with the relevant env var, not shipped pre-built.
 
-### Go
+## Building from source
 
-```go
-import "github.com/cognisoc/mullama"
-
-model, _ := mullama.LoadModel("./model.gguf", &mullama.ModelParams{NGpuLayers: 32})
-ctx, _ := mullama.NewContext(model, &mullama.ContextParams{NCtx: 2048})
-
-for token := range ctx.GenerateStream("Once upon a time", 100, nil) {
-    fmt.Print(token)
-}
-```
-
-### PHP
-
-```php
-use Mullama\Model;
-use Mullama\Context;
-use Mullama\SamplerParams;
-
-$model = Model::load('./model.gguf', ['nGpuLayers' => 32]);
-$ctx = new Context($model, ['nCtx' => 2048]);
-
-$text = $ctx->generate("Once upon a time", 100, SamplerParams::greedy());
-echo $text;
-```
-
-### C/C++
-
-```c
-#include "mullama.h"
-
-MullamaMullamaModelParams params = {.n_gpu_layers = 32};
-MullamaMullamaModel* model = mullama_model_load("./model.gguf", &params);
-
-MullamaMullamaContextParams ctx_params = {.n_ctx = 2048};
-MullamaMullamaContext* ctx = mullama_context_new(model, &ctx_params);
-
-// ... generate text ...
-
-mullama_context_free(ctx);
-mullama_model_free(model);
-```
-
-## Consistent API
-
-All bindings follow consistent naming conventions:
-
-| Concept | Python | Node.js | Go | PHP | C |
-|---------|--------|---------|-----|-----|---|
-| Load model | `Model.load()` | `JsModel.load()` | `LoadModel()` | `Model::load()` | `mullama_model_load()` |
-| Create context | `Context()` | `JsContext()` | `NewContext()` | `new Context()` | `mullama_context_new()` |
-| Generate | `ctx.generate()` | `ctx.generate()` | `ctx.Generate()` | `$ctx->generate()` | `mullama_generate()` |
-| Tokenize | `model.tokenize()` | `model.tokenize()` | `model.Tokenize()` | `$model->tokenize()` | `mullama_tokenize()` |
-
-### Sampler Presets
-
-All bindings provide the same sampler presets:
-
-| Preset | Temperature | Top-K | Use Case |
-|--------|-------------|-------|----------|
-| `greedy()` | 0.0 | 1 | Deterministic output |
-| `precise()` | 0.3 | 20 | Focused, factual |
-| `default` | 0.8 | 40 | Balanced |
-| `creative()` | 1.2 | 100 | Creative writing |
-
-## Platform Support
-
-Pre-built binaries are available for:
-
-| Platform | CPU | CUDA | Metal |
-|----------|-----|------|-------|
-| Linux x64 | ✓ | ✓ | - |
-| Linux ARM64 | ✓ | - | - |
-| macOS x64 | ✓ | - | - |
-| macOS ARM64 | ✓ | - | ✓ |
-| Windows x64 | ✓ | ✓ | - |
-
-## Building from Source
-
-### Prerequisites
-
-1. Rust toolchain (1.75+)
-2. System dependencies (see main README)
-3. Language-specific tools:
-   - Python: maturin (`pip install maturin`)
-   - Node.js: Node 16+, npm
-   - Go: Go 1.21+
-   - PHP: PHP 7.4+ with FFI extension
-
-### Build Commands
+Prerequisites:
+- Rust toolchain (1.75+)
+- System dependencies (audio + image + ffmpeg dev packages — see the [top-level README](../README.md#contributing))
+- Language tooling:
+  - Python — `pip install maturin`
+  - Node — Node 18+, npm
+  - Go — Go 1.21+
+  - PHP — PHP 7.4+ with `ffi` extension
 
 ```bash
-# Build FFI library
+# Build the FFI library (used by every non-Rust binding)
 cargo build --release -p mullama-ffi
 
-# Build Python wheel
+# Build the Python wheel
 cd bindings/python && maturin build --release
 
-# Build Node.js native module
+# Build the Node.js native module
 cd bindings/node && npm install && npm run build
 
-# Build Go (compilation check)
+# Build + check the Go binding
 cd bindings/go && go build ./...
 
-# Run PHP tests
+# Run the PHP test suite
 cd bindings/php && composer install && composer test
 ```
 
-## CI/CD
+## CI / release pipeline
 
-The bindings are built and tested via GitHub Actions:
+Two GitHub Actions workflows cover everything:
 
-- **`bindings.yml`**: CI workflow for PRs and pushes
-  - Tests FFI layer
-  - Builds Python wheels for all platforms
-  - Builds Node.js native modules for all platforms
-  - Tests Go bindings
-  - Tests PHP bindings
+- **`.github/workflows/ci.yml`** — runs on every push to `main` and every PR. Tests the core crate, runs clippy + fmt, smoke-builds each binding against the FFI library, builds the daemon with the embedded Web UI, and smoke-builds the CPU Docker image.
+- **`.github/workflows/release.yml`** — triggered by a `v*` tag (or `workflow_dispatch` with `dry_run=true`). Builds the CLI binary, FFI library, Python wheels, and Node native modules for every supported target; pushes multi-arch Docker images to GHCR (CPU + CUDA); publishes to crates.io / PyPI / npm via OIDC trusted publishing; and creates the GitHub Release with cargo-dist / Homebrew-friendly artifact names.
 
-- **`release-bindings.yml`**: Release workflow
-  - Triggered manually with version input
-  - Publishes Python to PyPI
-  - Publishes Node.js to npm
-  - Creates GitHub release with pre-built libraries
+See [the release docs](https://docs.cognisoc.com/mullama/contributing/releasing/) for the tagging convention and the one-time trusted-publisher setup.
 
-## Contributing
+## Contributing a new binding
 
-When adding a new binding:
-
-1. Create a new directory under `bindings/`
-2. Use the FFI layer (`bindings/ffi/`) for native interop
-3. Follow the established API patterns for consistency
-4. Add comprehensive tests
-5. Create a README with installation and usage instructions
-6. Update the CI workflows
+1. Create a new directory under `bindings/<lang>/`.
+2. Build against the FFI library (`bindings/ffi/`) — don't bind to `llama.cpp` directly.
+3. Match the established naming conventions (see the table above).
+4. Write tests that exercise model load, generate, streaming, embeddings, and tokenize.
+5. Add an SEO/AI-search-optimised README — follow the template used by `bindings/python/README.md` (title, "What is X?", comparison, install, quick start, features, supported models, GPU table, API, FAQ, cross-links).
+6. Wire the build into `.github/workflows/ci.yml` (smoke build) and `.github/workflows/release.yml` (matrix build + publish).
 
 ## License
 

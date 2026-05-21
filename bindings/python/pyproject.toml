@@ -30,7 +30,7 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
     "Typing :: Typed",
 ]
-keywords = ["llm", "llama", "ai", "machine-learning", "inference", "transformers"]
+keywords = ["llm", "llama", "llama-cpp", "gguf", "local-llm", "ollama", "ollama-alternative", "embeddings", "chat", "streaming", "inference", "ai", "machine-learning", "transformers"]
 dependencies = [
     "numpy>=1.20.0",
 ]

@@ -39,7 +39,14 @@
     "keywords": [
         "llm",
         "llama",
+        "llama-cpp",
         "gguf",
+        "local-llm",
+        "local-ai",
+        "ollama",
+        "ollama-alternative",
+        "embeddings",
+        "chat",
         "inference",
         "ai",
         "machine-learning"

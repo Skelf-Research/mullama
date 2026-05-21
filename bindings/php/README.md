@@ -1,281 +1,301 @@
-# Mullama PHP Bindings
+# Mullama for PHP — local LLM inference with GGUF models via PHP FFI
 
-PHP bindings for the Mullama LLM library using PHP FFI (Foreign Function Interface).
+[![Packagist Version](https://img.shields.io/packagist/v/mullama/mullama)](https://packagist.org/packages/mullama/mullama)
+[![PHP Version](https://img.shields.io/packagist/php-v/mullama/mullama)](https://packagist.org/packages/mullama/mullama)
+[![License](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg)](https://github.com/cognisoc/mullama/blob/main/LICENSE)
+
+## What is Mullama for PHP?
+
+`mullama/mullama` is a PHP package that runs local LLMs from GGUF files — Llama 3.2, Qwen 2.5, DeepSeek R1, Mistral, Phi 3, Gemma 2, and LLaVA — directly inside your PHP process via the FFI extension. It loads the Mullama FFI library (a Rust core wrapping `llama.cpp`), giving you native llama.cpp throughput without spawning the Ollama daemon and without shelling out to a Python or Node sidecar.
+
+Use it from a Laravel or Symfony app to add chat, RAG, or local AI features without depending on an external LLM service.
+
+## Why use Mullama from PHP?
+
+| | `mullama/mullama` | HTTP to `ollama serve` from PHP | Shelling out to `llama.cpp` |
+|---|:-:|:-:|:-:|
+| In-process inference (no daemon) | ✓ | ✗ | ✓ |
+| Streaming generation | ✓ | ✓ (via SSE) | requires pipe parsing |
+| Built-in embeddings | ✓ | ✓ (via HTTP) | requires extra binary |
+| Idiomatic PHP API (classes + exceptions) | ✓ | partial | ✗ |
+| Works with Laravel / Symfony | ✓ | ✓ | brittle |
+| Vision (LLaVA / Moondream) | ✓ | ✓ | ✓ |
 
 ## Requirements
 
-- PHP 7.4 or later
-- PHP FFI extension enabled
-- Pre-built `libmullama_ffi` shared library
+- PHP **7.4+** with the `ffi` extension enabled (`extension=ffi` in `php.ini`)
+- Pre-built `libmullama_ffi` shared library for your platform (attached to every GitHub release as `mullama-ffi-<version>-<target>.tar.gz`)
 
-## Installation
+## Install
 
 ```bash
 composer require mullama/mullama
 ```
 
-Or add to your `composer.json`:
+Then point the runtime at the FFI library:
 
-```json
-{
-    "require": {
-        "mullama/mullama": "^0.1"
-    }
-}
+```bash
+export MULLAMA_LIB_PATH=/usr/local/lib/libmullama_ffi.so
+export MULLAMA_HEADER_PATH=/usr/local/include/mullama.h
 ```
 
-## Quick Start
+Or programmatically in PHP:
+
+```php
+putenv('MULLAMA_LIB_PATH=/path/to/libmullama_ffi.so');
+putenv('MULLAMA_HEADER_PATH=/path/to/mullama.h');
+```
+
+| Platform | Library file |
+|---|---|
+| Linux | `libmullama_ffi.so` |
+| macOS | `libmullama_ffi.dylib` |
+| Windows | `mullama_ffi.dll` |
+
+## Quick start
 
 ```php
 <?php
 
+use Mullama\Mullama;
 use Mullama\Model;
 use Mullama\Context;
 use Mullama\SamplerParams;
-use Mullama\EmbeddingGenerator;
 
-// Initialize the backend (call once at startup)
-Mullama\Mullama::initialize();
+Mullama::initialize();
 
-// Load a model
-$model = Model::load('./model.gguf', [
-    'nGpuLayers' => 32,  // GPU acceleration
-]);
+$model = Model::load('./llama3.2-1b.gguf', ['nGpuLayers' => 32]);
+$ctx = new Context($model, ['nCtx' => 2048]);
 
-// Create a context
-$ctx = new Context($model, [
-    'nCtx' => 2048,
-    'nBatch' => 512,
-]);
+$params = new SamplerParams(['temperature' => 0.8, 'topP' => 0.95]);
+echo $ctx->generate('What is the capital of France?', 100, $params);
 
-// Generate text
-$params = new SamplerParams([
-    'temperature' => 0.8,
-    'topK' => 40,
-    'topP' => 0.95,
-]);
-
-$response = $ctx->generate("Once upon a time", 100, $params);
-echo $response;
-
-// Clean up
 $ctx->free();
 $model->free();
-Mullama\Mullama::shutdown();
-```
-
-## API Reference
-
-### Mullama (Static Utilities)
-
-```php
-// Initialize/shutdown backend
-Mullama::initialize();
 Mullama::shutdown();
-
-// Get library version
-$version = Mullama::version();  // e.g. "0.3.0"
-
-// System information
-$info = Mullama::systemInfo();
-
-// GPU support
-$hasGpu = Mullama::supportsGpuOffload();
-$maxDevices = Mullama::maxDevices();
 ```
 
-### Model
+## Streaming
 
 ```php
-// Load a model
-$model = Model::load('./model.gguf', [
-    'nGpuLayers' => 32,     // Layers to offload to GPU
-    'useMmap' => true,      // Memory-map the model
-    'useMlock' => false,    // Lock model in RAM
-    'vocabOnly' => false,   // Load only vocabulary
-]);
-
-// Model properties
-$model->nCtxTrain();   // Training context size
-$model->nEmbd();       // Embedding dimension
-$model->nVocab();      // Vocabulary size
-$model->nLayer();      // Number of layers
-$model->nHead();       // Number of attention heads
-$model->size();        // Model size in bytes
-$model->nParams();     // Number of parameters
-$model->description(); // Model description
-
-// Special tokens
-$model->tokenBos();    // Beginning-of-sequence token
-$model->tokenEos();    // End-of-sequence token
-$model->tokenIsEog($token);  // Check if token is end-of-generation
-
-// Tokenization
-$tokens = $model->tokenize("Hello, world!", true, false);
-$text = $model->detokenize($tokens);
-
-// Free resources
-$model->free();
-```
-
-### Context
-
-```php
-// Create a context
-$ctx = new Context($model, [
-    'nCtx' => 2048,       // Context size
-    'nBatch' => 512,      // Batch size
-    'nThreads' => 4,      // CPU threads
-    'embeddings' => false, // Enable embeddings
-]);
-
-// Context properties
-$ctx->nCtx();    // Context size
-$ctx->nBatch();  // Batch size
-
-// Generate text
-$text = $ctx->generate("Hello", 100, $params);
-
-// Generate from tokens
-$tokens = $model->tokenize("Hello", true, false);
-$text = $ctx->generateFromTokens($tokens, 100, $params);
-
-// Streaming generation (simplified)
-$chunks = $ctx->generateStream("Hello", 100, $params);
-foreach ($chunks as $chunk) {
+foreach ($ctx->generateStream('Once upon a time', 100, $params) as $chunk) {
     echo $chunk;
 }
-
-// Clear KV cache
-$ctx->clearCache();
-
-// Free resources
-$ctx->free();
 ```
 
-### SamplerParams
+## Embeddings (RAG-ready)
 
 ```php
-// Default parameters
-$params = new SamplerParams();
+use Mullama\EmbeddingGenerator;
 
-// Custom parameters
-$params = new SamplerParams([
-    'temperature' => 0.8,
-    'topK' => 40,
-    'topP' => 0.95,
-    'minP' => 0.05,
-    'typicalP' => 1.0,
-    'penaltyRepeat' => 1.1,
-    'penaltyFreq' => 0.0,
-    'penaltyPresent' => 0.0,
-    'penaltyLastN' => 64,
-    'seed' => 0,
-]);
+$gen = new EmbeddingGenerator($model, 512, true);
 
-// Preset configurations
-$greedy = SamplerParams::greedy();    // Deterministic output
-$creative = SamplerParams::creative(); // High randomness
-$precise = SamplerParams::precise();   // Low randomness
-```
+$a = $gen->embed('How do I cook pasta?');
+$b = $gen->embed("What's the best way to boil noodles?");
+echo EmbeddingGenerator::cosineSimilarity($a, $b);  // ≈ 0.9
 
-### EmbeddingGenerator
+$vectors = $gen->embedBatch(['doc 1', 'doc 2', 'doc 3']);
 
-```php
-// Create embedding generator
-$gen = new EmbeddingGenerator($model, 512, true);  // nCtx, normalize
-
-// Generate embeddings
-$embedding = $gen->embed("Hello, world!");
-
-// Batch embedding
-$embeddings = $gen->embedBatch(["Hello", "World", "Test"]);
-
-// Get embedding dimension
-$dim = $gen->nEmbd();
-
-// Compute cosine similarity (static method)
-$similarity = EmbeddingGenerator::cosineSimilarity($vec1, $vec2);
-
-// Free resources
 $gen->free();
 ```
 
-## Sampler Presets
+## Sampler presets
 
-| Preset | Temperature | Top-K | Top-P | Use Case |
-|--------|-------------|-------|-------|----------|
+```php
+$greedy   = SamplerParams::greedy();    // deterministic
+$precise  = SamplerParams::precise();   // low randomness, factual
+$creative = SamplerParams::creative();  // high randomness
+
+echo $ctx->generate('Tell me a fact about France.', 100, $greedy);
+```
+
+| Preset | Temperature | Top-K | Top-P | Use case |
+|---|---|---|---|---|
 | `greedy()` | 0.0 | 1 | 1.0 | Deterministic, factual responses |
 | `precise()` | 0.3 | 20 | 0.8 | Focused, consistent output |
-| `default` | 0.8 | 40 | 0.95 | Balanced creativity |
-| `creative()` | 1.2 | 100 | 0.95 | Creative writing, brainstorming |
+| default | 0.8 | 40 | 0.95 | Balanced |
+| `creative()` | 1.2 | 100 | 0.95 | Creative writing |
 
-## Error Handling
+## Laravel / Symfony
 
-All methods throw `RuntimeException` on errors:
+Wire the model as a singleton in your service container so it loads once per worker:
+
+```php
+// Laravel: AppServiceProvider::register()
+$this->app->singleton(\Mullama\Model::class, function () {
+    \Mullama\Mullama::initialize();
+    return \Mullama\Model::load(storage_path('models/llama3.2-1b.gguf'), [
+        'nGpuLayers' => env('MULLAMA_GPU_LAYERS', 32),
+    ]);
+});
+```
+
+A `Context` is cheap to create per request; the heavy lifting is in `Model::load()`, which you do once.
+
+See the [Laravel recipe](https://docs.cognisoc.com/mullama/recipes/laravel/) for a full chat-endpoint walkthrough.
+
+## Supported models
+
+Any GGUF file works. Common picks:
+
+- **Llama 3.2** — 1B, 3B Instruct
+- **Llama 3.1** — 8B, 70B
+- **Qwen 2.5** — 0.5B – 72B, Coder variants
+- **DeepSeek R1** — distilled 1.5B / 7B / 14B / 32B (reasoning)
+- **Mistral / Mixtral / Codestral**
+- **Phi 3 / 3.5** — mini, medium
+- **Gemma 2** — 2B, 9B, 27B
+- **Vision** — LLaVA 1.5, Moondream
+- **Embeddings** — `nomic-embed`, `bge:small`, `bge:large`
+
+## API reference
+
+### `Mullama` (static utilities)
+
+```php
+Mullama::initialize();
+Mullama::shutdown();
+Mullama::version();           // e.g. "0.3.1"
+Mullama::systemInfo();
+Mullama::supportsGpuOffload();
+Mullama::maxDevices();
+```
+
+### `Model`
+
+```php
+$model = Model::load('./model.gguf', [
+    'nGpuLayers' => 32,
+    'useMmap'    => true,
+    'useMlock'   => false,
+    'vocabOnly'  => false,
+]);
+
+$model->nCtxTrain();   $model->nEmbd();    $model->nVocab();
+$model->nLayer();      $model->nHead();
+$model->size();        $model->nParams();  $model->description();
+$model->tokenBos();    $model->tokenEos();
+$model->tokenIsEog($token);
+$tokens = $model->tokenize('Hello, world!', true, false);
+$text   = $model->detokenize($tokens);
+
+$model->free();
+```
+
+### `Context`
+
+```php
+$ctx = new Context($model, [
+    'nCtx'       => 2048,
+    'nBatch'     => 512,
+    'nThreads'   => 4,
+    'embeddings' => false,
+]);
+
+$text   = $ctx->generate('Hello', 100, $params);
+$text   = $ctx->generateFromTokens($tokens, 100, $params);
+$chunks = $ctx->generateStream('Hello', 100, $params);  // iterable
+$ctx->clearCache();
+$ctx->free();
+```
+
+### `SamplerParams`
+
+```php
+$params = new SamplerParams([
+    'temperature'    => 0.8,
+    'topK'           => 40,
+    'topP'           => 0.95,
+    'minP'           => 0.05,
+    'typicalP'       => 1.0,
+    'penaltyRepeat'  => 1.1,
+    'penaltyFreq'    => 0.0,
+    'penaltyPresent' => 0.0,
+    'penaltyLastN'   => 64,
+    'seed'           => 0,
+]);
+
+SamplerParams::greedy();
+SamplerParams::creative();
+SamplerParams::precise();
+```
+
+### `EmbeddingGenerator`
+
+```php
+$gen = new EmbeddingGenerator($model, 512, true);
+$vector  = $gen->embed('Hello, world!');
+$vectors = $gen->embedBatch(['a', 'b', 'c']);
+$dim     = $gen->nEmbd();
+EmbeddingGenerator::cosineSimilarity($v1, $v2);
+$gen->free();
+```
+
+## Error handling
+
+All methods throw `RuntimeException` on failure:
 
 ```php
 try {
     $model = Model::load('./nonexistent.gguf');
-} catch (RuntimeException $e) {
-    echo "Error: " . $e->getMessage();
+} catch (\RuntimeException $e) {
+    error_log("Mullama: " . $e->getMessage());
 }
 ```
 
-## Configuration
+## FAQ
 
-### Library Path
+### Is Mullama for PHP production ready?
 
-Set the `MULLAMA_LIB_PATH` environment variable to specify the library location:
+The PHP binding is the youngest of the official bindings — Rust/Python/Node/Go are 0.3.x stable. The PHP layer is functional but expect more breaking changes through 0.3 minor versions. The underlying FFI library is the same one driving the others.
+
+### Why PHP FFI instead of a PHP extension?
+
+FFI lets us ship one shared library that every binding consumes; no per-language native extension to compile. Trade-off: slightly more startup overhead than a native ext (FFI has to declare the C ABI on first load), but well-amortised for any LLM call.
+
+### Does it work with Laravel Octane / Swoole / RoadRunner?
+
+Yes. With long-lived workers, load `Mullama::initialize()` and `Model::load(...)` once at worker boot. `Model` is safe to share across requests on the same worker; create a fresh `Context` per request.
+
+### Does it work with PHP-FPM?
+
+Yes, but every FPM worker pays the model-load cost on cold start. For a 1B model that's ~200ms; for 70B it's measured in seconds. Octane / Swoole / RoadRunner avoid this by keeping the worker warm.
+
+### Does Mullama work with NVIDIA GPUs from PHP?
+
+Yes — point `MULLAMA_LIB_PATH` at the CUDA variant of the FFI library (`mullama-ffi-<version>-x86_64-unknown-linux-gnu-cuda.tar.gz` from a GitHub release).
+
+### Where do I report bugs?
+
+[GitHub Issues](https://github.com/cognisoc/mullama/issues). For usage questions, [Discussions](https://github.com/cognisoc/mullama/discussions).
+
+## Other language bindings
+
+- [Rust core (`mullama` on crates.io)](https://crates.io/crates/mullama)
+- [Python (`mullama` on PyPI)](https://pypi.org/project/mullama/) · [README](../python/README.md)
+- [Node.js / TypeScript (`mullama` on npm)](https://www.npmjs.com/package/mullama) · [README](../node/README.md)
+- [Go (`github.com/cognisoc/mullama` on pkg.go.dev)](https://pkg.go.dev/github.com/cognisoc/mullama) · [README](../go/README.md)
+- [C/C++ (FFI library)](../ffi/README.md)
+
+## Documentation
+
+Full PHP docs at **[docs.cognisoc.com/mullama/bindings/php](https://docs.cognisoc.com/mullama/bindings/php/)**.
+
+## Building the FFI library
 
 ```bash
-export MULLAMA_LIB_PATH=/path/to/libmullama_ffi.so
-```
-
-Or specify programmatically:
-
-```php
-putenv('MULLAMA_LIB_PATH=/path/to/libmullama_ffi.so');
-```
-
-### Header Path
-
-Set the `MULLAMA_HEADER_PATH` environment variable for the C header:
-
-```bash
-export MULLAMA_HEADER_PATH=/path/to/mullama.h
+cd bindings/ffi
+cargo build --release
+# Library at target/release/libmullama_ffi.{so,dylib} or target/release/mullama_ffi.dll
 ```
 
 ## Testing
 
 ```bash
-# Run tests
 composer test
-
-# With a model file
 MULLAMA_TEST_MODEL=./model.gguf composer test
 ```
 
-## Building the FFI Library
-
-```bash
-# From the repository root
-cd bindings/ffi
-cargo build --release
-
-# The library will be at target/release/libmullama_ffi.so (Linux)
-# or target/release/libmullama_ffi.dylib (macOS)
-# or target/release/mullama_ffi.dll (Windows)
-```
-
-## Platform Support
-
-| Platform | Library Name |
-|----------|-------------|
-| Linux | `libmullama_ffi.so` |
-| macOS | `libmullama_ffi.dylib` |
-| Windows | `mullama_ffi.dll` |
-
 ## License
 
-MIT License - see LICENSE file for details.
+MIT OR Apache-2.0
