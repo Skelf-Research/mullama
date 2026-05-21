@@ -1,0 +1,749 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: build everything but skip all publish steps'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: mullama
+
+jobs:
+  # ============================================================
+  # Validate tag + workspace versions, derive outputs
+  # ============================================================
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      is_prerelease: ${{ steps.derive.outputs.is_prerelease }}
+      should_publish: ${{ steps.derive.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version and publish gate
+        id: derive
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            REF="${GITHUB_REF#refs/tags/}"
+            if [[ ! "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+              echo "::error::Tag '$REF' must match v<major>.<minor>.<patch>[-<prerelease>]"
+              exit 1
+            fi
+            VERSION="${REF#v}"
+            SHOULD_PUBLISH=true
+          else
+            VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+            SHOULD_PUBLISH=$([ "${{ inputs.dry_run }}" = "false" ] && echo true || echo false)
+          fi
+          IS_PRERELEASE=$([[ "$VERSION" == *-* ]] && echo true || echo false)
+          {
+            echo "version=$VERSION"
+            echo "is_prerelease=$IS_PRERELEASE"
+            echo "should_publish=$SHOULD_PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION (prerelease=$IS_PRERELEASE, publish=$SHOULD_PUBLISH)"
+
+      - name: Check version consistency across workspace
+        run: |
+          set -euo pipefail
+          V="${{ steps.derive.outputs.version }}"
+          check() {
+            local file="$1" actual="$2"
+            if [ "$actual" != "$V" ]; then
+              echo "::error file=$file::version mismatch: $file has '$actual', expected '$V'"
+              exit 1
+            fi
+            echo "  ok: $file = $actual"
+          }
+          check Cargo.toml "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          check bindings/ffi/Cargo.toml "$(grep -m1 '^version' bindings/ffi/Cargo.toml | cut -d'"' -f2)"
+          check bindings/python/Cargo.toml "$(grep -m1 '^version' bindings/python/Cargo.toml | cut -d'"' -f2)"
+          check bindings/python/pyproject.toml "$(grep -m1 '^version' bindings/python/pyproject.toml | cut -d'"' -f2)"
+          check bindings/node/Cargo.toml "$(grep -m1 '^version' bindings/node/Cargo.toml | cut -d'"' -f2)"
+          check bindings/node/package.json "$(python3 -c 'import json; print(json.load(open("bindings/node/package.json"))["version"])')"
+
+  # ============================================================
+  # CLI binaries (Homebrew / cargo-dist artifact naming)
+  # ============================================================
+  build-cli:
+    name: CLI - ${{ matrix.target_triple }}${{ matrix.suffix }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_triple: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            features: daemon,embedded-ui
+            suffix: ""
+            archive: tar.gz
+          - target_triple: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            features: daemon,embedded-ui,cuda
+            suffix: "-cuda"
+            archive: tar.gz
+            cuda: true
+          - target_triple: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            features: daemon,embedded-ui
+            suffix: ""
+            archive: tar.gz
+          - target_triple: x86_64-apple-darwin
+            os: macos-15-intel
+            features: daemon,embedded-ui
+            suffix: ""
+            archive: tar.gz
+          - target_triple: aarch64-apple-darwin
+            os: macos-14
+            features: daemon,embedded-ui
+            suffix: ""
+            archive: tar.gz
+            metal: true
+          - target_triple: x86_64-pc-windows-msvc
+            os: windows-latest
+            features: daemon,embedded-ui
+            suffix: ""
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install CUDA toolkit
+        if: matrix.cuda == true
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+
+      - name: Set CUDA env
+        if: matrix.cuda == true
+        run: echo "LLAMA_CUDA=1" >> "$GITHUB_ENV"
+
+      - name: Set Metal env
+        if: matrix.metal == true
+        run: echo "LLAMA_METAL=1" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target_triple }}${{ matrix.suffix }}
+
+      - name: Build Web UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build release binary
+        run: cargo build --release --features "${{ matrix.features }}" --target ${{ matrix.target_triple }}
+
+      - name: Package archive (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="mullama-${{ needs.prepare.outputs.version }}-${{ matrix.target_triple }}${{ matrix.suffix }}"
+          mkdir -p "dist/$STAGE"
+          cp "target/${{ matrix.target_triple }}/release/${BINARY_NAME}" "dist/$STAGE/"
+          cp README.md LICENSE CHANGELOG.md "dist/$STAGE/" 2>/dev/null || true
+          chmod +x "dist/$STAGE/${BINARY_NAME}"
+          (cd dist && tar -czvf "$STAGE.tar.gz" "$STAGE")
+          (cd dist && shasum -a 256 "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256")
+
+      - name: Package archive (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $stage = "mullama-${{ needs.prepare.outputs.version }}-${{ matrix.target_triple }}${{ matrix.suffix }}"
+          New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
+          Copy-Item "target/${{ matrix.target_triple }}/release/$env:BINARY_NAME.exe" "dist/$stage/"
+          Copy-Item README.md, LICENSE, CHANGELOG.md "dist/$stage/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/$stage" -DestinationPath "dist/$stage.zip" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/$stage.zip").Hash.ToLower()
+          "$hash  $stage.zip" | Out-File -Encoding ascii "dist/$stage.zip.sha256"
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target_triple }}${{ matrix.suffix }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+
+  # ============================================================
+  # FFI shared libraries (same 6-target matrix)
+  # ============================================================
+  build-ffi:
+    name: FFI - ${{ matrix.target_triple }}${{ matrix.suffix }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_triple: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: libmullama_ffi.so
+            suffix: ""
+          - target_triple: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: libmullama_ffi.so
+            suffix: "-cuda"
+            cuda: true
+          - target_triple: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            artifact: libmullama_ffi.so
+            suffix: ""
+          - target_triple: x86_64-apple-darwin
+            os: macos-15-intel
+            artifact: libmullama_ffi.dylib
+            suffix: ""
+          - target_triple: aarch64-apple-darwin
+            os: macos-14
+            artifact: libmullama_ffi.dylib
+            suffix: ""
+            metal: true
+          - target_triple: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: mullama_ffi.dll
+            suffix: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - name: Install CUDA toolkit
+        if: matrix.cuda == true
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+
+      - name: Set CUDA env
+        if: matrix.cuda == true
+        run: echo "LLAMA_CUDA=1" >> "$GITHUB_ENV"
+
+      - name: Set Metal env
+        if: matrix.metal == true
+        run: echo "LLAMA_METAL=1" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ffi-${{ matrix.target_triple }}${{ matrix.suffix }}
+
+      - name: Build FFI library
+        run: cargo build --release -p mullama-ffi --target ${{ matrix.target_triple }}
+
+      - name: Package FFI archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="mullama-ffi-${{ needs.prepare.outputs.version }}-${{ matrix.target_triple }}${{ matrix.suffix }}"
+          mkdir -p "dist/$STAGE/lib" "dist/$STAGE/include"
+          cp "target/${{ matrix.target_triple }}/release/${{ matrix.artifact }}" "dist/$STAGE/lib/"
+          cp bindings/ffi/include/mullama.h "dist/$STAGE/include/" 2>/dev/null || true
+          (cd dist && tar -czvf "$STAGE.tar.gz" "$STAGE")
+          (cd dist && shasum -a 256 "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256")
+
+      - name: Package FFI archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "mullama-ffi-${{ needs.prepare.outputs.version }}-${{ matrix.target_triple }}${{ matrix.suffix }}"
+          New-Item -ItemType Directory -Force -Path "dist/$stage/lib", "dist/$stage/include" | Out-Null
+          Copy-Item "target/${{ matrix.target_triple }}/release/${{ matrix.artifact }}" "dist/$stage/lib/"
+          Copy-Item bindings/ffi/include/mullama.h "dist/$stage/include/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/$stage" -DestinationPath "dist/$stage.zip" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/$stage.zip").Hash.ToLower()
+          "$hash  $stage.zip" | Out-File -Encoding ascii "dist/$stage.zip.sha256"
+
+      - name: Upload FFI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.target_triple }}${{ matrix.suffix }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+
+  # ============================================================
+  # Python wheels via maturin
+  # ============================================================
+  build-python-wheels:
+    name: Python - ${{ matrix.os }}/${{ matrix.target }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: '2_28'
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: '2_28'
+          - os: macos-15-intel
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: bindings/python/dist/*.whl
+
+  # ============================================================
+  # Node.js native modules via napi
+  # ============================================================
+  build-node-modules:
+    name: Node - ${{ matrix.node_arch }}
+    needs: [prepare]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            node_arch: linux-x64-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            node_arch: linux-arm64-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            node_arch: darwin-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            node_arch: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_arch: win32-x64-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install deps
+        working-directory: bindings/node
+        run: npm ci || npm install
+
+      - name: Build native module
+        working-directory: bindings/node
+        run: npm run build -- --target ${{ matrix.target }}
+
+      - name: Upload node module
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.node_arch }}
+          path: bindings/node/*.node
+
+  # ============================================================
+  # Docker images → GHCR (multi-arch)
+  # ============================================================
+  build-docker:
+    name: Docker images
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    environment: ghcr
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a  # v4.0.0
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+
+      - name: Login to GHCR
+        if: needs.prepare.outputs.should_publish == 'true'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute lowercase image name
+        id: img
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Metadata (CPU image)
+        id: meta-cpu
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
+        with:
+          images: ghcr.io/${{ steps.img.outputs.name }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.prepare.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_prerelease == 'false' }}
+            type=sha
+
+      - name: Build & push CPU image (linux/amd64, linux/arm64)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.prepare.outputs.should_publish == 'true' }}
+          tags: ${{ steps.meta-cpu.outputs.tags }}
+          labels: ${{ steps.meta-cpu.outputs.labels }}
+          cache-from: type=gha,scope=cpu
+          cache-to: type=gha,mode=max,scope=cpu
+
+      - name: Metadata (CUDA image)
+        id: meta-cuda
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
+        with:
+          images: ghcr.io/${{ steps.img.outputs.name }}
+          flavor: |
+            latest=false
+            suffix=-cuda,onlatest=true
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.prepare.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_prerelease == 'false' }}
+
+      - name: Build & push CUDA image (linux/amd64)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          file: Dockerfile.cuda
+          platforms: linux/amd64
+          push: ${{ needs.prepare.outputs.should_publish == 'true' }}
+          tags: ${{ steps.meta-cuda.outputs.tags }}
+          labels: ${{ steps.meta-cuda.outputs.labels }}
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,mode=max,scope=cuda
+
+  # ============================================================
+  # Publish: crates.io (OIDC trusted publishing)
+  # ============================================================
+  publish-crate:
+    name: Publish to crates.io
+    needs: [prepare, build-cli, build-ffi]
+    if: needs.prepare.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate to crates.io (OIDC)
+        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe  # v1.0.4
+        id: crates-auth
+
+      - name: cargo publish (dry-run)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: cargo publish --dry-run
+
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: cargo publish
+
+  # ============================================================
+  # Publish: PyPI (OIDC trusted publishing)
+  # ============================================================
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [prepare, build-python-wheels]
+    if: needs.prepare.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
+        with:
+          packages-dir: dist/
+
+  # ============================================================
+  # Publish: npm (OIDC trusted publishing + provenance)
+  # ============================================================
+  publish-npm:
+    name: Publish to npm
+    needs: [prepare, build-node-modules]
+    if: needs.prepare.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Ensure npm CLI supports OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Download native modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: bindings/node/artifacts
+
+      - name: Stage native modules into platform dirs
+        working-directory: bindings/node
+        run: |
+          set -euo pipefail
+          mkdir -p npm
+          for dir in artifacts/node-*/; do
+            arch=$(basename "$dir" | sed 's/^node-//')
+            mkdir -p "npm/${arch}"
+            cp "$dir"*.node "npm/${arch}/" 2>/dev/null || true
+          done
+          ls -laR npm/
+
+      - name: npm install (without lifecycle scripts)
+        working-directory: bindings/node
+        run: npm ci --ignore-scripts || npm install --ignore-scripts
+
+      - name: npm publish (OIDC + provenance)
+        working-directory: bindings/node
+        run: npm publish --provenance --access public
+
+  # ============================================================
+  # GitHub Release: CLI + FFI archives, checksums
+  # ============================================================
+  github-release:
+    name: GitHub Release
+    needs: [prepare, build-cli, build-ffi]
+    if: needs.prepare.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: staging/cli
+          merge-multiple: true
+
+      - name: Download FFI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-*
+          path: staging/ffi
+          merge-multiple: true
+
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find staging \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Build aggregate SHA256SUMS.txt
+        working-directory: release
+        run: |
+          set -euo pipefail
+          : > SHA256SUMS.txt
+          for f in *.tar.gz *.zip; do
+            [ -f "$f" ] || continue
+            shasum -a 256 "$f" >> SHA256SUMS.txt
+          done
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: Mullama v${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: release/*
+          body: |
+            ## Mullama v${{ needs.prepare.outputs.version }}
+
+            ### Install
+
+            **Linux/macOS (one-liner):**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | sh
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            iwr https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.ps1 -useb | iex
+            ```
+
+            **crates.io:**
+            ```bash
+            cargo install mullama --version ${{ needs.prepare.outputs.version }} --features daemon
+            ```
+
+            **PyPI:**
+            ```bash
+            pip install mullama==${{ needs.prepare.outputs.version }}
+            ```
+
+            **npm:**
+            ```bash
+            npm install mullama@${{ needs.prepare.outputs.version }}
+            ```
+
+            **Docker (GHCR):**
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }}
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }}-cuda  # CUDA variant
+            ```
+
+            ### Platform binaries
+
+            | Platform | Archive |
+            |---|---|
+            | Linux x86_64 | `mullama-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux x86_64 + CUDA | `mullama-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu-cuda.tar.gz` |
+            | Linux aarch64 | `mullama-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | macOS x86_64 | `mullama-${{ needs.prepare.outputs.version }}-x86_64-apple-darwin.tar.gz` |
+            | macOS aarch64 (Metal) | `mullama-${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.tar.gz` |
+            | Windows x86_64 | `mullama-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+
+            Verify downloads against `SHA256SUMS.txt`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

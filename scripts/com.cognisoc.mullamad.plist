@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Mullama Daemon LaunchAgent
-     Install to: ~/Library/LaunchAgents/com.neul.mullamad.plist
-     Load with: launchctl load ~/Library/LaunchAgents/com.neul.mullamad.plist
-     Unload with: launchctl unload ~/Library/LaunchAgents/com.neul.mullamad.plist
+     Install to: ~/Library/LaunchAgents/com.cognisoc.mullamad.plist
+     Load with: launchctl load ~/Library/LaunchAgents/com.cognisoc.mullamad.plist
+     Unload with: launchctl unload ~/Library/LaunchAgents/com.cognisoc.mullamad.plist
 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.neul.mullamad</string>
+    <string>com.cognisoc.mullamad</string>
 
     <key>ProgramArguments</key>
     <array>

@@ -14,12 +14,12 @@ function Write-Success { Write-Host "[OK] $args" -ForegroundColor Green }
 function Write-Warn { Write-Host "[WARN] $args" -ForegroundColor Yellow }
 function Write-Err { Write-Host "[ERROR] $args" -ForegroundColor Red; exit 1 }
 
-# Detect architecture
-function Get-Platform {
+# Detect architecture, emit a Rust target triple
+function Get-Target {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     switch ($arch) {
-        "X64" { return "win32-x64" }
-        "Arm64" { return "win32-arm64" }
+        "X64"   { return "x86_64-pc-windows-msvc" }
+        "Arm64" { return "aarch64-pc-windows-msvc" }
         default { Write-Err "Unsupported architecture: $arch" }
     }
 }
@@ -39,40 +39,43 @@ function Get-LatestVersion {
 
 # Download and extract
 function Install-Mullama {
-    param($Version, $Platform)
+    param($Version, $Target)
 
-    $filename = "$BinaryName-$Platform.zip"
+    $stage = "$BinaryName-$Version-$Target"
+    $filename = "$stage.zip"
     $downloadUrl = "https://github.com/$Repo/releases/download/v$Version/$filename"
     $tempDir = Join-Path $env:TEMP "mullama-install-$(Get-Random)"
 
     try {
-        # Create temp directory
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-        # Download
         Write-Info "Downloading $filename..."
         $zipPath = Join-Path $tempDir $filename
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
 
         Write-Success "Downloaded successfully"
 
-        # Extract
         Write-Info "Extracting..."
         Expand-Archive -Path $zipPath -DestinationPath $tempDir -Force
 
-        # Create install directory
         if (-not (Test-Path $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
 
-        # Install
+        # Archives stage the binary under <stage>/<binary>.exe
         Write-Info "Installing to $InstallDir..."
-        $exePath = Join-Path $tempDir "$BinaryName.exe"
-        Copy-Item -Path $exePath -Destination $InstallDir -Force
+        $stagedExe = Join-Path (Join-Path $tempDir $stage) "$BinaryName.exe"
+        $rootExe   = Join-Path $tempDir "$BinaryName.exe"
+        if (Test-Path $stagedExe) {
+            Copy-Item -Path $stagedExe -Destination $InstallDir -Force
+        } elseif (Test-Path $rootExe) {
+            Copy-Item -Path $rootExe -Destination $InstallDir -Force
+        } else {
+            Write-Err "Binary not found in archive (looked in $stage\ and root)"
+        }
 
         Write-Success "Installed $BinaryName to $InstallDir"
     } finally {
-        # Cleanup
         if (Test-Path $tempDir) {
             Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -139,11 +142,11 @@ function Main {
     Write-Host "================================" -ForegroundColor Cyan
     Write-Host ""
 
-    $platform = Get-Platform
-    Write-Info "Detected platform: $platform"
+    $target = Get-Target
+    Write-Info "Detected target: $target"
 
     $version = Get-LatestVersion
-    Install-Mullama -Version $version -Platform $platform
+    Install-Mullama -Version $version -Target $target
     Update-Path
 
     if (Test-Installation) {

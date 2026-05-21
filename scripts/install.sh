@@ -34,59 +34,45 @@ error() {
     exit 1
 }
 
-# Detect OS and architecture
+# Detect OS and architecture, emit a Rust target triple
 detect_platform() {
     OS="$(uname -s)"
     ARCH="$(uname -m)"
 
     case "$OS" in
-        Linux)
-            OS="linux"
-            ;;
-        Darwin)
-            OS="darwin"
-            ;;
-        *)
-            error "Unsupported operating system: $OS"
-            ;;
+        Linux)  OS_TRIPLE="unknown-linux-gnu" ;;
+        Darwin) OS_TRIPLE="apple-darwin" ;;
+        *) error "Unsupported operating system: $OS" ;;
     esac
 
     case "$ARCH" in
-        x86_64|amd64)
-            ARCH="x64"
-            ;;
-        aarch64|arm64)
-            ARCH="arm64"
-            ;;
-        *)
-            error "Unsupported architecture: $ARCH"
-            ;;
+        x86_64|amd64)   ARCH_TRIPLE="x86_64" ;;
+        aarch64|arm64)  ARCH_TRIPLE="aarch64" ;;
+        *) error "Unsupported architecture: $ARCH" ;;
     esac
 
-    PLATFORM="${OS}-${ARCH}"
-    info "Detected platform: $PLATFORM"
+    TARGET="${ARCH_TRIPLE}-${OS_TRIPLE}"
+    info "Detected target: $TARGET"
 }
 
-# Check for CUDA support on Linux
+# Check for CUDA support on Linux x86_64
 detect_gpu() {
     GPU_VARIANT=""
 
-    if [ "$OS" = "linux" ] && [ "$ARCH" = "x64" ]; then
-        if command -v nvidia-smi >/dev/null 2>&1; then
-            if nvidia-smi >/dev/null 2>&1; then
-                info "NVIDIA GPU detected"
-                printf "Would you like to install the CUDA-enabled version? [y/N] "
-                read -r response
-                case "$response" in
-                    [yY][eE][sS]|[yY])
-                        GPU_VARIANT="-cuda"
-                        info "Installing CUDA version"
-                        ;;
-                    *)
-                        info "Installing CPU version"
-                        ;;
-                esac
-            fi
+    if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
+        if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+            info "NVIDIA GPU detected"
+            printf "Would you like to install the CUDA-enabled version? [y/N] "
+            read -r response
+            case "$response" in
+                [yY][eE][sS]|[yY])
+                    GPU_VARIANT="-cuda"
+                    info "Installing CUDA version"
+                    ;;
+                *)
+                    info "Installing CPU version"
+                    ;;
+            esac
         fi
     fi
 }
@@ -110,7 +96,8 @@ get_latest_version() {
 
 # Download and install
 download_and_install() {
-    FILENAME="${BINARY_NAME}-${PLATFORM}${GPU_VARIANT}.tar.gz"
+    STAGE="${BINARY_NAME}-${VERSION}-${TARGET}${GPU_VARIANT}"
+    FILENAME="${STAGE}.tar.gz"
     DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$FILENAME"
     CHECKSUM_URL="https://github.com/$REPO/releases/download/v$VERSION/${FILENAME}.sha256"
 
@@ -153,9 +140,15 @@ download_and_install() {
     # Create install directory if it doesn't exist
     mkdir -p "$INSTALL_DIR"
 
-    # Install
+    # Install — archives stage the binary under <stage>/<binary>
     info "Installing to $INSTALL_DIR..."
-    mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/"
+    if [ -f "$TMP_DIR/$STAGE/$BINARY_NAME" ]; then
+        mv "$TMP_DIR/$STAGE/$BINARY_NAME" "$INSTALL_DIR/"
+    elif [ -f "$TMP_DIR/$BINARY_NAME" ]; then
+        mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/"
+    else
+        error "Binary not found in archive (looked in $STAGE/ and root)"
+    fi
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
     success "Installed $BINARY_NAME to $INSTALL_DIR"
