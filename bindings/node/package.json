@@ -4,10 +4,15 @@
   "description": "Local LLM inference for Node.js — run Llama, Qwen, DeepSeek, Mistral, Phi, and Gemma GGUF models with native llama.cpp performance. Drop-in alternative to node-llama-cpp and ollama.",
   "main": "index.js",
   "types": "index.d.ts",
+  "bin": {
+    "mullama": "bin/mullama.js"
+  },
   "files": [
     "index.js",
     "index.d.ts",
-    "mullama.*.node"
+    "bin/mullama.js",
+    "mullama.*.node",
+    "mullama-cli.*"
   ],
   "napi": {
     "name": "mullama",

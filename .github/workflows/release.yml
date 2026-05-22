@@ -210,6 +210,29 @@ jobs:
             dist/*.zip
             dist/*.sha256
 
+      - name: Stage raw CLI binary (Unix)
+        if: matrix.archive == 'tar.gz' && matrix.suffix == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p raw
+          cp "target/${{ matrix.target_triple }}/release/${BINARY_NAME}" "raw/${BINARY_NAME}"
+          chmod +x "raw/${BINARY_NAME}"
+
+      - name: Stage raw CLI binary (Windows)
+        if: matrix.archive == 'zip' && matrix.suffix == ''
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "raw" | Out-Null
+          Copy-Item "target/${{ matrix.target_triple }}/release/$env:BINARY_NAME.exe" "raw/$env:BINARY_NAME.exe"
+
+      - name: Upload raw CLI binary for binding bundling
+        if: matrix.suffix == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-binary-${{ matrix.target_triple }}
+          path: raw/*
+
   # ============================================================
   # FFI shared libraries (same 6-target matrix)
   # ============================================================
@@ -326,7 +349,7 @@ jobs:
   # ============================================================
   build-python-wheels:
     name: Python - ${{ matrix.os }}/${{ matrix.target }}
-    needs: [prepare]
+    needs: [prepare, build-cli]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -335,15 +358,20 @@ jobs:
           - os: ubuntu-latest
             target: x86_64
             manylinux: '2_28'
+            cli_triple: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64
             manylinux: '2_28'
+            cli_triple: aarch64-unknown-linux-gnu
           - os: macos-15-intel
             target: x86_64
+            cli_triple: x86_64-apple-darwin
           - os: macos-14
             target: aarch64
+            cli_triple: aarch64-apple-darwin
           - os: windows-latest
             target: x64
+            cli_triple: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -365,6 +393,25 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Download CLI binary for this platform
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-binary-${{ matrix.cli_triple }}
+          path: bindings/python/mullama/bin
+
+      - name: Mark CLI binary executable (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x bindings/python/mullama/bin/mullama
+          ls -la bindings/python/mullama/bin/
+
+      - name: List CLI binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-ChildItem bindings/python/mullama/bin
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -384,7 +431,7 @@ jobs:
   # ============================================================
   build-node-modules:
     name: Node - ${{ matrix.node_arch }}
-    needs: [prepare]
+    needs: [prepare, build-cli]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -436,11 +483,35 @@ jobs:
         working-directory: bindings/node
         run: npm run build -- --target ${{ matrix.target }}
 
-      - name: Upload node module
+      - name: Download CLI binary for this platform
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-binary-${{ matrix.target }}
+          path: bindings/node/_cli_raw
+
+      - name: Stage CLI binary with napi-style name (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp bindings/node/_cli_raw/mullama "bindings/node/mullama-cli.${{ matrix.node_arch }}"
+          chmod +x "bindings/node/mullama-cli.${{ matrix.node_arch }}"
+          ls -la bindings/node/mullama-cli.* bindings/node/*.node || true
+
+      - name: Stage CLI binary with napi-style name (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "bindings/node/_cli_raw/mullama.exe" "bindings/node/mullama-cli.${{ matrix.node_arch }}.exe"
+          Get-ChildItem bindings/node -Filter "mullama-cli.*"
+
+      - name: Upload node module + CLI
         uses: actions/upload-artifact@v4
         with:
           name: node-${{ matrix.node_arch }}
-          path: bindings/node/*.node
+          path: |
+            bindings/node/*.node
+            bindings/node/mullama-cli.${{ matrix.node_arch }}*
 
   # ============================================================
   # Docker images → GHCR (multi-arch)
@@ -623,7 +694,7 @@ jobs:
           pattern: node-*
           path: bindings/node/artifacts
 
-      - name: Stage native modules into platform dirs
+      - name: Stage native modules + CLI binaries
         working-directory: bindings/node
         run: |
           set -euo pipefail
@@ -631,8 +702,18 @@ jobs:
           for dir in artifacts/node-*/; do
             arch=$(basename "$dir" | sed 's/^node-//')
             mkdir -p "npm/${arch}"
+            # Per-arch staging (for any napi prepublish flow)
             cp "$dir"*.node "npm/${arch}/" 2>/dev/null || true
+            cp "$dir"mullama-cli."${arch}"* "npm/${arch}/" 2>/dev/null || true
+            # Root bundling (matches package.json `files` globs)
+            cp "$dir"*.node ./ 2>/dev/null || true
+            cp "$dir"mullama-cli."${arch}"* ./ 2>/dev/null || true
           done
+          # Make sure CLI binaries on Unix are executable
+          chmod +x mullama-cli.* 2>/dev/null || true
+          echo "--- bindings/node root:"
+          ls -la *.node mullama-cli.* 2>/dev/null || true
+          echo "--- bindings/node/npm tree:"
           ls -laR npm/
 
       - name: npm install (without lifecycle scripts)
