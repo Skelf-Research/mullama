@@ -31,7 +31,7 @@
     "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "prepublishOnly": "napi prepublish -t npm",
+    "prepublishOnly": "npx napi prepublish -t npm",
     "test": "node --test tests/",
     "universal": "napi universal",
     "version": "napi version"
