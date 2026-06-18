@@ -50,24 +50,20 @@
 
 #[cfg(feature = "web")]
 use axum::{
-    extract::{Json, State},
+    extract::Json,
     http::{header, HeaderMap, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response, Sse},
+    response::{IntoResponse, Response},
     Router,
 };
 
 #[cfg(feature = "web")]
-use tower::ServiceBuilder;
-#[cfg(feature = "web")]
 use tower_http::cors::{Any, CorsLayer};
 
-#[cfg(feature = "web")]
+#[cfg(all(feature = "web", feature = "streaming"))]
 use futures::Stream;
 #[cfg(feature = "web")]
 use std::sync::Arc;
-#[cfg(feature = "web")]
-use std::time::Duration;
 
 use crate::{MullamaError, TokenId};
 use serde::{Deserialize, Serialize};
@@ -157,8 +153,14 @@ impl AppStateBuilder {
     }
 }
 
-/// Request types for the API
+#[cfg(feature = "web")]
+impl Default for AppStateBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
+/// Request types for the API
 /// Text generation request
 #[derive(Debug, Deserialize)]
 pub struct GenerateRequest {
@@ -201,7 +203,6 @@ pub struct TokenizeRequest {
 }
 
 /// Response types for the API
-
 /// Text generation response
 #[derive(Debug, Serialize)]
 pub struct GenerateResponse {
@@ -294,8 +295,10 @@ fn default_repeat_penalty() -> f32 {
 #[cfg(feature = "web")]
 pub mod handlers {
     use super::*;
-    use axum::extract::{Request, State};
+    use axum::extract::State;
     use axum::response::Json;
+    #[cfg(feature = "streaming")]
+    use axum::response::Sse;
     use std::time::Instant;
 
     /// Generate text handler
@@ -421,7 +424,7 @@ pub mod handlers {
 
         Ok(Sse::new(sse_stream).keep_alive(
             axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(1))
+                .interval(std::time::Duration::from_secs(1))
                 .text("keep-alive-text"),
         ))
     }
@@ -480,7 +483,7 @@ pub mod handlers {
 #[cfg(feature = "web")]
 pub mod middleware {
     use super::*;
-    use axum::{http::Request, response::Response};
+    use axum::response::Response;
     use std::time::Duration;
     use tower::timeout::TimeoutLayer;
 
@@ -657,6 +660,13 @@ impl RouterBuilder {
     }
 }
 
+#[cfg(feature = "web")]
+impl Default for RouterBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Utility functions for web integration
 pub mod utils {
     use super::*;
@@ -693,16 +703,22 @@ pub mod utils {
         let auth_header = headers.get(header::AUTHORIZATION)?;
         let auth_str = auth_header.to_str().ok()?;
 
-        if auth_str.starts_with("Bearer ") {
-            Some(auth_str[7..].to_string())
-        } else {
-            None
-        }
+        auth_str
+            .strip_prefix("Bearer ")
+            .map(std::string::ToString::to_string)
     }
 
-    /// Validate API key (placeholder implementation)
+    /// Validate API key against a configured key.
+    ///
+    /// For the daemon, use `HttpAuthState` middleware instead which validates
+    /// against the configured API key. This helper is for standalone web
+    /// service usage where a specific key must be provided.
+    pub fn validate_api_key_against(api_key: &str, expected: &str) -> bool {
+        !api_key.is_empty() && api_key == expected
+    }
+
+    #[deprecated(note = "Use validate_api_key_against with an explicit expected key")]
     pub fn validate_api_key(api_key: &str) -> bool {
-        // In a real implementation, you'd check against a database or configuration
         !api_key.is_empty()
     }
 }

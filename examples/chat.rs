@@ -48,9 +48,9 @@ impl ChatSession {
         let mut ctx_params = ContextParams::default();
         ctx_params.n_ctx = 4096;
         ctx_params.n_batch = 512;
-        ctx_params.n_threads = num_cpus::get() as u32;
+        ctx_params.n_threads = num_cpus::get() as i32;
 
-        let mut context = Context::new(model.clone(), ctx_params)?;
+        let context = Context::new(model.clone(), ctx_params)?;
 
         // Set up sampling for natural conversation
         let mut sampler_params = SamplerParams::default();

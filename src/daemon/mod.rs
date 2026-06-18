@@ -40,50 +40,104 @@
 //!   -d '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}'
 //! ```
 
-mod protocol;
-mod models;
-mod server;
-mod openai;
+mod anthropic;
 mod client;
-mod tui;
+pub mod defaults;
 mod hf;
+mod models;
+pub mod ollama;
+pub mod ollama_api;
+pub mod ollama_template;
+mod openai;
+mod protocol;
+pub mod provider;
+pub mod registry;
+mod server;
+pub mod spawn;
+pub mod store;
+mod tui;
+pub mod ui;
 
 // Protocol types (IPC)
 pub use protocol::{
-    Request, Response, ErrorCode, DaemonStatus, DaemonStats,
-    ModelInfo, ModelStatus, ChatMessage, Usage, EmbeddingInput, Timings,
-    ChatCompletionResponse as IpcChatCompletionResponse,
-    CompletionResponse as IpcCompletionResponse,
-    ChatChoice as IpcChatChoice,
-    CompletionChoice as IpcCompletionChoice,
-    generate_completion_id,
+    format_size, generate_completion_id, ChatChoice as IpcChatChoice, ChatCompletionParams,
+    ChatCompletionResponse as IpcChatCompletionResponse, ChatMessage,
+    CompletionChoice as IpcCompletionChoice, CompletionParams,
+    CompletionResponse as IpcCompletionResponse, DaemonStats, DaemonStatus, EmbeddingInput,
+    ErrorCode, MessageContent, ModelDetailedStats, ModelInfo, ModelLoadParams, ModelStatus, Request, Response,
+    Usage,
 };
 
 // Model management
-pub use models::{LoadedModel, ModelLoadConfig, ModelManager, RequestGuard};
+pub use models::{
+    estimate_model_memory, LoadedModel, MemoryEstimate, ModelConfig, ModelLoadConfig, ModelManager,
+    ModelStats, RequestGuard, DEFAULT_CONTEXT_POOL_SIZE,
+};
 
 // Server
-pub use server::{Daemon, DaemonBuilder, DaemonConfig};
+pub use server::{
+    Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig,
+    ResourceConfig,
+};
+
+// Persistent store
+pub use store::{DaemonStore, StorageBackend};
+
+// Model provider trait
+pub use provider::{ModelProvider, ResolvedModelPath};
 
 // OpenAI-compatible HTTP API types
 pub use openai::{
-    create_openai_router, AppState, ApiError,
-    ChatCompletionRequest, ChatCompletionResponse,
-    CompletionRequest, CompletionResponse,
-    ChatChoice, CompletionChoice,
-    ModelsResponse, ModelObject,
-    EmbeddingsRequest, EmbeddingsResponse, EmbeddingObject,
-    ErrorResponse, ErrorDetail,
+    create_openai_router, ApiError, AppState, ChatChoice, ChatCompletionRequest,
+    ChatCompletionResponse, CompletionChoice, CompletionRequest, CompletionResponse,
+    EmbeddingObject, EmbeddingsRequest, EmbeddingsResponse, ErrorDetail, ErrorResponse,
+    ModelObject, ModelsResponse,
 };
 
 // Client
-pub use client::{DaemonClient, ChatResult, CompletionResult};
+pub use client::{ChatResult, CompletionResult, DaemonClient};
 
 // TUI
 pub use tui::TuiApp;
 
 // HuggingFace downloader
-pub use hf::{HfDownloader, HfModelSpec, HfSearchResult, GgufFileInfo, CachedModel, resolve_model_path};
+pub use hf::{
+    resolve_model_path, CachedModel, GgufFileInfo, HfDownloader, HfModelSpec, HfSearchResult,
+};
+
+// Ollama registry client
+pub use ollama::{
+    OllamaClient, OllamaManifest, OllamaModel, OllamaModelIndex, OllamaModelRef, OllamaParameters,
+};
+
+// Ollama template conversion
+pub use ollama_template::ChatTemplate;
+
+// Model registry (aliases)
+pub use registry::{
+    registry, resolve_model_name, ModelAlias, ModelRegistry, ParsedModelSpec, RegistryError,
+    ResolvedModel,
+};
+
+// Anthropic API types
+pub use anthropic::{
+    AnthropicMessage, AnthropicUsage, ContentBlock, MessageContent as AnthropicMessageContent,
+    MessagesRequest, MessagesResponse, ResponseContentBlock,
+};
+
+// Daemon spawn utilities
+pub use spawn::{
+    daemon_status, ensure_daemon_running, is_daemon_running, spawn_daemon, stop_daemon, DaemonInfo,
+    SpawnConfig, SpawnResult,
+};
+
+// Embedded Web UI
+pub use ui::{serve_ui, ui_available};
+
+// Default models
+pub use defaults::{
+    get_default, list_default_infos, list_defaults, DefaultModel, DefaultModelInfo,
+};
 
 /// Default IPC socket path
 #[cfg(unix)]

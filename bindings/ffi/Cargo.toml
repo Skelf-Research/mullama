@@ -1,0 +1,33 @@
+[package]
+name = "mullama-ffi"
+version = "0.3.1"
+edition = "2021"
+description = "C ABI FFI layer for Mullama - enables bindings for Node.js, Python, PHP, Go"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cognisoc/mullama"
+homepage = "https://mullama.cognisoc.com"
+documentation = "https://docs.cognisoc.com/mullama"
+authors = ["Cognisoc <support@cognisoc.com>"]
+readme = "README.md"
+keywords = ["llm", "llama-cpp", "gguf", "c-abi", "ffi"]
+categories = ["api-bindings", "external-ffi-bindings"]
+
+[lib]
+name = "mullama_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+mullama = { path = "../..", features = ["use-mimalloc"] }
+libc = "0.2"
+num_cpus = "1.0"
+
+[build-dependencies]
+cbindgen = "0.26"
+
+[features]
+default = []
+cuda = []
+metal = []
+
+[package.metadata.docs.rs]
+all-features = true

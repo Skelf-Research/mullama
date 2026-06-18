@@ -6,12 +6,8 @@
 //! - Batch processing efficiency
 //! - Memory usage optimization
 
-use mullama::{
-    batch::Batch,
-    sampling::{Sampler, SamplerChain, SamplerParams},
-    sys, Context, ContextParams, Model, ModelParams,
-};
-use std::{sync::Arc, time::Instant};
+use mullama::sys;
+use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" Mullama Performance Benchmarks");

@@ -11,14 +11,9 @@
 
 use mullama::config::presets;
 use mullama::prelude::*;
-use std::sync::Arc;
 
-#[cfg(feature = "async")]
-use futures::StreamExt;
-#[cfg(feature = "async")]
-use mullama::{create_router, AppState, AsyncModel, StreamConfig, TokenStream};
-#[cfg(feature = "async")]
-use tokio::net::TcpListener;
+#[cfg(feature = "streaming")]
+use mullama::StreamConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), MullamaError> {
@@ -104,7 +99,7 @@ async fn showcase_builder_patterns() -> Result<(), MullamaError> {
     // Model builder with fluent API
     #[cfg(feature = "async")]
     {
-        let model_builder = ModelBuilder::new()
+        let _model_builder = ModelBuilder::new()
             .path("path/to/model.gguf")
             .gpu_layers(32)
             .context_size(4096)
@@ -124,7 +119,7 @@ async fn showcase_builder_patterns() -> Result<(), MullamaError> {
         println!("🏗️  Context builder configured for performance");
 
         // Sampler builder with penalty configuration
-        let sampler_builder = SamplerBuilder::new()
+        let _sampler_builder = SamplerBuilder::new()
             .temperature(0.8)
             .top_k(50)
             .nucleus(0.95)
@@ -238,42 +233,5 @@ async fn showcase_web_integration() -> Result<(), MullamaError> {
     //     .map_err(|e| MullamaError::ConfigError(format!("Server error: {}", e)))?;
 
     println!("✅ Web integration demonstrated (server not started)");
-    Ok(())
-}
-
-/// Example of complete integration workflow
-#[cfg(all(feature = "async", feature = "streaming", feature = "web"))]
-async fn complete_workflow_example() -> Result<(), MullamaError> {
-    println!("\n🔄 Complete Integration Workflow");
-    println!("-------------------------------");
-
-    // 1. Load configuration from file or environment
-    let mut config = MullamaConfig::from_env().unwrap_or_default();
-    config.merge(presets::chatbot());
-
-    // 2. Build model with fluent API
-    let model = ModelBuilder::new()
-        .path(&config.model.path)
-        .gpu_layers(config.model.gpu_layers)
-        .context_size(config.model.context_size)
-        .build_async()
-        .await?;
-
-    // 3. Create web service
-    let app_state = AppState {
-        model,
-        default_config: config,
-        metrics: Arc::new(tokio::sync::RwLock::new(ApiMetrics::default())),
-    };
-
-    let app = create_router(app_state);
-
-    // 4. Start server (in real application)
-    println!("🌟 Complete workflow ready!");
-    println!("   - Configuration loaded and validated");
-    println!("   - Model built with async support");
-    println!("   - Web service configured with streaming");
-    println!("   - Ready to serve requests!");
-
     Ok(())
 }

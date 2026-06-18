@@ -88,13 +88,21 @@
 //! # }
 //! ```
 
+#[cfg(feature = "use-mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+pub mod arena;
 pub mod batch;
+pub mod capabilities;
 pub mod context;
 pub mod embedding;
 pub mod error;
 pub mod memory;
+pub mod memory_monitor;
 pub mod model;
 pub mod sampling;
+pub mod sampling_simd;
 pub mod session;
 pub mod sys;
 pub mod token;
@@ -105,8 +113,12 @@ pub mod vocab;
 pub mod async_support;
 pub mod builder;
 pub mod config;
+#[cfg(feature = "daemon")]
+pub mod daemon;
 #[cfg(feature = "format-conversion")]
 pub mod format_conversion;
+#[cfg(feature = "late-interaction")]
+pub mod late_interaction;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
 #[cfg(feature = "parallel")]
@@ -121,16 +133,31 @@ pub mod tokio_integration;
 pub mod web;
 #[cfg(feature = "websockets")]
 pub mod websockets;
-#[cfg(feature = "daemon")]
-pub mod daemon;
 
 // Advanced features
+pub mod gpu_advanced;
 pub mod grammar;
-pub mod huggingface;
+pub mod hf;
 pub mod lora;
+pub mod modelfile;
+pub mod presets;
+pub mod speculative;
+pub mod structured_output;
 
 // Export Hugging Face types at crate root for convenience
-pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
+pub use hf::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, QuantizationType};
+
+// Export Modelfile types at crate root
+pub use modelfile::{
+    find_modelfile, Message as ModelfileMessage, Modelfile, ModelfileError, ModelfileParser,
+    ParameterValue,
+};
+
+// Export structured output types
+pub use structured_output::{JsonSchemaConverter, StructuredOutputError};
+
+// Export presets
+pub use presets::HardwarePreset;
 
 // ==================== System-level Functions ====================
 
@@ -141,15 +168,6 @@ pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, Quant
 pub fn backend_init() {
     unsafe {
         sys::llama_backend_init();
-        // In this llama.cpp version `llama_backend_init()` no longer loads
-        // dynamic backends itself. We must load them explicitly: this scans
-        // the executable directory (+ GGML_BACKEND_PATH) for
-        // libggml-cpu-<variant>.so and registers the best one for the host
-        // CPU (e.g. alderlake). With the static build (no GGML_BACKEND_DL)
-        // the CPU backend is registered at static-init time, so this is a
-        // harmless no-op there. Without it the shared-backend build fails
-        // model load with "no backends are loaded".
-        sys::ggml_backend_load_all();
     }
 }
 
@@ -249,11 +267,10 @@ pub type LogCallback = extern "C" fn(
 /// Set custom log callback
 ///
 /// # Safety
-/// The callback must remain valid for the lifetime of the program.
-pub fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
-    unsafe {
-        sys::llama_log_set(Some(callback), user_data);
-    }
+/// The caller must ensure that `user_data` points to valid memory that will remain
+/// valid for the lifetime of this callback, or is null.
+pub unsafe fn log_set(callback: LogCallback, user_data: *mut std::os::raw::c_void) {
+    sys::llama_log_set(Some(callback), user_data);
 }
 
 // ==================== Batch Helpers ====================
@@ -343,18 +360,36 @@ pub mod control_vector;
 pub mod quantization;
 
 // Re-export the public API
+pub use arena::{
+    with_generation_arena, with_generation_arena_mut, ArenaCandidates, ArenaTokenCandidate,
+    GenerationArena,
+};
 pub use batch::Batch;
-pub use context::{Context, ContextParams};
+pub use capabilities::{
+    detect_capabilities, registry, Capabilities, CapabilityRegistry, ModelFamilyConfig,
+    ThinkingTokens, TokenConfig, ToolFormat,
+};
+pub use context::{Context, ContextParams, KvCacheType};
 pub use embedding::{EmbeddingUtil, Embeddings};
 pub use error::MullamaError;
-pub use memory::MemoryManager;
+pub use memory::{
+    ConstrainedMemoryConfig, MemoryManager, recommend_constrained_config,
+};
+pub use memory_monitor::{
+    MemoryConfig, MemoryMonitor, MemoryPressure, MemoryStats, RecoveryManager, RecoveryResult,
+    RecoveryStrategy,
+};
 pub use model::{Model, ModelKvOverride, ModelKvOverrideValue, ModelParams, Token};
 pub use sampling::{
-    LogitBias, Sampler, SamplerChain, SamplerChainParams, SamplerParams, SamplerPerfData,
-    TokenData, TokenDataArray,
+    AlignedTokenData, AlignedTokenDataArray, LogitBias, Sampler, SamplerChain, SamplerChainParams,
+    SamplerParams, SamplerPerfData, TokenData, TokenDataArray,
+};
+pub use sampling_simd::{
+    has_avx2, has_avx512, has_neon, simd_max_f32, simd_softmax, simd_sum_f32, simd_top_k,
+    SimdCapabilities,
 };
 pub use session::Session;
-pub use token::{Token as TokenStruct, TokenId};
+pub use token::{GenerationBuffer, Token as TokenStruct, TokenBuffer, TokenId};
 pub use vocab::Vocabulary;
 
 // Re-export integration features
@@ -370,15 +405,19 @@ pub use format_conversion::{
     AudioConversionResult, AudioConverter, AudioConverterConfig, ConversionConfig,
     ImageConversionResult, ImageConverter, ImageConverterConfig,
 };
+#[cfg(feature = "late-interaction")]
+pub use late_interaction::{
+    LateInteractionScorer, MultiVectorConfig, MultiVectorEmbedding, MultiVectorGenerator,
+};
 #[cfg(feature = "multimodal")]
 pub use multimodal::{
-    AudioFeatures, AudioFormat, AudioInput, ImageInput, MultimodalInput, MultimodalOutput,
-    MultimodalProcessor, VideoInput,
+    AudioFeatures, AudioFormat, AudioInput, Bitmap, ChunkType, ImageInput, InputChunk, InputChunks,
+    MtmdContext, MtmdParams, MultimodalInput, MultimodalOutput, MultimodalProcessor, VideoInput,
 };
 #[cfg(feature = "parallel")]
 pub use parallel::{BatchGenerationConfig, GenerationResult, ParallelProcessor, ThreadPoolConfig};
 #[cfg(feature = "streaming")]
-pub use streaming::{StreamConfig, TokenData, TokenStream};
+pub use streaming::{StreamConfig, TokenData as StreamTokenData, TokenStream};
 #[cfg(feature = "streaming-audio")]
 pub use streaming_audio::{
     AudioChunk, AudioStream, AudioStreamConfig, DevicePreference, StreamingAudioProcessor,
@@ -399,14 +438,15 @@ pub use websockets::{
     WebSocketServer,
 };
 
-// Re-export advanced features (commented out for now)
-// pub use lora::{LoRAAdapter, LoRAManager};
-// pub use grammar::{Grammar, GrammarRule};
-// pub use control_vector::{ControlVector, ControlVectorManager};
-// pub use speculative::{SpeculativeDecoder, SpeculativeConfig};
-// pub use quantization::{QuantizationEngine, QuantizationParams, QuantizationType};
-// pub use gpu_advanced::{GpuManager, GpuDevice, AllocationStrategy};
-// pub use multimodal::{MultimodalProcessor, MultimodalInput, MultimodalConfig};
+// Re-export advanced features
+pub use control_vector::{ControlVector, ControlVectorManager};
+pub use gpu_advanced::{AllocationStrategy, GpuDevice, GpuManager};
+pub use grammar::{Grammar, GrammarRule};
+pub use lora::{LoRAAdapter, LoRAManager};
+pub use quantization::{
+    QuantizationEngine, QuantizationParams, QuantizationType as QuantizationKind,
+};
+pub use speculative::{SpeculativeConfig, SpeculativeDecoder};
 
 // Re-export sys types for advanced users
 pub use sys::{
@@ -423,11 +463,18 @@ pub mod prelude {
         MullamaConfig, MullamaError, SamplerBuilder, SamplerChain, SamplerParams,
     };
 
+    // Advanced features
+    pub use crate::{
+        AllocationStrategy, ControlVector, ControlVectorManager, GpuDevice, GpuManager, Grammar,
+        GrammarRule, HardwarePreset, LoRAAdapter, LoRAManager, QuantizationEngine,
+        QuantizationKind, QuantizationParams, SpeculativeConfig, SpeculativeDecoder,
+    };
+
     #[cfg(feature = "async")]
     pub use crate::{AsyncContext, AsyncModel};
 
     #[cfg(feature = "streaming")]
-    pub use crate::{StreamConfig, TokenData, TokenStream};
+    pub use crate::{StreamConfig, StreamTokenData, TokenStream};
 
     #[cfg(feature = "web")]
     pub use crate::{AppState, GenerateRequest, GenerateResponse, RouterBuilder};
@@ -437,6 +484,11 @@ pub mod prelude {
 
     #[cfg(feature = "parallel")]
     pub use crate::{BatchGenerationConfig, ParallelProcessor};
+
+    #[cfg(feature = "late-interaction")]
+    pub use crate::{
+        LateInteractionScorer, MultiVectorConfig, MultiVectorEmbedding, MultiVectorGenerator,
+    };
 
     #[cfg(feature = "websockets")]
     pub use crate::{WSMessage, WebSocketServer};
@@ -454,14 +506,12 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_backend_initialization() {
         // Test that we can initialize the backend
         unsafe {
             sys::llama_backend_init();
-            sys::ggml_backend_load_all();
             sys::llama_backend_free();
         }
         assert_eq!(2 + 2, 4);

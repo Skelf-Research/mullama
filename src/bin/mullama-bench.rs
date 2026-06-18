@@ -57,7 +57,11 @@ impl Mode {
 }
 
 #[derive(Parser, Debug, Serialize)]
-#[command(name = "mullama-bench", version, about = "Benchmark & parity test mullama vs ollama")]
+#[command(
+    name = "mullama-bench",
+    version,
+    about = "Benchmark & parity test mullama vs ollama"
+)]
 struct Args {
     /// mullama daemon OpenAI base URL.
     #[arg(long, default_value = "http://127.0.0.1:8080")]
@@ -185,11 +189,7 @@ struct Report {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-async fn post_json(
-    client: &reqwest::Client,
-    url: &str,
-    body: Value,
-) -> Result<Value, String> {
+async fn post_json(client: &reqwest::Client, url: &str, body: Value) -> Result<Value, String> {
     let resp = client
         .post(url)
         .json(&body)
@@ -310,7 +310,8 @@ async fn mullama_chat(
 fn timings_from_extension(v: &Value) -> (Option<u64>, Option<u64>) {
     let t = v.get("timings");
     (
-        t.and_then(|x| x.get("prompt_eval_ns")).and_then(|x| x.as_u64()),
+        t.and_then(|x| x.get("prompt_eval_ns"))
+            .and_then(|x| x.as_u64()),
         t.and_then(|x| x.get("eval_ns")).and_then(|x| x.as_u64()),
     )
 }
@@ -425,9 +426,14 @@ async fn ollama_generate_native(
     let v = post_json(client, &format!("{}/api/generate", base), body).await?;
     let wall = start.elapsed().as_secs_f64();
 
-    let text = v.get("response").and_then(|t| t.as_str()).unwrap_or("").to_string();
-    let prompt_tokens =
-        u32_at(&v, &["prompt_eval_count"]).or_else(|| u32_at(&v, &["prompt_count"])).unwrap_or(0);
+    let text = v
+        .get("response")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+    let prompt_tokens = u32_at(&v, &["prompt_eval_count"])
+        .or_else(|| u32_at(&v, &["prompt_count"]))
+        .unwrap_or(0);
     let completion_tokens = u32_at(&v, &["eval_count"]).unwrap_or(0);
     let prompt_eval_ns = u64_at(&v, &["prompt_eval_duration"]);
     let eval_ns = u64_at(&v, &["eval_duration"]);
@@ -484,8 +490,8 @@ async fn run_parity(
             // ollama via native /api/generate with raw=true so it does NOT wrap
             // the prompt in the chat template — both engines see the same bytes.
             let m = mullama_completions(client, &args.mullama_url, model, &p.prompt, args).await?;
-            let o = ollama_generate_native(client, &args.ollama_url, model, &p.prompt, args)
-                .await?;
+            let o =
+                ollama_generate_native(client, &args.ollama_url, model, &p.prompt, args).await?;
             out.push(ParityRecord {
                 model: model.clone(),
                 prompt_id: p.id.clone(),
@@ -551,12 +557,12 @@ async fn run_perf(
             let mut m_wall = Vec::new();
             let mut m_ctoks = Vec::new();
             for _ in 0..args.warmup {
-                let _ = mullama_completions(client, &args.mullama_url, model, &p.prompt, args)
-                    .await?;
+                let _ =
+                    mullama_completions(client, &args.mullama_url, model, &p.prompt, args).await?;
             }
             for _ in 0..args.runs {
-                let s = mullama_completions(client, &args.mullama_url, model, &p.prompt, args)
-                    .await?;
+                let s =
+                    mullama_completions(client, &args.mullama_url, model, &p.prompt, args).await?;
                 m_eng.push(s.engine_tok_s().unwrap_or(0.0));
                 m_wall.push(s.wall_tok_s());
                 m_ctoks.push(s.completion_tokens as f64);
@@ -652,7 +658,10 @@ fn print_perf_summary(records: &[PerfRecord]) {
     // group by (model, endpoint) for a mullama-vs-ollama side-by-side
     let mut groups: BTreeMap<(String, String), Vec<&PerfRecord>> = BTreeMap::new();
     for r in records {
-        groups.entry((r.model.clone(), r.endpoint.clone())).or_default().push(r);
+        groups
+            .entry((r.model.clone(), r.endpoint.clone()))
+            .or_default()
+            .push(r);
     }
     for ((model, endpoint), rs) in &groups {
         for r in rs {
@@ -669,7 +678,10 @@ fn print_perf_summary(records: &[PerfRecord]) {
                 let ratio = m.engine_tok_s_mean / o.engine_tok_s_mean;
                 println!(
                     "{:<18} {:<10} {:<8} {:>12}",
-                    "", "", "ratio", format!("{:.2}x mullama/ollama", ratio),
+                    "",
+                    "",
+                    "ratio",
+                    format!("{:.2}x mullama/ollama", ratio),
                 );
             }
         }
@@ -723,10 +735,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let bar = ProgressBar::new(total as u64);
     bar.set_style(
-        ProgressStyle::with_template(
-            "{bar:40.cyan/blue} {pos}/{len} {elapsed} {msg}",
-        )
-        .unwrap(),
+        ProgressStyle::with_template("{bar:40.cyan/blue} {pos}/{len} {elapsed} {msg}").unwrap(),
     );
 
     let mut parity_records = Vec::new();
@@ -737,21 +746,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bar.set_message(model.clone());
         match mode {
             Mode::Parity => {
-                run_parity(&client, &args, &prompts, std::slice::from_ref(model), &mut parity_records)
-                    .await?;
+                run_parity(
+                    &client,
+                    &args,
+                    &prompts,
+                    std::slice::from_ref(model),
+                    &mut parity_records,
+                )
+                .await?;
                 bar.inc((prompts.len() * 2) as u64);
             }
             Mode::Perf => {
-                run_perf(&client, &args, &prompts, std::slice::from_ref(model), &mut perf_records)
-                    .await?;
+                run_perf(
+                    &client,
+                    &args,
+                    &prompts,
+                    std::slice::from_ref(model),
+                    &mut perf_records,
+                )
+                .await?;
                 bar.inc(prompts.len() as u64);
             }
             Mode::Both => {
-                run_parity(&client, &args, &prompts, std::slice::from_ref(model), &mut parity_records)
-                    .await?;
+                run_parity(
+                    &client,
+                    &args,
+                    &prompts,
+                    std::slice::from_ref(model),
+                    &mut parity_records,
+                )
+                .await?;
                 bar.inc((prompts.len() * 2) as u64);
-                run_perf(&client, &args, &prompts, std::slice::from_ref(model), &mut perf_records)
-                    .await?;
+                run_perf(
+                    &client,
+                    &args,
+                    &prompts,
+                    std::slice::from_ref(model),
+                    &mut perf_records,
+                )
+                .await?;
                 bar.inc(prompts.len() as u64);
             }
         }

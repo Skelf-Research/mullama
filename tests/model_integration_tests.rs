@@ -25,6 +25,7 @@ fn get_test_model_path() -> Option<String> {
 }
 
 /// Helper to get test LoRA path, returns None if not available
+#[allow(dead_code)]
 fn get_test_lora_path() -> Option<String> {
     env::var("MULLAMA_TEST_LORA")
         .ok()
@@ -45,6 +46,7 @@ macro_rules! require_model {
 }
 
 /// Macro to skip test if LoRA not available
+#[allow(unused_macros)]
 macro_rules! require_lora {
     () => {
         match get_test_lora_path() {
@@ -185,7 +187,7 @@ fn test_context_creation() {
         result.err()
     );
 
-    let context = result.unwrap();
+    let _context = result.unwrap();
     println!("Context created successfully");
 
     unsafe {
@@ -225,7 +227,7 @@ fn test_builder_pattern() {
     );
 
     // Test SamplerBuilder
-    let sampler = mullama::builder::SamplerBuilder::new()
+    let _sampler = mullama::builder::SamplerBuilder::new()
         .temperature(0.8)
         .top_k(40)
         .nucleus(0.95)
@@ -264,7 +266,7 @@ fn test_sampling_params() {
         ..Default::default()
     };
 
-    let chain = params
+    let _chain = params
         .build_chain(model.clone())
         .expect("Failed to build sampler chain");
     println!("Sampler chain created with custom params");

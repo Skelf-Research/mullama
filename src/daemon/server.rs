@@ -6,58 +6,23 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::RwLock;
+use dashmap::DashMap;
 
-use super::models::{ModelLoadConfig, ModelManager, RequestGuard};
+mod builder;
+mod config;
+mod dispatch;
+mod generation;
+mod handlers;
+mod prompt;
+
+pub use builder::DaemonBuilder;
+pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
+pub(crate) use prompt::resolve_chat_stop_sequences;
+
+use super::models::ModelManager;
 use super::protocol::*;
-use crate::{MullamaError, SamplerParams};
-
-/// Whether verbose debug logging is enabled (`MULLAMA_DEBUG=1`).
-///
-/// Checked once per process via a static atomic so the per-token hot path
-/// never touches the environment.
-fn debug_enabled() -> bool {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static FLAG: AtomicBool = AtomicBool::new(false);
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        FLAG.store(std::env::var_os("MULLAMA_DEBUG").is_some(), Ordering::Relaxed)
-    });
-    FLAG.load(Ordering::Relaxed)
-}
-
-/// Daemon server configuration
-#[derive(Debug, Clone)]
-pub struct DaemonConfig {
-    /// IPC socket address
-    pub ipc_addr: String,
-    /// HTTP port (None to disable)
-    pub http_port: Option<u16>,
-    /// HTTP bind address
-    pub http_addr: String,
-    /// Default context size for new models
-    pub default_context_size: u32,
-    /// Default GPU layers
-    pub default_gpu_layers: i32,
-    /// Number of threads per model
-    pub threads_per_model: i32,
-    /// Default flash-attention setting for models loaded on startup
-    pub default_flash_attn: bool,
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            ipc_addr: super::DEFAULT_SOCKET.to_string(),
-            http_port: Some(super::DEFAULT_HTTP_PORT),
-            http_addr: "0.0.0.0".to_string(),
-            default_context_size: 4096,
-            default_gpu_layers: 0,
-            threads_per_model: (num_cpus::get() / 2).max(1) as i32,
-            default_flash_attn: false,
-        }
-    }
-}
+use super::store::{DaemonStore, StorageBackend};
+use crate::memory_monitor::{MemoryMonitor, MemoryPressure, RecoveryManager};
 
 /// The daemon server
 pub struct Daemon {
@@ -65,461 +30,193 @@ pub struct Daemon {
     pub models: Arc<ModelManager>,
     pub start_time: Instant,
     pub shutdown: Arc<AtomicBool>,
-    pub active_requests: AtomicU32,
+    pub active_requests: Arc<AtomicU32>,
     pub total_requests: AtomicU64,
+    /// Cancellation flags for streaming requests (request_id -> cancel flag)
+    pub cancellations: Arc<DashMap<String, Arc<AtomicBool>>>,
+    /// Memory monitor for tracking system and GPU memory
+    pub memory_monitor: Option<Arc<MemoryMonitor>>,
+    /// Recovery manager for handling OOM situations
+    pub recovery_manager: RecoveryManager,
+    /// Persistent store for daemon state (pluggable via [`StorageBackend`] trait)
+    pub store: Arc<dyn StorageBackend>,
+    /// Model providers for resolving model specs to local paths
+    pub providers: Vec<Box<dyn super::provider::ModelProvider>>,
 }
 
 impl Daemon {
     /// Create a new daemon
     pub fn new(config: DaemonConfig) -> Self {
+        let memory_monitor = if config.resources.enable_memory_monitoring {
+            let monitor = MemoryMonitor::new(config.resources.memory_config.clone());
+            monitor.start();
+            Some(monitor)
+        } else {
+            None
+        };
+
+        let recovery_manager = if let Some(ref monitor) = memory_monitor {
+            RecoveryManager::new().with_monitor(Arc::clone(monitor))
+        } else {
+            RecoveryManager::new()
+        };
+
+        let store: Arc<dyn StorageBackend> = match DaemonStore::open_default() {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to open persistent store: {}. Using in-memory fallback.",
+                    e
+                );
+                let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+                Arc::new(
+                    DaemonStore::open(&tmp.path().join("mullama.db"))
+                        .expect("Failed to create temp store"),
+                )
+            }
+        };
+
+        let mut providers: Vec<Box<dyn super::provider::ModelProvider>> = Vec::new();
+        if let Ok(ollama) = super::ollama::OllamaClient::new() {
+            providers.push(Box::new(ollama));
+        }
+        if let Ok(hf) = crate::hf::HfDownloader::new() {
+            providers.push(Box::new(hf));
+        }
+
         Self {
             config,
             models: Arc::new(ModelManager::new()),
             start_time: Instant::now(),
             shutdown: Arc::new(AtomicBool::new(false)),
-            active_requests: AtomicU32::new(0),
+            active_requests: Arc::new(AtomicU32::new(0)),
             total_requests: AtomicU64::new(0),
+            cancellations: Arc::new(DashMap::new()),
+            memory_monitor,
+            recovery_manager,
+            store,
+            providers,
         }
     }
 
-    /// Handle a request
-    pub async fn handle_request(&self, request: Request) -> Response {
-        self.total_requests.fetch_add(1, Ordering::Relaxed);
+    #[allow(clippy::result_large_err)]
+    fn validate_max_tokens(&self, max_tokens: u32) -> Result<(), Response> {
+        if max_tokens == 0 {
+            return Err(Response::error(
+                ErrorCode::InvalidRequest,
+                "max_tokens must be greater than 0",
+            ));
+        }
 
-        match request {
-            Request::Ping => Response::Pong {
-                uptime_secs: self.start_time.elapsed().as_secs(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
+        if max_tokens > self.config.resources.max_tokens_per_request {
+            return Err(Response::error(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "max_tokens {} exceeds server limit {}",
+                    max_tokens, self.config.resources.max_tokens_per_request
+                ),
+            ));
+        }
 
-            Request::Status => self.handle_status().await,
-            Request::ListModels => self.handle_list_models().await,
+        Ok(())
+    }
 
-            Request::LoadModel {
-                alias,
-                path,
-                gpu_layers,
-                context_size,
-            } => self.handle_load_model(alias, path, gpu_layers, context_size).await,
+    fn register_cancellation(&self, request_id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.cancellations
+            .insert(request_id.to_string(), Arc::clone(&flag));
+        flag
+    }
 
-            Request::UnloadModel { alias } => self.handle_unload_model(&alias).await,
-            Request::SetDefaultModel { alias } => self.handle_set_default(&alias).await,
-
-            Request::ChatCompletion {
-                model,
-                messages,
-                max_tokens,
-                temperature,
-                stream,
-                stop,
-                seed,
-                top_p,
-                top_k,
-            } => {
-                self.handle_chat_completion(
-                    model, messages, max_tokens, temperature, stream, stop, seed, top_p, top_k,
-                )
-                .await
-            }
-
-            Request::Completion {
-                model,
-                prompt,
-                max_tokens,
-                temperature,
-                stream,
-                seed,
-                top_p,
-                top_k,
-            } => {
-                self.handle_completion(
-                    model, prompt, max_tokens, temperature, stream, seed, top_p, top_k,
-                )
-                .await
-            }
-
-            Request::Embeddings { model, input } => {
-                self.handle_embeddings(model, input).await
-            }
-
-            Request::Tokenize { model, text } => self.handle_tokenize(model, &text).await,
-
-            Request::Cancel { request_id } => {
-                // TODO: Implement cancellation
-                Response::Cancelled { request_id }
-            }
-
-            Request::Shutdown => {
-                self.shutdown.store(true, Ordering::SeqCst);
-                Response::ShuttingDown
-            }
+    pub fn cancel_request(&self, request_id: &str) -> bool {
+        if let Some(flag) = self.cancellations.get(request_id) {
+            flag.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
         }
     }
 
-    async fn handle_status(&self) -> Response {
-        let default_model = self.models.default_alias().await;
-
-        Response::Status(DaemonStatus {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            uptime_secs: self.start_time.elapsed().as_secs(),
-            models_loaded: self.models.count().await,
-            default_model,
-            http_endpoint: self.config.http_port.map(|p| format!("http://{}:{}", self.config.http_addr, p)),
-            ipc_endpoint: self.config.ipc_addr.clone(),
-            stats: DaemonStats {
-                requests_total: self.total_requests.load(Ordering::Relaxed),
-                tokens_generated: self.models.total_tokens(),
-                active_requests: self.active_requests.load(Ordering::Relaxed),
-                memory_used_mb: 0, // TODO
-                gpu_available: crate::supports_gpu_offload(),
-            },
-        })
-    }
-
-    async fn handle_list_models(&self) -> Response {
-        let models = self.models.list().await;
-        Response::Models(
-            models
-                .into_iter()
-                .map(|(alias, info, is_default, active)| ModelStatus {
-                    alias,
-                    info,
-                    is_default,
-                    active_requests: active,
-                })
-                .collect(),
-        )
-    }
-
-    async fn handle_load_model(
-        &self,
-        alias: String,
-        path: String,
-        gpu_layers: i32,
-        context_size: u32,
-    ) -> Response {
-        let config = ModelLoadConfig::new(&alias, &path)
-            .gpu_layers(if gpu_layers == 0 { self.config.default_gpu_layers } else { gpu_layers })
-            .context_size(if context_size == 0 { self.config.default_context_size } else { context_size })
-            .threads(self.config.threads_per_model)
-            .flash_attn(self.config.default_flash_attn);
-
-        match self.models.load(config).await {
-            Ok(info) => Response::ModelLoaded { alias, info },
-            Err(e) => Response::error(ErrorCode::ModelLoadFailed, e.to_string()),
-        }
-    }
-
-    async fn handle_unload_model(&self, alias: &str) -> Response {
-        match self.models.unload(alias).await {
-            Ok(()) => Response::ModelUnloaded { alias: alias.to_string() },
-            Err(e) => Response::error(ErrorCode::ModelNotFound, e.to_string()),
-        }
-    }
-
-    async fn handle_set_default(&self, alias: &str) -> Response {
-        match self.models.set_default(alias).await {
-            Ok(()) => Response::DefaultModelSet { alias: alias.to_string() },
-            Err(e) => Response::error(ErrorCode::ModelNotFound, e.to_string()),
-        }
-    }
-
-    async fn handle_chat_completion(
-        &self,
-        model: Option<String>,
-        messages: Vec<ChatMessage>,
-        max_tokens: u32,
-        temperature: f32,
-        _stream: bool,
-        _stop: Vec<String>,
-        seed: Option<u32>,
-        top_p: Option<f32>,
-        top_k: Option<i32>,
-    ) -> Response {
-        let dbg = debug_enabled();
-        if dbg {
-            eprintln!("[chat_completion] model={:?} messages={} max_tokens={}", model, messages.len(), max_tokens);
-        }
-
-        let loaded = match self.models.get(model.as_deref()).await {
-            Ok(m) => m,
-            Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
-        };
-
-        let _guard = RequestGuard::new(loaded.clone());
-        self.active_requests.fetch_add(1, Ordering::SeqCst);
-
-        // Build prompt from messages using the model's real chat template.
-        let prompt = self.build_chat_prompt(&loaded.model, &messages);
-
-        // Generate
-        let result = self
-            .generate_text(&loaded, &prompt, max_tokens, temperature, seed, top_p, top_k)
-            .await;
-
-        self.active_requests.fetch_sub(1, Ordering::SeqCst);
-
-        match result {
-            Ok((text, timings)) => {
-                let created = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-
-                Response::ChatCompletion(ChatCompletionResponse {
-                    id: generate_completion_id(),
-                    object: "chat.completion".to_string(),
-                    created,
-                    model: loaded.alias.clone(),
-                    choices: vec![ChatChoice {
-                        index: 0,
-                        message: ChatMessage {
-                            role: "assistant".to_string(),
-                            content: text,
-                            name: None,
-                        },
-                        finish_reason: Some("stop".to_string()),
-                    }],
-                    usage: Usage {
-                        prompt_tokens: timings.prompt_tokens,
-                        completion_tokens: timings.completion_tokens,
-                        total_tokens: timings.prompt_tokens + timings.completion_tokens,
-                    },
-                    timings: Some(timings),
-                })
-            }
-            Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
-        }
-    }
-
-    async fn handle_completion(
-        &self,
-        model: Option<String>,
-        prompt: String,
-        max_tokens: u32,
-        temperature: f32,
-        _stream: bool,
-        seed: Option<u32>,
-        top_p: Option<f32>,
-        top_k: Option<i32>,
-    ) -> Response {
-        let loaded = match self.models.get(model.as_deref()).await {
-            Ok(m) => m,
-            Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
-        };
-
-        let _guard = RequestGuard::new(loaded.clone());
-        self.active_requests.fetch_add(1, Ordering::SeqCst);
-
-        let result = self
-            .generate_text(&loaded, &prompt, max_tokens, temperature, seed, top_p, top_k)
-            .await;
-
-        self.active_requests.fetch_sub(1, Ordering::SeqCst);
-
-        match result {
-            Ok((text, timings)) => {
-                let created = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-
-                Response::Completion(CompletionResponse {
-                    id: generate_completion_id(),
-                    object: "text_completion".to_string(),
-                    created,
-                    model: loaded.alias.clone(),
-                    choices: vec![CompletionChoice {
-                        index: 0,
-                        text,
-                        finish_reason: Some("stop".to_string()),
-                    }],
-                    usage: Usage {
-                        prompt_tokens: timings.prompt_tokens,
-                        completion_tokens: timings.completion_tokens,
-                        total_tokens: timings.prompt_tokens + timings.completion_tokens,
-                    },
-                    timings: Some(timings),
-                })
-            }
-            Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
-        }
-    }
-
-    async fn handle_embeddings(
-        &self,
-        _model: Option<String>,
-        _input: EmbeddingInput,
-    ) -> Response {
-        Response::error(ErrorCode::Internal, "Embeddings not yet implemented")
-    }
-
-    async fn handle_tokenize(&self, model: Option<String>, text: &str) -> Response {
-        let loaded = match self.models.get(model.as_deref()).await {
-            Ok(m) => m,
-            Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
-        };
-
-        match loaded.model.tokenize(text, false, false) {
-            Ok(tokens) => {
-                let count = tokens.len();
-                Response::Tokens { tokens, count }
-            }
-            Err(e) => Response::error(ErrorCode::Internal, e.to_string()),
-        }
-    }
-
-    /// Build a chat prompt from messages using the model's real chat template.
+    /// Resolve a model spec to a local path using the provider chain.
     ///
-    /// Falls back to a naive `Role: content` format only when the model ships
-    /// no embedded chat template (so such models still work instead of crashing).
-    fn build_chat_prompt(&self, model: &crate::Model, messages: &[ChatMessage]) -> String {
-        // Only attempt the real template if the model actually declares one.
-        if model.chat_template().is_some() {
-            let msgs: Vec<(&str, &str)> =
-                messages.iter().map(|m| (m.role.as_str(), m.content.as_str())).collect();
-            match model.apply_chat_template(None, &msgs, true) {
-                Ok(prompt) => return prompt,
-                Err(e) => {
-                    if debug_enabled() {
-                        eprintln!("[chat_template] apply failed ({}); falling back to naive format", e);
+    /// Iterates through registered providers (Ollama, HuggingFace) and returns
+    /// the first successful resolution. Falls through on provider errors.
+    pub async fn resolve_model_spec(
+        &self,
+        spec: &str,
+    ) -> Result<super::provider::ResolvedModelPath, crate::MullamaError> {
+        for provider in &self.providers {
+            if provider.supports(spec) {
+                match provider.resolve(spec).await {
+                    Ok(resolved) => return Ok(resolved),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Provider '{}' failed for '{}': {}",
+                            provider.name(),
+                            spec,
+                            e
+                        );
+                        continue;
                     }
                 }
             }
         }
-
-        // Naive fallback (no embedded template, or template application failed).
-        let mut prompt = String::new();
-        for msg in messages {
-            prompt.push_str(&format!("{}: {}\n\n", msg.role, msg.content));
-        }
-        prompt.push_str("Assistant:");
-        prompt
+        Err(crate::MullamaError::OperationFailed(format!(
+            "No provider can resolve: {}",
+            spec
+        )))
     }
 
-    /// Run a single non-streaming generation and return the text plus engine timings.
-    async fn generate_text(
-        &self,
-        loaded: &super::models::LoadedModel,
-        prompt: &str,
-        max_tokens: u32,
-        temperature: f32,
-        seed: Option<u32>,
-        top_p: Option<f32>,
-        top_k: Option<i32>,
-    ) -> Result<(String, Timings), MullamaError> {
-        let dbg = debug_enabled();
+    /// Get current memory pressure level
+    pub fn memory_pressure(&self) -> MemoryPressure {
+        self.memory_monitor
+            .as_ref()
+            .map(|m| m.pressure())
+            .unwrap_or(MemoryPressure::Normal)
+    }
 
-        // Tokenize. Respect the model's add_bos flag (Qwen2.5 etc. declare
-        // add_bos_token=false; hardcoding true would prepend a BOS ollama does
-        // not, breaking greedy parity from the first token). Parse special
-        // tokens (`special=true`) so chat-template markers like `<|im_start|>`
-        // / `<|im_end|>` tokenize as single tokens instead of being shattered
-        // (which corrupts the prompt and triggers premature EOG stops).
-        let add_bos = loaded.model.add_bos_token();
-        let tokens = loaded.model.tokenize(prompt, add_bos, true)?;
-        let prompt_tokens = tokens.len() as u32;
-        if dbg {
-            eprintln!("[generate_text] prompt_tokens={}", prompt_tokens);
-        }
+    /// Get memory statistics
+    pub fn memory_stats(&self) -> Option<crate::memory_monitor::MemoryStats> {
+        self.memory_monitor.as_ref().map(|m| m.stats())
+    }
 
-        // Get context lock
-        let mut context = loaded.context.write().await;
+    /// Check if memory recovery is needed
+    pub fn needs_memory_recovery(&self) -> bool {
+        self.recovery_manager.needs_recovery()
+    }
 
-        // Clear KV cache to start fresh for each request
-        context.kv_cache_clear();
+    /// Log memory warning if pressure is elevated
+    #[allow(dead_code)]
+    fn log_memory_pressure(&self) {
+        if let Some(monitor) = &self.memory_monitor {
+            let pressure = monitor.pressure();
+            let stats = monitor.stats();
 
-        // Setup sampler. Defaults preserve prior behavior (top_p=0.9, top_k=40);
-        // request overrides apply when Some. At temperature=0 sampling is greedy
-        // regardless of the other knobs, which is what parity testing relies on.
-        let mut sampler_params = SamplerParams::default();
-        sampler_params.temperature = temperature;
-        sampler_params.top_p = top_p.unwrap_or(0.9);
-        sampler_params.top_k = top_k.unwrap_or(40);
-        if let Some(s) = seed {
-            sampler_params.seed = s;
-        }
-
-        let mut sampler = sampler_params.build_chain(loaded.model.clone())?;
-
-        // Decode prompt (timed).
-        let prompt_start = Instant::now();
-        context.decode(&tokens)?;
-        let prompt_eval_ns = prompt_start.elapsed().as_nanos() as u64;
-
-        // Generate (timed).
-        let mut generated = String::new();
-        let mut completion_tokens = 0u32;
-
-        // Per-component accumulators. `dec_ns` (decode-only) is always
-        // accumulated because it is the fair engine-compute number — it
-        // matches ollama's `eval_duration`, which times only `llama_decode`
-        // and excludes per-token sampling / token-to-string work. Reporting
-        // the whole-loop time here as `eval_ns` previously counted the ~1.8
-        // ms/token `llama_sampler_sample` cost that ollama excludes, making
-        // mullama look ~1.15x slower than it is. `samp_ns` / `tok_ns` stay
-        // debug-only diagnostics.
-        let mut dec_ns: u64 = 0;
-        let mut samp_ns: u64 = 0;
-        let mut tok_ns: u64 = 0;
-
-        let gen_start = Instant::now();
-        for _ in 0..max_tokens {
-            // Sample from the last token's logits.
-            let s = Instant::now();
-            let next_token = sampler.sample(&mut *context, -1);
-            if dbg {
-                samp_ns += s.elapsed().as_nanos() as u64;
+            match pressure {
+                MemoryPressure::Warning => {
+                    tracing::warn!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory pressure elevated"
+                    );
+                }
+                MemoryPressure::Critical => {
+                    tracing::error!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory pressure CRITICAL"
+                    );
+                }
+                MemoryPressure::Emergency => {
+                    tracing::error!(
+                        gpu_usage = stats.gpu_usage() * 100.0,
+                        system_usage = stats.system_usage() * 100.0,
+                        "Memory EMERGENCY - recovery needed"
+                    );
+                }
+                MemoryPressure::Normal => {}
             }
-
-            if loaded.model.vocab_is_eog(next_token) {
-                break;
-            }
-
-            let t = Instant::now();
-            if let Ok(text) = loaded.model.token_to_str(next_token, 0, false) {
-                generated.push_str(&text);
-            }
-            if dbg {
-                tok_ns += t.elapsed().as_nanos() as u64;
-            }
-
-            // Accept the token to update sampler state (grammar, repetition, etc.)
-            sampler.accept(next_token);
-
-            let d = Instant::now();
-            context.decode(&[next_token])?;
-            dec_ns += d.elapsed().as_nanos() as u64;
-            completion_tokens += 1;
         }
-        let _gen_total_ns = gen_start.elapsed().as_nanos() as u64;
-        // eval_ns is decode-only (matches ollama eval_duration). Fall back to
-        // the whole-loop time only if no tokens were decoded.
-        let eval_ns = if dec_ns > 0 { dec_ns } else { _gen_total_ns };
-
-        self.models.add_tokens(completion_tokens as u64);
-        if dbg {
-            let n = completion_tokens.max(1) as u64;
-            eprintln!(
-                "[generate_text] n={} total={}ns | per-token: decode={}ns sample={}ns tokstr={}ns (sum={}ns)",
-                completion_tokens,
-                _gen_total_ns,
-                dec_ns / n,
-                samp_ns / n,
-                tok_ns / n,
-                (dec_ns + samp_ns + tok_ns) / n,
-            );
-        }
-
-        Ok((
-            generated,
-            Timings {
-                prompt_eval_ns,
-                eval_ns,
-                prompt_tokens,
-                completion_tokens,
-            },
-        ))
     }
 
     /// Check if shutdown was requested
@@ -528,93 +225,67 @@ impl Daemon {
     }
 }
 
-/// Builder for daemon configuration
-pub struct DaemonBuilder {
-    config: DaemonConfig,
-    initial_models: Vec<ModelLoadConfig>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl DaemonBuilder {
-    pub fn new() -> Self {
-        Self {
-            config: DaemonConfig::default(),
-            initial_models: Vec::new(),
-        }
-    }
-
-    pub fn ipc_socket(mut self, addr: impl Into<String>) -> Self {
-        self.config.ipc_addr = addr.into();
-        self
-    }
-
-    pub fn http_port(mut self, port: u16) -> Self {
-        self.config.http_port = Some(port);
-        self
-    }
-
-    pub fn disable_http(mut self) -> Self {
-        self.config.http_port = None;
-        self
-    }
-
-    pub fn http_addr(mut self, addr: impl Into<String>) -> Self {
-        self.config.http_addr = addr.into();
-        self
-    }
-
-    pub fn default_context_size(mut self, size: u32) -> Self {
-        self.config.default_context_size = size;
-        self
-    }
-
-    pub fn default_gpu_layers(mut self, layers: i32) -> Self {
-        self.config.default_gpu_layers = layers;
-        self
-    }
-
-    pub fn threads_per_model(mut self, threads: i32) -> Self {
-        self.config.threads_per_model = threads;
-        self
-    }
-
-    /// Default flash-attention setting for models loaded on startup
-    pub fn default_flash_attn(mut self, on: bool) -> Self {
-        self.config.default_flash_attn = on;
-        self
-    }
-
-    /// Add a model to load on startup (format: "alias:path" or just "path")
-    pub fn model(mut self, spec: impl Into<String>) -> Self {
-        let spec = spec.into();
-        let (alias, path) = if let Some(pos) = spec.find(':') {
-            (spec[..pos].to_string(), spec[pos + 1..].to_string())
-        } else {
-            // Use filename without extension as alias
-            let path = std::path::Path::new(&spec);
-            let alias = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "default".to_string());
-            (alias, spec)
+    fn test_daemon() -> Daemon {
+        let config = DaemonConfig {
+            resources: ResourceConfig {
+                enable_memory_monitoring: false,
+                ..ResourceConfig::default()
+            },
+            ..DaemonConfig::default()
         };
+        Daemon::new(config)
+    }
 
-        self.initial_models.push(
-            ModelLoadConfig::new(alias, path)
-                .gpu_layers(self.config.default_gpu_layers)
-                .context_size(self.config.default_context_size)
-                .threads(self.config.threads_per_model)
-                .flash_attn(self.config.default_flash_attn),
+    #[test]
+    fn merge_stop_sequences_deduplicates_and_filters_empty() {
+        let merged = super::prompt::merge_stop_sequences(
+            vec!["</s>".to_string(), "".to_string()],
+            vec!["<|eot_id|>".to_string(), "</s>".to_string()],
         );
-        self
+        assert_eq!(merged, vec!["</s>", "<|eot_id|>"]);
     }
 
-    pub fn build(self) -> (Daemon, Vec<ModelLoadConfig>) {
-        (Daemon::new(self.config), self.initial_models)
+    #[test]
+    fn find_stop_in_recent_window_detects_cross_token_boundary() {
+        let generated = "hello<|eot_id|>";
+        let previous_len = "hello<|eo".len();
+        let stop_sequences = vec!["<|eot_id|>".to_string()];
+        let pos =
+            super::prompt::find_stop_in_recent_window(generated, previous_len, &stop_sequences, 10);
+        assert_eq!(pos, Some("hello".len()));
     }
-}
 
-impl Default for DaemonBuilder {
-    fn default() -> Self {
-        Self::new()
+    #[test]
+    fn apply_default_system_prompt_only_when_missing() {
+        let daemon = test_daemon();
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "hello".to_string().into(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let with_system =
+            daemon.apply_default_system_prompt(messages.clone(), Some("You are helpful."));
+        assert_eq!(with_system.len(), 2);
+        assert_eq!(with_system[0].role, "system");
+
+        let with_existing = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "existing".to_string().into(),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            messages[0].clone(),
+        ];
+        let unchanged = daemon.apply_default_system_prompt(with_existing.clone(), Some("ignored"));
+        assert_eq!(unchanged.len(), with_existing.len());
+        assert_eq!(unchanged[0].content.text(), "existing");
     }
 }

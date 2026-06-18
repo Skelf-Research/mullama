@@ -1,0 +1,76 @@
+{
+  "name": "mullama",
+  "version": "0.3.1",
+  "description": "Local LLM inference for Node.js — run Llama, Qwen, DeepSeek, Mistral, Phi, and Gemma GGUF models with native llama.cpp performance. Drop-in alternative to node-llama-cpp and ollama.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "mullama": "bin/mullama.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin/mullama.js",
+    "mullama.*.node",
+    "mullama-cli.*"
+  ],
+  "napi": {
+    "name": "mullama",
+    "triples": {
+      "additional": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-pc-windows-msvc"
+      ]
+    }
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "npx napi prepublish -t npm",
+    "test": "node --test tests/",
+    "universal": "napi universal",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "engines": {
+    "node": ">= 16"
+  },
+  "keywords": [
+    "llm",
+    "llama",
+    "llama-cpp",
+    "gguf",
+    "local-llm",
+    "ollama",
+    "ollama-alternative",
+    "node-llama-cpp",
+    "embeddings",
+    "chat",
+    "streaming",
+    "typescript",
+    "electron",
+    "inference",
+    "ai",
+    "machine-learning",
+    "native",
+    "napi"
+  ],
+  "author": "Cognisoc <support@cognisoc.com>",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://docs.cognisoc.com/mullama/bindings/nodejs/",
+  "bugs": {
+    "url": "https://github.com/cognisoc/mullama/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cognisoc/mullama",
+    "directory": "bindings/node"
+  }
+}

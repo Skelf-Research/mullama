@@ -177,6 +177,157 @@ let converted_stream = streaming_converter.convert_audio_stream(
 ).await?;
 ```
 
+### 9. **Late Interaction / ColBERT** (`late-interaction` feature)
+- **Multi-Vector Embeddings**: Per-token embeddings instead of single pooled vector
+- **MaxSim Scoring**: Fine-grained token-level similarity matching
+- **Top-K Retrieval**: Efficient document ranking for semantic search
+- **Model Agnostic**: Works with any embedding model (ColBERT-trained models optimal)
+- **Parallel Scoring**: Rayon-powered parallel document scoring
+- **Analysis Tools**: Similarity matrices and token-level match inspection
+
+**Example:**
+```rust
+use mullama::late_interaction::{
+    MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer
+};
+use std::sync::Arc;
+
+// Create generator with any embedding model
+let model = Arc::new(Model::load("model.gguf")?);
+let config = MultiVectorConfig::default()
+    .normalize(true)
+    .skip_special_tokens(true);
+let mut generator = MultiVectorGenerator::new(model, config)?;
+
+// Generate multi-vector embeddings (per-token)
+let query = generator.embed_text("What is machine learning?")?;
+let documents: Vec<_> = texts.iter()
+    .map(|t| generator.embed_text(t))
+    .collect::<Result<Vec<_>, _>>()?;
+
+// Score with MaxSim: sum of max similarities per query token
+let score = LateInteractionScorer::max_sim(&query, &documents[0]);
+
+// Top-k retrieval
+let top_k = LateInteractionScorer::find_top_k(&query, &documents, 10);
+
+// Analyze token-level matches
+let matrix = LateInteractionScorer::similarity_matrix(&query, &documents[0]);
+let matches = LateInteractionScorer::best_matches(&query, &documents[0]);
+```
+
+**With parallel processing** (combine with `parallel` feature):
+```rust
+// Parallel scoring across large document collections
+let top_k = LateInteractionScorer::find_top_k_parallel(&query, &documents, 10);
+let scores = LateInteractionScorer::batch_score_parallel(&queries, &documents);
+```
+
+**Recommended models:**
+- `LiquidAI/LFM2-ColBERT-350M-GGUF` - Purpose-trained ColBERT model
+- Any GGUF embedding model (functional but suboptimal for retrieval)
+
+### 10. **Daemon Mode** (`daemon` feature)
+- **Multi-Model Server**: Run multiple models simultaneously
+- **OpenAI-Compatible API**: Drop-in replacement for OpenAI endpoints
+- **Anthropic-Compatible API**: Claude Messages API support
+- **Embedded Web UI**: Vue.js management interface
+- **Auto-Spawn**: Daemon starts automatically when needed
+- **Model Aliases**: Simple names that resolve to HuggingFace repos
+- **Modelfile/Mullamafile**: Ollama-compatible model configuration
+- **Prometheus Metrics**: Production monitoring endpoint
+- **TUI Client**: Interactive terminal chat interface
+
+**Example:**
+```bash
+# Auto-spawning - daemon starts automatically
+mullama run llama3.2:1b "Hello!"
+
+# Or start explicitly with multiple models
+mullama serve --model llama3.2:1b --model qwen2.5:7b-instruct
+
+# Use OpenAI-compatible API
+curl http://localhost:8080/v1/chat/completions \
+  -d '{"model": "llama3.2:1b", "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Use Anthropic-compatible API
+curl http://localhost:8080/v1/messages \
+  -d '{"model": "llama3.2:1b", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Access Web UI
+open http://localhost:8080/ui/
+```
+
+**Modelfile Support:**
+```dockerfile
+FROM llama3.2:1b
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192
+SYSTEM """You are a helpful assistant."""
+GPU_LAYERS 32  # Mullama extension
+```
+
+```bash
+mullama create my-assistant -f ./Modelfile
+mullama run my-assistant "Hello!"
+```
+
+### 11. **Reproducibility & Audit Features**
+- **Content-Addressed Verification**: SHA256 digest verification for model files
+- **Revision Pinning**: Pin HuggingFace models to specific commit hashes
+- **Execution Records**: Structured audit logging for inference operations
+- **Config Hashing**: Deterministic configuration fingerprinting
+- **Thinking Content Separation**: Parse and separate reasoning from output
+
+**Content Verification:**
+```dockerfile
+FROM hf:Qwen/Qwen2.5-7B-Instruct-GGUF@a1b2c3d
+DIGEST sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+**Execution Records (JSON-lines audit log):**
+```rust
+use mullama::modelfile::ExecutionRecord;
+
+let record = ExecutionRecord {
+    id: "exec-12345".to_string(),
+    timestamp: 1705123456,
+    model_digest: "sha256:abc123...".to_string(),
+    model_ref: "hf:Qwen/Qwen2.5-7B-Instruct-GGUF".to_string(),
+    revision: Some("a1b2c3d".to_string()),
+    config_hash: "sha256:config...".to_string(),
+    backend_version: "mullama-0.1.1".to_string(),
+    gpu_info: Some("NVIDIA RTX 4090".to_string()),
+    context_size: 8192,
+    gpu_layers: 35,
+    temperature: 0.7,
+    prompt_tokens: 128,
+    completion_tokens: 256,
+    duration_ms: 1500,
+    success: true,
+    error: None,
+};
+
+// Append to audit log
+let json = serde_json::to_string(&record)?;
+writeln!(audit_file, "{}", json)?;
+```
+
+**Thinking Content Separation:**
+```dockerfile
+FROM deepseek-r1:7b
+
+THINKING start "<think>"
+THINKING end "</think>"
+THINKING enabled true
+```
+
+Streaming responses include separate `thinking` field:
+```json
+{"choices":[{"delta":{"thinking":"Let me reason through this..."}}]}
+{"choices":[{"delta":{"content":"The answer is 42."}}]}
+```
+
 ## 🎯 Advanced Integration Patterns
 
 ### 1. **Complete Workflow Integration**
@@ -344,6 +495,7 @@ let config = MullamaConfig::new()
 ### Use Cases:
 - **Real-time AI Assistants**: Voice-enabled AI with streaming responses
 - **Multimodal Applications**: Combined text, image, and audio processing
+- **Semantic Search & RAG**: ColBERT-style retrieval with MaxSim scoring
 - **High-Performance Services**: Batch processing with parallel execution
 - **Web Applications**: RESTful APIs with WebSocket streaming
 - **Edge Computing**: Optimized for resource-constrained environments

@@ -87,32 +87,126 @@ let context = Context::new(&model, params)?
     .with_control_vector(control_vector, 0.8)?; // strength = 0.8
 ```
 
-## ❌ Not Yet Implemented
+## ✅ Recently Implemented
+
+### Daemon Mode Enhancements
+**Status**: Complete | **Since**: v0.1.1
+
+Major enhancements to daemon mode making it a complete Ollama alternative.
+
+**Implemented Features:**
+- **Model Aliases**: 40+ pre-configured short names (e.g., `llama3.2:1b`)
+- **Modelfile/Mullamafile**: Ollama-compatible model configuration files
+- **Anthropic API**: `/v1/messages` endpoint for Claude API compatibility
+- **Auto-Spawn**: Daemon starts automatically when CLI commands need it
+- **Embedded Web UI**: Vue.js management interface at `/ui/`
+- **Prometheus Metrics**: `/metrics` endpoint for monitoring
+- **Daemon CLI**: `mullama daemon start/stop/status/logs` commands
+- **Model Management**: `mullama create`, `mullama cp`, `mullama show --modelfile`
+
+```bash
+# Model aliases - simple names that resolve to HuggingFace
+mullama run llama3.2:1b "Hello!"
+mullama run qwen2.5:7b-instruct "Explain AI"
+
+# Modelfile support
+cat <<EOF > Modelfile
+FROM llama3.2:1b
+PARAMETER temperature 0.7
+SYSTEM "You are helpful."
+GPU_LAYERS 32
+EOF
+mullama create my-assistant -f Modelfile
+mullama run my-assistant "Hello!"
+
+# Auto-spawn - daemon starts automatically
+mullama chat  # Starts daemon if not running
+
+# Anthropic-compatible API
+curl http://localhost:8080/v1/messages \
+  -d '{"model": "llama3.2:1b", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Prometheus metrics
+curl http://localhost:8080/metrics
+```
+
+### Late Interaction / ColBERT Support
+**Status**: Complete | **Since**: v0.1.1
+
+ColBERT-style late interaction for semantic search and retrieval.
+
+**Implemented Features:**
+- Multi-vector embeddings (per-token instead of pooled)
+- MaxSim scoring with normalized and symmetric variants
+- Top-k document retrieval and ranking
+- Token-level similarity analysis (matrices, best matches)
+- Parallel scoring with rayon (when `parallel` feature enabled)
+- Works with any embedding model (ColBERT-trained models optimal)
+
+```rust
+use mullama::late_interaction::{MultiVectorGenerator, MultiVectorConfig, LateInteractionScorer};
+
+let mut generator = MultiVectorGenerator::new(model, MultiVectorConfig::default())?;
+
+// Generate per-token embeddings
+let query = generator.embed_text("What is machine learning?")?;
+let doc = generator.embed_text("Machine learning is...")?;
+
+// Score with MaxSim
+let score = LateInteractionScorer::max_sim(&query, &doc);
+let top_k = LateInteractionScorer::find_top_k(&query, &documents, 10);
+
+// With parallel feature
+let top_k = LateInteractionScorer::find_top_k_parallel(&query, &documents, 10);
+```
 
 ### LoRA (Low-Rank Adaptation) Support
-**Priority**: High | **Timeline**: v0.2.0
+**Status**: Complete | **Since**: v0.1.0
 
 LoRA allows fine-tuning models with minimal computational overhead.
 
-**Planned Features:**
+**Implemented Features:**
 - LoRA adapter loading and management
 - Multiple LoRA adapter support
-- Dynamic LoRA weight adjustment
-- LoRA composition and merging
+- Dynamic LoRA weight adjustment via scale parameter
+- Adapter metadata access
 
 ```rust
-// Planned API
 use mullama::lora::LoRAAdapter;
 
-let lora_adapter = LoRAAdapter::load("path/to/lora.bin")?;
-let model = Model::from_file("base_model.gguf")?
-    .with_lora_adapter(lora_adapter, 0.8)?; // scale = 0.8
+// Load LoRA adapter with scale
+let lora = LoRAAdapter::load(&model, "path/to/adapter.gguf", 1.0)?;
+
+// Access adapter metadata
+println!("Adapter has {} parameters", lora.info().parameters);
 ```
 
-**Why Not Yet Available:**
-- Complex memory management requirements
-- Performance optimization challenges
-- API design considerations for multi-adapter scenarios
+### Text Generation
+**Status**: Complete | **Since**: v0.1.0
+
+Full text generation pipeline with streaming support.
+
+**Implemented Features:**
+- Basic generation with `generate()`
+- Custom sampling with `generate_with_params()`
+- Streaming generation with `generate_streaming()`
+- Automatic batch chunking for long prompts
+
+```rust
+// Basic generation
+let text = context.generate(&tokens, 100)?;
+
+// With custom sampling
+let text = context.generate_with_params(&tokens, 100, &sampler_params)?;
+
+// Streaming with callback
+context.generate_streaming(&tokens, 100, &params, |token_text| {
+    print!("{}", token_text);
+    true // continue generation
+})?;
+```
+
+## ❌ Not Yet Implemented
 
 ### Speculative Decoding
 **Priority**: Medium | **Timeline**: v0.3.0
@@ -293,6 +387,7 @@ let sampler = SamplerParams::default()
 | Basic Generation | ⭐⭐⭐⭐⭐ | Highly optimized |
 | GPU Acceleration | ⭐⭐⭐⭐⭐ | Full hardware utilization |
 | Batch Processing | ⭐⭐⭐⭐⭐ | Excellent throughput |
+| Late Interaction | ⭐⭐⭐⭐⭐ | Parallel scoring, efficient MaxSim |
 | Grammar Sampling | ⭐⭐⭐⭐ | Good, optimization ongoing |
 | Control Vectors | ⭐⭐⭐ | Basic implementation |
 | Complex Sampling | ⭐⭐⭐⭐ | Well optimized |
@@ -306,19 +401,26 @@ let sampler = SamplerParams::default()
 
 ## 🗺️ Roadmap
 
-### Version 0.2.0 (Q1 2024)
-- **LoRA Support**: Complete LoRA adapter system
+### Version 0.1.x (Current - Jan 2026)
+- **llama.cpp b7542**: Latest upstream integration
+- **LoRA Support**: Complete LoRA adapter system ✅
+- **Text Generation**: Full generation pipeline with streaming ✅
+- **Flash Attention**: Auto/enabled/disabled modes ✅
+- **23+ Samplers**: Comprehensive sampling chain ✅
+- **Late Interaction**: ColBERT-style multi-vector embeddings with MaxSim ✅
+
+### Version 0.2.0 (Q1 2026)
 - **Enhanced Grammar**: Performance optimizations and advanced patterns
 - **Advanced GPU Features**: Memory optimization and profiling
 - **Control Vector API**: High-level Rust API completion
+- **Speculative Decoding**: Draft model acceleration
 
-### Version 0.3.0 (Q2 2024)
-- **Speculative Decoding**: Full implementation with performance optimization
+### Version 0.3.0 (Q2 2026)
 - **Enterprise Features**: Distributed inference and monitoring
 - **Advanced Quantization**: Runtime quantization and quality metrics
 - **Comprehensive Benchmarking**: Performance regression testing
 
-### Version 0.4.0 (Q3 2024)
+### Version 0.4.0 (Q3 2026)
 - **Multimodal Support**: Vision-language model support
 - **Advanced Sampling**: Research-based sampling innovations
 - **API Stabilization**: Long-term API compatibility guarantees
@@ -395,7 +497,9 @@ We believe in transparent development:
 
 ---
 
-**Last Updated**: September 2024
+**Last Updated**: January 2026
+**Mullama Version**: 0.1.1
+**llama.cpp Version**: b7542
 **Next Review**: With v0.2.0 release
 
-For the most current information, check our [GitHub Issues](https://github.com/username/mullama/issues) and [Discussions](https://github.com/username/mullama/discussions).
+For the most current information, check our [GitHub Issues](https://github.com/cognisoc/mullama/issues) and [Discussions](https://github.com/cognisoc/mullama/discussions).

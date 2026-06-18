@@ -3,9 +3,7 @@
 //! This is the most basic example of using Mullama for text generation.
 //! Perfect for getting started and understanding the core concepts.
 
-use mullama::{
-    Context, ContextParams, Model, MullamaError, SamplerChain, SamplerChainParams, SamplerParams,
-};
+use mullama::{Context, ContextParams, Model, MullamaError, SamplerParams};
 use std::io::{self, Write};
 use std::sync::Arc;
 

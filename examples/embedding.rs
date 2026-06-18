@@ -5,8 +5,7 @@
 //! 2. Working with embedding utilities
 //! 3. Embedding comparison and similarity
 
-use mullama::{ContextParams, EmbeddingUtil, Embeddings, Model, MullamaError};
-use std::sync::Arc;
+use mullama::{ContextParams, EmbeddingUtil, Embeddings, MullamaError};
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama embedding example");

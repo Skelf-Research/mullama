@@ -43,8 +43,6 @@ use futures::{Stream, StreamExt};
 #[cfg(feature = "streaming")]
 use std::pin::Pin;
 #[cfg(feature = "streaming")]
-use std::sync::Arc;
-#[cfg(feature = "streaming")]
 use std::task::{Context as TaskContext, Poll};
 #[cfg(feature = "streaming")]
 use tokio::sync::mpsc;
@@ -206,44 +204,77 @@ impl TokenStream {
         let prompt = prompt.into();
         let (sender, receiver) = mpsc::channel(config.buffer_size);
 
-        // Create context
-        let context = model
-            .create_context_async(config.context_params.clone())
-            .await?;
-        let sampler = config.sampler_params.build_chain(model.model().clone())?;
-
-        // Tokenize prompt
+        // Tokenize prompt on current thread (fast, no blocking)
         let tokens = model.model().tokenize(&prompt, true, false)?;
+        if tokens.is_empty() {
+            return Err(MullamaError::InvalidInput(
+                "Prompt produced no tokens".to_string(),
+            ));
+        }
+
+        // Decode prompt and create context in a blocking task
+        let model_arc = model.model().clone();
+        let context = model.create_context_async(config.context_params.clone()).await?;
+        let sampler = config.sampler_params.build_chain(model.model().clone())?;
+        let max_tokens = config.max_tokens;
+        let include_probabilities = config.include_probabilities;
+
+        // Run the entire generation loop in spawn_blocking to avoid
+        // blocking the tokio runtime. Bridge tokens via std::sync::mpsc.
+        let (blocking_tx, blocking_rx) = std::sync::mpsc::channel::<Result<TokenData, MullamaError>>();
 
         let handle = tokio::spawn(async move {
+            // Forward tokens from the blocking task's std channel to the async channel
+            while let Ok(item) = blocking_rx.recv() {
+                if sender.send(item).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Move all blocking state into the spawn_blocking task
+        tokio::task::spawn_blocking(move || {
+            let mut ctx = context.into_inner();
+
+            // Decode the prompt to establish KV cache context
+            if let Err(e) = ctx.decode(&tokens) {
+                let _ = blocking_tx.send(Err(e));
+                return;
+            }
+
             let mut sampler = sampler;
-            let mut context = context;
-            let mut position = 0;
+            let mut position: usize = 0;
 
-            for token_pos in 0..config.max_tokens {
-                // Generate next token
-                let next_token = {
-                    // This would need to be made async-safe in a real implementation
-                    let context_inner = context.into_inner();
-                    let mut temp_context = context_inner;
-                    // Use -1 to sample from the last token's logits
-                    let token = sampler.sample(&mut temp_context, -1);
-                    sampler.accept(token);
+            for token_pos in 0..max_tokens {
+                // Sample next token from the context's logits
+                let next_token = sampler.sample(&mut ctx, -1);
+                sampler.accept(next_token);
 
-                    // Recreate async context (simplified for example)
-                    context = AsyncContext::from_context(temp_context, model.model().clone());
-                    token
+                // Compute probability if requested
+                let token_prob = if include_probabilities {
+                    let logits = ctx.get_logits_ith(-1);
+                    if !logits.is_empty() && (next_token as usize) < logits.len() {
+                        let token_logit = logits[next_token as usize];
+                        let max_logit = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                        let exp_sum: f32 = logits.iter().map(|l| (l - max_logit).exp()).sum();
+                        Some((token_logit - max_logit).exp() / exp_sum)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 };
 
-                // Check for end of generation
-                let is_final = next_token == 0 || token_pos == config.max_tokens - 1;
+                // Check for end of generation using proper EOS detection
+                let is_eog = model_arc.token_is_eog(next_token);
+                let is_final = is_eog || token_pos == max_tokens - 1;
 
                 // Convert token to text
-                let text = match model.model().token_to_str(next_token, 0, false) {
+                let text = match model_arc.token_to_str(next_token, 0, false) {
                     Ok(text) => text,
                     Err(e) => {
-                        let _ = sender.send(Err(e)).await;
-                        break;
+                        let _ = blocking_tx.send(Err(e));
+                        return;
                     }
                 };
 
@@ -253,21 +284,24 @@ impl TokenStream {
                     text,
                     position,
                     is_final,
-                    probability: if config.include_probabilities {
-                        Some(0.5) // Placeholder - would need actual probability calculation
-                    } else {
-                        None
-                    },
+                    probability: token_prob,
                 };
 
-                // Send token data
-                if sender.send(Ok(token_data)).await.is_err() {
+                // Send token data via channel
+                if blocking_tx.send(Ok(token_data)).is_err() {
                     // Receiver dropped, stop generation
-                    break;
+                    return;
                 }
 
-                if is_final {
-                    break;
+                // Stop if end of generation (don't decode EOS tokens)
+                if is_eog {
+                    return;
+                }
+
+                // Decode the generated token to update KV cache for next iteration
+                if let Err(e) = ctx.decode(std::slice::from_ref(&next_token)) {
+                    let _ = blocking_tx.send(Err(e));
+                    return;
                 }
 
                 position += 1;
@@ -337,25 +371,6 @@ impl Stream for TokenStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         self.receiver.poll_recv(cx)
-    }
-}
-
-/// Simplified AsyncContext for streaming (would need proper implementation)
-#[cfg(feature = "streaming")]
-struct AsyncContext {
-    _model: Arc<crate::Model>,
-    // This is a simplified placeholder
-}
-
-#[cfg(feature = "streaming")]
-impl AsyncContext {
-    fn from_context(_context: crate::Context, model: Arc<crate::Model>) -> Self {
-        Self { _model: model }
-    }
-
-    fn into_inner(self) -> crate::Context {
-        // Placeholder implementation
-        panic!("This is a placeholder implementation")
     }
 }
 

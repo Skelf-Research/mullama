@@ -1,36 +1,62 @@
+[workspace]
+members = [".", "bindings/ffi", "bindings/python", "bindings/node"]
+
 [package]
 name = "mullama"
-version = "0.1.0"
+version = "0.3.1"
 edition = "2021"
-authors = ["Mullama Contributors"]
+rust-version = "1.75"
+authors = ["Cognisoc <support@cognisoc.com>"]
 description = "Comprehensive Rust bindings for llama.cpp with memory-safe API and advanced features"
 license = "MIT"
-repository = "https://github.com/yourusername/mullama"
-documentation = "https://docs.rs/mullama"
-homepage = "https://github.com/yourusername/mullama"
+repository = "https://github.com/cognisoc/mullama"
+documentation = "https://docs.cognisoc.com/mullama"
+homepage = "https://mullama.cognisoc.com"
 readme = "README.md"
-keywords = ["llm", "llama", "ai", "inference", "bindings"]
+keywords = ["llm", "llama", "gguf", "local-llm", "ollama"]
 categories = ["api-bindings", "science", "text-processing"]
-links = "llama"
 build = "build.rs"
+include = [
+    "/src/**/*",
+    "/examples/**/*",
+    "/tests/**/*",
+    "/configs/modelfiles/**/*",
+    "/build.rs",
+    "/wrapper.h",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/CHANGELOG.md",
+]
 
 [features]
 default = []
-multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio-util"]
-format-conversion = ["multimodal", "ffmpeg-next"]
+serde = []
+llama-cpp-tests = []
+multimodal = ["image", "imageproc", "hound", "symphonia", "rubato", "dasp", "tokio", "tokio-util"]
+format-conversion = ["multimodal", "ffmpeg-sys-next", "futures"]
 streaming-audio = ["multimodal", "cpal", "ringbuf"]
 cuda = []
 rocm = []
-async = ["tokio", "futures"]
+vulkan = []
+sycl = []
+rpc = []
+async = ["tokio", "futures", "tokio-util"]
 streaming = ["async", "async-stream"]
 web = ["async", "axum", "tower", "tower-http"]
-websockets = ["async", "axum", "tokio-tungstenite"]
+websockets = ["async", "axum", "tokio-tungstenite", "uuid"]
 parallel = ["rayon"]
+late-interaction = []
 tokio-runtime = ["tokio", "tokio-util"]
-daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding"]
+use-mimalloc = ["mimalloc"]
+daemon = ["async", "tokio-runtime", "web", "nng", "ratatui", "crossterm", "clap", "reqwest", "indicatif", "urlencoding", "tokio-stream", "base64", "include_dir", "mime_guess", "tracing", "tracing-subscriber", "sled", "use-mimalloc", "zip"]
+embedded-ui = ["include_dir", "mime_guess"]
+tls = ["axum-server"]
 windows-optimization = ["windows"]
 macos-optimization = ["core-foundation", "coreaudio-rs"]
-full = ["async", "streaming", "web", "websockets", "multimodal", "parallel", "tokio-runtime", "format-conversion", "streaming-audio", "daemon"]
+full = ["async", "streaming", "web", "websockets", "multimodal", "parallel", "late-interaction", "tokio-runtime", "format-conversion", "streaming-audio", "daemon", "use-mimalloc"]
 
 [dependencies]
 thiserror = "1.0"
@@ -39,21 +65,41 @@ num_enum = "0.7"
 num_cpus = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
+regex = "1.10"
 rand = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3.0"
 dirs = "5.0"
+mimalloc = { version = "0.1", default-features = false, optional = true }
+sha2 = "0.10"
+uuid = { version = "1.0", features = ["v4"], optional = true }
+
+# Rust-specific performance optimizations
+dashmap = "5.5"                                          # Lock-free concurrent HashMap
+smallvec = { version = "1.11", features = ["union"] }    # Stack-allocated small vectors
+parking_lot = "0.12"                                     # Faster mutexes than std
+bumpalo = "3.14"                                         # Arena allocator for batch ops
+rkyv = { version = "0.7", features = ["validation", "strict"] }  # Zero-copy serialization
 
 # Async support
 tokio = { version = "1.0", features = ["full"], optional = true }
 tokio-util = { version = "0.7", features = ["codec", "io", "rt"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
 futures = { version = "0.3", optional = true }
 async-stream = { version = "0.3", optional = true }
 
 # Web framework integration
-axum = { version = "0.7", optional = true }
-tower = { version = "0.4", features = ["timeout"], optional = true }
-tower-http = { version = "0.5", features = ["cors"], optional = true }
+axum = { version = "0.7", features = ["ws"], optional = true }
+tower = { version = "0.4", features = ["timeout", "limit"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+
+# Tracing/logging
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# TLS support
+axum-server = { version = "0.6", features = ["tls-rustls"], optional = true }
 
 # WebSocket support
 tokio-tungstenite = { version = "0.20", optional = true }
@@ -70,26 +116,36 @@ dasp = { version = "0.11", features = ["all"], optional = true }
 cpal = { version = "0.15", optional = true }
 
 # Image processing (for multimodal)
-image = { version = "0.24", features = ["jpeg", "png", "webp", "tiff", "bmp"], optional = true }
+image = { version = "0.24", features = ["jpeg", "png", "webp", "tiff", "bmp", "gif"], optional = true }
 imageproc = { version = "0.23", optional = true }
 
 # Format conversion and streaming
-ffmpeg-next = { version = "6.0", optional = true }
-gstreamer = { version = "0.21", optional = true }
+ffmpeg-sys-next = { version = "6.0", path = "vendor/ffmpeg-sys-next", default-features = false, features = ["avcodec", "avformat", "swscale"], optional = true }
 
 # Real-time audio streaming
 ringbuf = { version = "0.3", optional = true }
 
 # Daemon and TUI
 nng = { version = "1.0", optional = true }
+sled = { version = "0.34", optional = true }
 ratatui = { version = "0.28", optional = true }
 crossterm = { version = "0.28", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
 
 # HTTP client for HuggingFace downloads
-reqwest = { version = "0.11", features = ["stream", "json"], optional = true }
+reqwest = { version = "0.11", features = ["stream", "json", "blocking"], optional = true }
 indicatif = { version = "0.17", optional = true }
 urlencoding = { version = "2.1", optional = true }
+
+# Archive format support for control vectors
+zip = { version = "2.2", optional = true }
+
+# Base64 encoding/decoding (for image data URIs)
+base64 = { version = "0.22", optional = true }
+
+# Embedded Web UI
+include_dir = { version = "0.7", optional = true }
+mime_guess = { version = "2.0", optional = true }
 
 # Platform-specific dependencies
 [target.'cfg(windows)'.dependencies]
@@ -133,3 +189,50 @@ required-features = ["daemon"]
 name = "mullama-bench"
 path = "src/bin/mullama-bench.rs"
 required-features = ["daemon"]
+
+# Examples that require specific features
+[[example]]
+name = "async_generation"
+required-features = ["async"]
+
+[[example]]
+name = "streaming_generation"
+required-features = ["streaming"]
+
+[[example]]
+name = "web_service"
+required-features = ["web"]
+
+[[example]]
+name = "streaming_audio_demo"
+required-features = ["streaming-audio"]
+
+[[example]]
+name = "builder_patterns"
+required-features = ["async"]
+
+[[example]]
+name = "configuration_management"
+required-features = ["async"]
+
+[[example]]
+name = "complete_integration_demo"
+required-features = ["async"]
+
+[[example]]
+name = "integration_showcase"
+required-features = ["async"]
+
+[[example]]
+name = "chat"
+required-features = ["async"]
+
+[[example]]
+name = "late_interaction"
+required-features = ["late-interaction"]
+
+[[example]]
+name = "simple"
+
+[[example]]
+name = "multi_model"

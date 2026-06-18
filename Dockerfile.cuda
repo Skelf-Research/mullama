@@ -1,0 +1,54 @@
+# NVIDIA CUDA variant for Mullama
+# Stage 1: Build with CUDA support
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Rust and system dependencies
+RUN apt-get update && apt-get install -y \
+    curl build-essential cmake pkg-config git \
+    libasound2-dev libpulse-dev libflac-dev libvorbis-dev libopus-dev \
+    libpng-dev libjpeg-dev libtiff-dev libwebp-dev \
+    ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+COPY . .
+
+# Initialize submodules
+RUN git submodule update --init --recursive || true
+
+# Build with CUDA acceleration
+ENV LLAMA_CUDA=1
+RUN cargo build --release --features daemon
+
+# Stage 2: Runtime with CUDA
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y \
+    libasound2 libpulse0 libflac12 libvorbis0a libopus0 \
+    libpng16-16 libjpeg-turbo8 libtiff5 libwebp7 \
+    ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash mullama
+
+COPY --from=builder /app/target/release/mullama /usr/local/bin/mullama
+COPY --from=builder /app/configs /etc/mullama/configs
+
+RUN mkdir -p /models && chown mullama:mullama /models
+
+USER mullama
+WORKDIR /home/mullama
+
+EXPOSE 8080
+
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+ENTRYPOINT ["mullama"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,28 +1,60 @@
-# 🚀 Getting Started with Mullama
+# Getting Started with Mullama
 
-This guide will help you get up and running with Mullama's advanced integration features quickly.
+This guide will help you get up and running with Mullama quickly.
 
-## 📋 Table of Contents
+## Quick Install
 
-- [Installation](#-installation)
-- [Basic Setup](#-basic-setup)
-- [Feature Overview](#-feature-overview)
-- [Your First Application](#-your-first-application)
-- [Common Patterns](#-common-patterns)
-- [Next Steps](#-next-steps)
+**One-liner (Linux/macOS):**
 
-## 🛠️ Installation
+```bash
+curl -fsSL https://mullama.cognisoc.com/install.sh | sh
+```
 
-### Basic Installation
+**Windows (PowerShell):**
+
+```powershell
+iwr -useb https://mullama.cognisoc.com/install.ps1 | iex
+```
+
+**Then run your first model:**
+
+```bash
+mullama run llama3.2:1b "Hello, AI!"
+```
+
+Coming from Ollama? Your commands work unchanged: `run`, `pull`, `serve`, `list`, `chat`.
+
+---
+
+## Table of Contents
+
+- [Installation Options](#installation-options)
+- [Basic Setup](#basic-setup)
+- [Feature Overview](#feature-overview)
+- [Your First Application](#your-first-application)
+- [Common Patterns](#common-patterns)
+- [Next Steps](#next-steps)
+
+## Installation Options
+
+### CLI / Daemon (Recommended)
+
+Use the one-liner above, or install with Cargo:
+
+```bash
+cargo install mullama --features daemon
+```
+
+### Rust Library
 
 Add Mullama to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mullama = "0.1.0"
+mullama = "0.1.1"
 
 # For complete feature experience
-mullama = { version = "0.1.0", features = ["full"] }
+mullama = { version = "0.1.1", features = ["full"] }
 ```
 
 ### Platform-Specific Setup
@@ -140,7 +172,7 @@ Test your setup with a simple build:
 
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/username/mullama.git
+git clone --recurse-submodules https://github.com/cognisoc/mullama.git
 cd mullama
 
 # Test basic build
@@ -221,6 +253,9 @@ features = ["multimodal", "streaming-audio", "format-conversion"]
 # High-performance
 features = ["parallel", "tokio-runtime", "async"]
 
+# Semantic search / RAG
+features = ["late-interaction", "parallel"]
+
 # Everything
 features = ["full"]
 ```
@@ -237,6 +272,7 @@ features = ["full"]
 | `streaming-audio` | Live audio processing | Voice assistants |
 | `format-conversion` | Media format support | File processing |
 | `parallel` | Batch processing | High throughput |
+| `late-interaction` | ColBERT-style search | Semantic search, RAG |
 | `tokio-runtime` | Advanced async control | Production services |
 
 ## 🎮 Your First Application
@@ -518,7 +554,7 @@ async fn load_from_config() -> Result<AsyncModel, MullamaError> {
 
 ### Beginner
 1. **Try the examples**: Run `cargo run --example simple --features async`
-2. **Read the API docs**: Check out [docs.rs/mullama](https://docs.rs/mullama)
+2. **Read the API docs**: Check out [docs.cognisoc.com/mullama](https://docs.cognisoc.com/mullama)
 3. **Join the community**: Visit our [Discord](https://discord.gg/mullama)
 
 ### Intermediate
@@ -533,7 +569,7 @@ async fn load_from_config() -> Result<AsyncModel, MullamaError> {
 
 ### Learning Resources
 
-- 📚 **[API Documentation](https://docs.rs/mullama)** - Complete API reference
+- 📚 **[API Documentation](https://docs.cognisoc.com/mullama)** - Complete API reference
 - 🎯 **[Examples Directory](../examples/)** - Practical code examples
 - 📖 **[Integration Guide](./FEATURES.md)** - Detailed feature documentation
 - 💬 **[Community Discord](https://discord.gg/mullama)** - Get help and share projects

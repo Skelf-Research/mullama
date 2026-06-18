@@ -54,21 +54,13 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{interval, Interval};
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream as TokioStream;
 
 #[cfg(feature = "streaming-audio")]
 use {
     cpal::{
         traits::{DeviceTrait, HostTrait, StreamTrait},
-        BufferSize, ChannelCount, Device, Host, SampleFormat, SampleRate, Stream, StreamConfig,
-        SupportedStreamConfig,
-    },
-    dasp::{
-        interpolate::linear::Linear,
-        ring_buffer::Fixed,
-        signal::{self, Signal},
-        Frame, Sample,
+        BufferSize, Device, Host, SampleRate, Stream as CpalStream, StreamConfig,
     },
     ringbuf::{HeapConsumer, HeapProducer, HeapRb},
 };
@@ -119,7 +111,7 @@ impl Default for AudioStreamConfig {
             sample_rate: 16000, // Good for speech processing
             channels: 1,        // Mono for efficiency
             buffer_size: 512,   // Balance between latency and stability
-            format: AudioFormat::WAV,
+            format: wav_audio_format(),
             enable_noise_reduction: true,
             enable_voice_detection: true,
             enable_agc: true,
@@ -170,6 +162,15 @@ impl AudioStreamConfig {
     pub fn max_latency_ms(mut self, latency: u32) -> Self {
         self.max_latency_ms = latency;
         self
+    }
+}
+
+fn wav_audio_format() -> AudioFormat {
+    AudioFormat {
+        container: "wav".to_string(),
+        codec: "pcm".to_string(),
+        bit_depth: 16,
+        bitrate: None,
     }
 }
 
@@ -239,7 +240,7 @@ impl AudioChunk {
             sample_rate: self.sample_rate,
             channels: self.channels as u32,
             duration: self.duration.as_secs_f32(),
-            format: AudioFormat::WAV,
+            format: wav_audio_format(),
             transcript: None,
             metadata: HashMap::new(),
         }
@@ -251,8 +252,9 @@ impl AudioChunk {
 
         if self.signal_level < threshold_linear {
             // Apply gentle fade to avoid clicks
+            let sample_count = self.samples.len() as f32;
             for (i, sample) in self.samples.iter_mut().enumerate() {
-                let fade_factor = (1.0 - (i as f32 / self.samples.len() as f32)) * 0.1;
+                let fade_factor = (1.0 - (i as f32 / sample_count)) * 0.1;
                 *sample *= fade_factor;
             }
         }
@@ -283,7 +285,7 @@ pub struct StreamingAudioProcessor {
     output_device: Option<Device>,
 
     #[cfg(feature = "streaming-audio")]
-    stream: Option<Stream>,
+    stream: Option<CpalStream>,
 
     // Ring buffer for audio data
     #[cfg(feature = "streaming-audio")]
@@ -299,7 +301,7 @@ pub struct StreamingAudioProcessor {
 }
 
 /// Metrics for streaming audio performance monitoring
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StreamingMetrics {
     pub chunks_processed: u64,
     pub total_samples: u64,
@@ -383,7 +385,7 @@ impl StreamingAudioProcessor {
             let stream_config = self.build_stream_config()?;
 
             // Create audio processing callback
-            let producer = self.audio_producer.take().ok_or_else(|| {
+            let mut producer = self.audio_producer.take().ok_or_else(|| {
                 MullamaError::StreamingError("Ring buffer not initialized".to_string())
             })?;
 
@@ -394,22 +396,15 @@ impl StreamingAudioProcessor {
             let stream = self.input_device.as_ref().unwrap().build_input_stream(
                 &stream_config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _guard = tokio::runtime::Handle::try_current();
-                    if let Ok(guard) = _guard {
-                        guard.spawn(async move {
-                            if let Ok(recording) = is_recording.read().await {
-                                if *recording {
-                                    Self::process_audio_callback(
-                                        data,
-                                        &producer,
-                                        &config,
-                                        &chunk_sender,
-                                        &metrics,
-                                    )
-                                    .await;
-                                }
-                            }
-                        });
+                    let recording = is_recording.try_read().map(|guard| *guard).unwrap_or(false);
+                    if recording {
+                        Self::process_audio_callback(
+                            data,
+                            &mut producer,
+                            &config,
+                            &chunk_sender,
+                            &metrics,
+                        );
                     }
                 },
                 move |err| {
@@ -538,7 +533,7 @@ impl StreamingAudioProcessor {
         let supported_configs = device.supported_input_configs()?;
 
         // Find best matching configuration
-        let config = supported_configs
+        let _config = supported_configs
             .filter(|config| config.channels() == self.config.channels)
             .find(|config| {
                 config.min_sample_rate() <= SampleRate(self.config.sample_rate)
@@ -556,9 +551,9 @@ impl StreamingAudioProcessor {
     }
 
     #[cfg(feature = "streaming-audio")]
-    async fn process_audio_callback(
+    fn process_audio_callback(
         data: &[f32],
-        producer: &HeapProducer<f32>,
+        producer: &mut HeapProducer<f32>,
         config: &AudioStreamConfig,
         sender: &mpsc::UnboundedSender<AudioChunk>,
         metrics: &Arc<RwLock<StreamingMetrics>>,
@@ -607,7 +602,7 @@ impl AudioStream {
     }
 }
 
-impl Stream for AudioStream {
+impl TokioStream for AudioStream {
     type Item = AudioChunk;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

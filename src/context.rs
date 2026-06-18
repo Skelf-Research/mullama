@@ -1,5 +1,112 @@
-use crate::{batch::Batch, error::MullamaError, model::Model, sys, token::TokenId};
+use crate::{
+    batch::Batch,
+    error::MullamaError,
+    model::Model,
+    sampling::SamplerParams,
+    sys,
+    token::{GenerationBuffer, TokenId},
+};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// KV-cache quantization type
+///
+/// Controls the precision of the Key and Value cache, trading off memory usage
+/// for potential quality loss. Lower precision types use less memory but may
+/// slightly affect output quality.
+///
+/// # Memory Savings (approximate, vs F16 baseline)
+/// - F32: 2x memory (highest precision)
+/// - F16/BF16: 1x memory (default)
+/// - Q8_0: 0.5x memory (~50% reduction)
+/// - Q4_0: 0.25x memory (~75% reduction)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KvCacheType {
+    /// 32-bit floating point (highest precision, 2x memory vs F16)
+    F32,
+    /// 16-bit floating point (default, best balance of quality and memory)
+    #[default]
+    F16,
+    /// BrainFloat16 (alternative 16-bit format, good for training)
+    BF16,
+    /// 8-bit quantized (~50% memory savings vs F16)
+    Q8_0,
+    /// 4-bit quantized (~75% memory savings vs F16, may affect quality)
+    Q4_0,
+}
+
+impl KvCacheType {
+    /// Convert to llama.cpp ggml_type
+    pub fn to_ggml_type(self) -> sys::ggml_type {
+        match self {
+            Self::F32 => sys::ggml_type::GGML_TYPE_F32,
+            Self::F16 => sys::ggml_type::GGML_TYPE_F16,
+            Self::BF16 => sys::ggml_type::GGML_TYPE_BF16,
+            Self::Q8_0 => sys::ggml_type::GGML_TYPE_Q8_0,
+            Self::Q4_0 => sys::ggml_type::GGML_TYPE_Q4_0,
+        }
+    }
+
+    /// Get approximate memory multiplier relative to F16
+    ///
+    /// Returns a factor indicating relative memory usage:
+    /// - 2.0 for F32 (uses 2x the memory of F16)
+    /// - 1.0 for F16/BF16 (baseline)
+    /// - 0.5 for Q8_0 (uses half the memory of F16)
+    /// - 0.25 for Q4_0 (uses quarter the memory of F16)
+    pub fn memory_factor(self) -> f32 {
+        match self {
+            Self::F32 => 2.0,
+            Self::F16 | Self::BF16 => 1.0,
+            Self::Q8_0 => 0.5,
+            Self::Q4_0 => 0.25,
+        }
+    }
+
+    /// Parse from string (for CLI/config)
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "f32" => Some(Self::F32),
+            "f16" => Some(Self::F16),
+            "bf16" => Some(Self::BF16),
+            "q8_0" | "q8" => Some(Self::Q8_0),
+            "q4_0" | "q4" => Some(Self::Q4_0),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for KvCacheType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::F32 => write!(f, "f32"),
+            Self::F16 => write!(f, "f16"),
+            Self::BF16 => write!(f, "bf16"),
+            Self::Q8_0 => write!(f, "q8_0"),
+            Self::Q4_0 => write!(f, "q4_0"),
+        }
+    }
+}
+
+impl std::str::FromStr for KvCacheType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "f32" => Ok(Self::F32),
+            "f16" => Ok(Self::F16),
+            "bf16" => Ok(Self::BF16),
+            "q8_0" | "q8" => Ok(Self::Q8_0),
+            "q4_0" | "q4" => Ok(Self::Q4_0),
+            _ => Err(format!(
+                "Invalid KV-cache type '{}'. Valid options: f32, f16, bf16, q8_0, q4_0",
+                s
+            )),
+        }
+    }
+}
 
 /// Parameters for creating a context
 #[derive(Debug, Clone)]
@@ -13,6 +120,7 @@ pub struct ContextParams {
     pub rope_scaling_type: sys::llama_rope_scaling_type,
     pub pooling_type: sys::llama_pooling_type,
     pub attention_type: sys::llama_attention_type,
+    pub flash_attn_type: sys::llama_flash_attn_type,
     pub rope_freq_base: f32,
     pub rope_freq_scale: f32,
     pub yarn_ext_factor: f32,
@@ -22,12 +130,21 @@ pub struct ContextParams {
     pub yarn_orig_ctx: u32,
     pub defrag_thold: f32,
     pub embeddings: bool,
-    pub flash_attn: bool,
     pub offload_kqv: bool,
     pub no_perf: bool,
     pub op_offload: bool,
     pub swa_full: bool,
     pub kv_unified: bool,
+    /// Key cache quantization type (default: F16)
+    ///
+    /// Lower precision types save memory but may slightly affect quality.
+    /// Q8_0 provides ~50% memory savings, Q4_0 provides ~75% savings.
+    pub type_k: KvCacheType,
+    /// Value cache quantization type (default: F16)
+    ///
+    /// Lower precision types save memory but may slightly affect quality.
+    /// Q8_0 provides ~50% memory savings, Q4_0 provides ~75% savings.
+    pub type_v: KvCacheType,
 }
 
 impl Default for ContextParams {
@@ -42,6 +159,7 @@ impl Default for ContextParams {
             rope_scaling_type: sys::llama_rope_scaling_type::LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED,
             pooling_type: sys::llama_pooling_type::LLAMA_POOLING_TYPE_UNSPECIFIED,
             attention_type: sys::llama_attention_type::LLAMA_ATTENTION_TYPE_UNSPECIFIED,
+            flash_attn_type: sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO,
             rope_freq_base: 0.0,
             rope_freq_scale: 0.0,
             yarn_ext_factor: -1.0,
@@ -51,12 +169,13 @@ impl Default for ContextParams {
             yarn_orig_ctx: 0,
             defrag_thold: -1.0,
             embeddings: false,
-            flash_attn: false,
             offload_kqv: true,
             no_perf: false,
             op_offload: false,
             swa_full: true,
             kv_unified: false,
+            type_k: KvCacheType::default(),
+            type_v: KvCacheType::default(),
         }
     }
 }
@@ -83,6 +202,7 @@ impl Context {
         llama_params.rope_scaling_type = params.rope_scaling_type;
         llama_params.pooling_type = params.pooling_type;
         llama_params.attention_type = params.attention_type;
+        llama_params.flash_attn_type = params.flash_attn_type;
         llama_params.rope_freq_base = params.rope_freq_base;
         llama_params.rope_freq_scale = params.rope_freq_scale;
         llama_params.yarn_ext_factor = params.yarn_ext_factor;
@@ -93,11 +213,14 @@ impl Context {
         llama_params.defrag_thold = params.defrag_thold;
         llama_params.embeddings = params.embeddings;
         llama_params.offload_kqv = params.offload_kqv;
-        llama_params.flash_attn = params.flash_attn;
         llama_params.no_perf = params.no_perf;
         llama_params.op_offload = params.op_offload;
         llama_params.swa_full = params.swa_full;
         llama_params.kv_unified = params.kv_unified;
+
+        // Apply KV-cache quantization types
+        llama_params.type_k = params.type_k.to_ggml_type();
+        llama_params.type_v = params.type_v.to_ggml_type();
 
         // Create the context
         let ctx_ptr = unsafe { sys::llama_init_from_model(model.as_ptr(), llama_params) };
@@ -112,30 +235,90 @@ impl Context {
     }
 
     /// Process a batch of tokens
+    ///
+    /// If the number of tokens exceeds the batch size (n_batch), they will be
+    /// automatically processed in chunks.
     pub fn decode(&mut self, tokens: &[TokenId]) -> Result<(), MullamaError> {
-        // Create a simple batch for these tokens
-        let mut batch = Batch::from_tokens(tokens);
+        if tokens.is_empty() {
+            return Ok(());
+        }
 
-        // Get the llama_batch and call llama_decode
-        if let Some(llama_batch) = batch.take_llama_batch() {
-            let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+        let batch_size = self.n_batch() as usize;
 
-            if result != 0 {
-                return Err(MullamaError::GenerationError(format!(
-                    "Decode failed with code: {}",
-                    result
-                )));
+        // Process tokens in chunks if they exceed batch size
+        for chunk in tokens.chunks(batch_size) {
+            let mut batch = Batch::from_tokens(chunk);
+
+            // Get the llama_batch and call llama_decode
+            if let Some(llama_batch) = batch.take_llama_batch() {
+                let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+
+                if result != 0 {
+                    return Err(MullamaError::GenerationError(format!(
+                        "Decode failed with code: {}",
+                        result
+                    )));
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Simple text generation (placeholder - full implementation would use sampling)
+    /// Decode a single token - optimized to avoid allocation
+    #[inline]
+    pub fn decode_single(&mut self, token: TokenId) -> Result<(), MullamaError> {
+        // Use stack-allocated array and llama_batch_get_one directly
+        let mut tokens = [token];
+        let llama_batch = unsafe { sys::llama_batch_get_one(tokens.as_mut_ptr(), 1) };
+        let result = unsafe { sys::llama_decode(self.ctx_ptr, llama_batch) };
+        if result != 0 {
+            return Err(MullamaError::GenerationError(format!(
+                "Decode failed with code: {}",
+                result
+            )));
+        }
+        Ok(())
+    }
+
+    /// Generate text from prompt tokens using default sampling parameters
+    ///
+    /// This is the main generation method that:
+    /// 1. Processes the prompt through the model
+    /// 2. Samples tokens using a sampler chain
+    /// 3. Returns the generated text
+    ///
+    /// For custom sampling parameters, use `generate_with_params()`.
     pub fn generate(
         &mut self,
         prompt_tokens: &[TokenId],
         max_tokens: usize,
+    ) -> Result<String, MullamaError> {
+        self.generate_with_params(prompt_tokens, max_tokens, &SamplerParams::default())
+    }
+
+    /// Generate text with custom sampling parameters
+    ///
+    /// # Arguments
+    /// * `prompt_tokens` - Tokenized prompt
+    /// * `max_tokens` - Maximum number of tokens to generate
+    /// * `sampler_params` - Sampling parameters (temperature, top-k, top-p, etc.)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let params = SamplerParams {
+    ///     temperature: 0.7,
+    ///     top_k: 50,
+    ///     top_p: 0.9,
+    ///     ..Default::default()
+    /// };
+    /// let text = context.generate_with_params(&tokens, 100, &params)?;
+    /// ```
+    pub fn generate_with_params(
+        &mut self,
+        prompt_tokens: &[TokenId],
+        max_tokens: usize,
+        sampler_params: &SamplerParams,
     ) -> Result<String, MullamaError> {
         if prompt_tokens.is_empty() {
             return Err(MullamaError::GenerationError(
@@ -143,43 +326,125 @@ impl Context {
             ));
         }
 
-        // Create a batch for the prompt tokens
-        let batch = Batch::from_tokens(prompt_tokens);
+        // Process the prompt
+        self.decode(prompt_tokens)?;
+
+        // Create sampler chain with the provided parameters
+        let mut sampler = sampler_params.build_chain(self.model.clone())?;
+
+        // Generation loop - uses SmallVec for stack allocation when possible
+        // For up to 256 tokens, this avoids heap allocation (Rust-exclusive optimization)
+        let mut generated_tokens = GenerationBuffer::new();
+        for _ in 0..max_tokens {
+            // Sample next token (idx=-1 for last token's logits)
+            let token = sampler.sample(self, -1);
+            sampler.accept(token);
+
+            // Check for end of generation
+            if self.model.token_is_eog(token) {
+                break;
+            }
+
+            generated_tokens.push(token);
+
+            // Decode the new token for next iteration
+            self.decode(&[token])?;
+        }
+
+        // Convert tokens to text
+        self.model.detokenize(&generated_tokens, false, false)
+    }
+
+    /// Generate text with streaming callback for real-time output
+    ///
+    /// The callback is called for each generated token with the token's text.
+    /// Return `false` from the callback to stop generation early.
+    ///
+    /// # Arguments
+    /// * `prompt_tokens` - Tokenized prompt
+    /// * `max_tokens` - Maximum number of tokens to generate
+    /// * `sampler_params` - Sampling parameters
+    /// * `callback` - Called with each token's text; return false to stop
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// context.generate_streaming(&tokens, 100, &SamplerParams::default(), |text| {
+    ///     print!("{}", text);
+    ///     std::io::stdout().flush().unwrap();
+    ///     true // Continue generation
+    /// })?;
+    /// ```
+    pub fn generate_streaming<F>(
+        &mut self,
+        prompt_tokens: &[TokenId],
+        max_tokens: usize,
+        sampler_params: &SamplerParams,
+        mut callback: F,
+    ) -> Result<String, MullamaError>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        if prompt_tokens.is_empty() {
+            return Err(MullamaError::GenerationError(
+                "Empty prompt tokens".to_string(),
+            ));
+        }
 
         // Process the prompt
         self.decode(prompt_tokens)?;
 
-        // Note: A full implementation would:
-        // 1. Get logits using self.logits()
-        // 2. Apply sampling using a sampler
-        // 3. Generate tokens one by one
-        // 4. Convert tokens back to text
-        // For now, return a meaningful placeholder
-        Ok(format!(
-            "[Placeholder] Generated {} tokens from prompt of {} tokens",
-            max_tokens,
-            prompt_tokens.len()
-        ))
+        // Create sampler chain
+        let mut sampler = sampler_params.build_chain(self.model.clone())?;
+
+        // Generation loop with streaming - uses SmallVec for stack allocation
+        let mut generated_tokens = GenerationBuffer::new();
+        for _ in 0..max_tokens {
+            // Sample next token
+            let token = sampler.sample(self, -1);
+            sampler.accept(token);
+
+            // Check for end of generation
+            if self.model.token_is_eog(token) {
+                break;
+            }
+
+            generated_tokens.push(token);
+
+            // Convert token to text and call callback
+            let piece = self.model.token_to_str(token, 0, false)?;
+            if !callback(&piece) {
+                // User requested stop
+                break;
+            }
+
+            // Decode the new token for next iteration
+            self.decode(&[token])?;
+        }
+
+        // Return the full generated text
+        self.model.detokenize(&generated_tokens, false, false)
     }
 
     /// Get logits from the last evaluation
+    ///
+    /// Returns a slice of logits for the last token in the batch.
+    /// Use get_logits() for all tokens or get_logits_ith() for specific positions.
     pub fn logits(&self) -> Result<&[f32], MullamaError> {
-        // In a real implementation, this would:
-        // 1. Call llama_get_logits to get the raw pointer
-        // 2. Determine the size (vocab size * batch size)
-        // 3. Create a slice from the pointer
-        // For now, return an empty slice as a placeholder
-        Ok(&[])
+        let logits = self.get_logits();
+        if logits.is_empty() {
+            return Err(MullamaError::GenerationError(
+                "No logits available - call decode() first".to_string(),
+            ));
+        }
+        Ok(logits)
     }
 
     /// Get embeddings (if enabled)
+    ///
+    /// Returns embeddings if the context was created with embeddings=true.
+    /// Use get_embeddings_ith() or get_embeddings_seq() for specific positions.
     pub fn embeddings(&self) -> Result<Option<&[f32]>, MullamaError> {
-        // In a real implementation, this would:
-        // 1. Call llama_get_embeddings to get the raw pointer
-        // 2. Determine the size
-        // 3. Create a slice from the pointer
-        // For now, return None as a placeholder
-        Ok(None)
+        Ok(self.get_embeddings())
     }
 
     /// Get the model associated with this context
@@ -748,14 +1013,17 @@ impl Context {
     /// Set an abort callback for long operations
     ///
     /// The callback will be called periodically and can return true to abort.
-    pub fn set_abort_callback(
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `user_data` points to valid memory that will remain
+    /// valid for the lifetime of this callback, or is null.
+    pub unsafe fn set_abort_callback(
         &mut self,
         callback: Option<unsafe extern "C" fn(data: *mut std::os::raw::c_void) -> sys::c_bool>,
         user_data: *mut std::os::raw::c_void,
     ) {
-        unsafe {
-            sys::llama_set_abort_callback(self.ctx_ptr, callback, user_data);
-        }
+        sys::llama_set_abort_callback(self.ctx_ptr, callback, user_data);
     }
 }
 
@@ -802,13 +1070,31 @@ impl Drop for Context {
 }
 
 // SAFETY: Context can be sent between threads because:
-// 1. The raw pointer is never dereferenced without proper synchronization
-// 2. All operations are synchronized via RwLock when used in async contexts
+// 1. The raw llama_context pointer is never dereferenced without proper synchronization
+// 2. All operations that use the raw pointer are serialized through either:
+//    - &mut self (exclusive access, no concurrent calls)
+//    - RwLock in async contexts (concurrent reads serialized)
 // 3. llama_context is designed to be used from a single thread at a time,
-//    which we ensure through the RwLock guard
+//    which we enforce by never calling llama_context methods concurrently
+// 4. The Context struct does not use any Rust types that are !Send
 unsafe impl Send for Context {}
 
-// SAFETY: Context can be shared between threads because:
-// 1. All mutable operations are done through &mut self
-// 2. When wrapped in RwLock, concurrent access is properly synchronized
+// SAFETY: Context can be shared between threads (&Context) because:
+// 1. All mutable operations require &mut self, ensuring exclusive access
+// 2. When wrapped in RwLock (async contexts), concurrent readers are
+//    properly synchronized against writers
+// 3. Shared references only allow read-only access to metadata, which
+//    is thread-safe
+// 4. The underlying llama_context is never accessed through &Context
+//    without internal synchronization
+//
+// WARNING: This impl is technically unsound — llama_context is not
+// thread-safe for concurrent reads. This is accepted as a pragmatic
+// trade-off because: (a) the daemon architecture wraps Context in
+// Arc<RwLock<Context>> providing runtime synchronization, and (b)
+// the direct library API is used from a single thread per context.
+// If Context were !Sync, it could not be stored in Arc<RwLock<>>,
+// which is required by the daemon's model pooling design.
+// Do NOT call Context methods concurrently from multiple threads
+// without external synchronization (e.g., RwLock).
 unsafe impl Sync for Context {}

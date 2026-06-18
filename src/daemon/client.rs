@@ -71,16 +71,13 @@ impl DaemonClient {
             .send(nng::Message::from(req_bytes.as_slice()))
             .map_err(|(_, e)| MullamaError::DaemonError(format!("Send failed: {}", e)))?;
 
-        let msg = self
-            .socket
-            .recv()
-            .map_err(|e| {
-                if e == nng::Error::TimedOut {
-                    MullamaError::DaemonError("Request timed out - daemon may have crashed".to_string())
-                } else {
-                    MullamaError::DaemonError(format!("Receive failed: {}", e))
-                }
-            })?;
+        let msg = self.socket.recv().map_err(|e| {
+            if e == nng::Error::TimedOut {
+                MullamaError::DaemonError("Request timed out - daemon may have crashed".to_string())
+            } else {
+                MullamaError::DaemonError(format!("Receive failed: {}", e))
+            }
+        })?;
 
         Response::from_bytes(&msg)
             .map_err(|e| MullamaError::DaemonError(format!("Deserialization failed: {}", e)))
@@ -129,19 +126,29 @@ impl DaemonClient {
             (alias, spec.to_string())
         };
 
-        match self.request(&Request::LoadModel {
+        match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.clone(),
             path,
             gpu_layers: 0,
             context_size: 0,
-        })? {
+            use_mmap: None,
+            use_mlock: false,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
+        }))? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
         }
     }
 
-    /// Load a model with full options
+    /// Load a model with basic options
     pub fn load_model_with_options(
         &self,
         alias: &str,
@@ -149,12 +156,58 @@ impl DaemonClient {
         gpu_layers: i32,
         context_size: u32,
     ) -> Result<(String, ModelInfo), MullamaError> {
-        match self.request(&Request::LoadModel {
+        match self.request(&Request::LoadModel(ModelLoadParams {
             alias: alias.to_string(),
             path: path.to_string(),
             gpu_layers,
             context_size,
-        })? {
+            use_mmap: None,
+            use_mlock: false,
+            flash_attn: false,
+            cache_type_k: None,
+            cache_type_v: None,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch: None,
+            defrag_thold: None,
+            split_mode: None,
+        }))? {
+            Response::ModelLoaded { alias, info } => Ok((alias, info)),
+            Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
+            _ => Err(MullamaError::DaemonError("Unexpected response".into())),
+        }
+    }
+
+    /// Load a model with full configuration options
+    pub fn load_model_full(
+        &self,
+        alias: &str,
+        path: &str,
+        gpu_layers: i32,
+        context_size: u32,
+        flash_attn: bool,
+        cache_type_k: Option<String>,
+        cache_type_v: Option<String>,
+        use_mmap: Option<bool>,
+        use_mlock: bool,
+        n_batch: Option<u32>,
+    ) -> Result<(String, ModelInfo), MullamaError> {
+        match self.request(&Request::LoadModel(ModelLoadParams {
+            alias: alias.to_string(),
+            path: path.to_string(),
+            gpu_layers,
+            context_size,
+            use_mmap,
+            use_mlock,
+            flash_attn,
+            cache_type_k,
+            cache_type_v,
+            rope_freq_base: None,
+            rope_freq_scale: None,
+            n_batch,
+            defrag_thold: None,
+            split_mode: None,
+        }))? {
             Response::ModelLoaded { alias, info } => Ok((alias, info)),
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
@@ -193,8 +246,10 @@ impl DaemonClient {
     ) -> Result<ChatResult, MullamaError> {
         let messages = vec![ChatMessage {
             role: "user".to_string(),
-            content: message.to_string(),
+            content: message.to_string().into(),
             name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }];
 
         self.chat_completion(messages, model, max_tokens, temperature)
@@ -214,24 +269,29 @@ impl DaemonClient {
         let generation_timeout = Duration::from_secs(300);
 
         match self.request_with_timeout(
-            &Request::ChatCompletion {
+            &Request::ChatCompletion(ChatCompletionParams {
                 model: model.map(String::from),
                 messages,
                 max_tokens,
-                temperature,
-                stream: false,
-                stop: vec![],
-                seed: None,
+                temperature: Some(temperature),
                 top_p: None,
                 top_k: None,
-            },
+                frequency_penalty: None,
+                presence_penalty: None,
+                stream: false,
+                stop: vec![],
+                response_format: None,
+                tools: None,
+                tool_choice: None,
+                thinking: None,
+            }),
             generation_timeout,
         )? {
             Response::ChatCompletion(resp) => Ok(ChatResult {
                 text: resp
                     .choices
                     .first()
-                    .map(|c| c.message.content.clone())
+                    .map(|c| c.message.content.text())
                     .unwrap_or_default(),
                 model: resp.model,
                 prompt_tokens: resp.usage.prompt_tokens,
@@ -257,16 +317,18 @@ impl DaemonClient {
         let generation_timeout = Duration::from_secs(300);
 
         match self.request_with_timeout(
-            &Request::Completion {
+            &Request::Completion(CompletionParams {
                 model: model.map(String::from),
                 prompt: prompt.to_string(),
                 max_tokens,
-                temperature,
-                stream: false,
-                seed: None,
+                temperature: Some(temperature),
                 top_p: None,
                 top_k: None,
-            },
+                frequency_penalty: None,
+                presence_penalty: None,
+                stream: false,
+                stop: vec![],
+            }),
             generation_timeout,
         )? {
             Response::Completion(resp) => Ok(CompletionResult {
@@ -292,6 +354,67 @@ impl DaemonClient {
             text: text.to_string(),
         })? {
             Response::Tokens { tokens, .. } => Ok(tokens),
+            Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
+            _ => Err(MullamaError::DaemonError("Unexpected response".into())),
+        }
+    }
+
+    /// Generate embedding for a single text
+    pub fn embed(&self, text: &str, model: Option<&str>) -> Result<EmbeddingResult, MullamaError> {
+        // Use a reasonable timeout for embedding generation
+        let embedding_timeout = Duration::from_secs(60);
+
+        match self.request_with_timeout(
+            &Request::Embeddings {
+                model: model.map(String::from),
+                input: EmbeddingInput::Single(text.to_string()),
+            },
+            embedding_timeout,
+        )? {
+            Response::Embeddings(resp) => {
+                let embedding = resp
+                    .data
+                    .into_iter()
+                    .next()
+                    .map(|d| d.embedding)
+                    .unwrap_or_default();
+                Ok(EmbeddingResult {
+                    embedding,
+                    model: resp.model,
+                    prompt_tokens: resp.usage.prompt_tokens,
+                })
+            }
+            Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
+            _ => Err(MullamaError::DaemonError("Unexpected response".into())),
+        }
+    }
+
+    /// Generate embeddings for multiple texts
+    pub fn embed_batch(
+        &self,
+        texts: &[&str],
+        model: Option<&str>,
+    ) -> Result<BatchEmbeddingResult, MullamaError> {
+        // Use a longer timeout for batch embedding generation
+        let embedding_timeout = Duration::from_secs(300);
+
+        let input = EmbeddingInput::Multiple(texts.iter().map(|s| s.to_string()).collect());
+
+        match self.request_with_timeout(
+            &Request::Embeddings {
+                model: model.map(String::from),
+                input,
+            },
+            embedding_timeout,
+        )? {
+            Response::Embeddings(resp) => {
+                let embeddings = resp.data.into_iter().map(|d| d.embedding).collect();
+                Ok(BatchEmbeddingResult {
+                    embeddings,
+                    model: resp.model,
+                    prompt_tokens: resp.usage.prompt_tokens,
+                })
+            }
             Response::Error { message, .. } => Err(MullamaError::DaemonError(message)),
             _ => Err(MullamaError::DaemonError("Unexpected response".into())),
         }
@@ -344,5 +467,40 @@ impl CompletionResult {
         } else {
             (self.completion_tokens as f64) / (self.duration_ms as f64 / 1000.0)
         }
+    }
+}
+
+/// Result of single text embedding
+#[derive(Debug, Clone)]
+pub struct EmbeddingResult {
+    pub embedding: Vec<f32>,
+    pub model: String,
+    pub prompt_tokens: u32,
+}
+
+impl EmbeddingResult {
+    /// Get the embedding dimension
+    pub fn dimension(&self) -> usize {
+        self.embedding.len()
+    }
+}
+
+/// Result of batch text embedding
+#[derive(Debug, Clone)]
+pub struct BatchEmbeddingResult {
+    pub embeddings: Vec<Vec<f32>>,
+    pub model: String,
+    pub prompt_tokens: u32,
+}
+
+impl BatchEmbeddingResult {
+    /// Get the number of embeddings
+    pub fn count(&self) -> usize {
+        self.embeddings.len()
+    }
+
+    /// Get the embedding dimension (from first embedding)
+    pub fn dimension(&self) -> usize {
+        self.embeddings.first().map(|e| e.len()).unwrap_or(0)
     }
 }

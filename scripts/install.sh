@@ -1,0 +1,276 @@
+#!/bin/sh
+# Mullama installer script for Linux and macOS
+# Usage: curl -fsSL https://mullama.cognisoc.com/install.sh | sh
+
+set -e
+
+# Configuration
+REPO="cognisoc/mullama"
+BINARY_NAME="mullama"
+INSTALL_DIR="${MULLAMA_INSTALL_DIR:-$HOME/.local/bin}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Print functions
+info() {
+    printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+success() {
+    printf "${GREEN}[OK]${NC} %s\n" "$1"
+}
+
+warn() {
+    printf "${YELLOW}[WARN]${NC} %s\n" "$1"
+}
+
+error() {
+    printf "${RED}[ERROR]${NC} %s\n" "$1" >&2
+    exit 1
+}
+
+# Detect OS and architecture, emit a Rust target triple
+detect_platform() {
+    OS="$(uname -s)"
+    ARCH="$(uname -m)"
+
+    case "$OS" in
+        Linux)  OS_TRIPLE="unknown-linux-gnu" ;;
+        Darwin) OS_TRIPLE="apple-darwin" ;;
+        *) error "Unsupported operating system: $OS" ;;
+    esac
+
+    case "$ARCH" in
+        x86_64|amd64)   ARCH_TRIPLE="x86_64" ;;
+        aarch64|arm64)  ARCH_TRIPLE="aarch64" ;;
+        *) error "Unsupported architecture: $ARCH" ;;
+    esac
+
+    TARGET="${ARCH_TRIPLE}-${OS_TRIPLE}"
+    info "Detected target: $TARGET"
+}
+
+# Check for CUDA support on Linux x86_64
+detect_gpu() {
+    GPU_VARIANT=""
+
+    if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
+        if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+            info "NVIDIA GPU detected"
+            printf "Would you like to install the CUDA-enabled version? [y/N] "
+            read -r response
+            case "$response" in
+                [yY][eE][sS]|[yY])
+                    GPU_VARIANT="-cuda"
+                    info "Installing CUDA version"
+                    ;;
+                *)
+                    info "Installing CPU version"
+                    ;;
+            esac
+        fi
+    fi
+}
+
+# Get the latest release version
+get_latest_version() {
+    if command -v curl >/dev/null 2>&1; then
+        VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+    elif command -v wget >/dev/null 2>&1; then
+        VERSION=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+
+    if [ -z "$VERSION" ]; then
+        error "Failed to get latest version"
+    fi
+
+    info "Latest version: v$VERSION"
+}
+
+# Download and install
+download_and_install() {
+    STAGE="${BINARY_NAME}-${VERSION}-${TARGET}${GPU_VARIANT}"
+    FILENAME="${STAGE}.tar.gz"
+    DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$FILENAME"
+    CHECKSUM_URL="https://github.com/$REPO/releases/download/v$VERSION/${FILENAME}.sha256"
+
+    info "Downloading $FILENAME..."
+
+    # Create temp directory
+    TMP_DIR=$(mktemp -d)
+    trap "rm -rf $TMP_DIR" EXIT
+
+    # Download
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$FILENAME" || error "Download failed"
+    else
+        wget -q "$DOWNLOAD_URL" -O "$TMP_DIR/$FILENAME" || error "Download failed"
+    fi
+
+    success "Downloaded successfully"
+
+    # Verify checksum
+    info "Verifying checksum..."
+    CHECKSUM_FILE="$TMP_DIR/${FILENAME}.sha256"
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_FILE" 2>/dev/null; then
+            verify_checksum "$TMP_DIR/$FILENAME" "$CHECKSUM_FILE"
+        else
+            warn "Checksum file not available, skipping verification"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q "$CHECKSUM_URL" -O "$CHECKSUM_FILE" 2>/dev/null; then
+            verify_checksum "$TMP_DIR/$FILENAME" "$CHECKSUM_FILE"
+        else
+            warn "Checksum file not available, skipping verification"
+        fi
+    fi
+
+    # Extract
+    info "Extracting..."
+    tar -xzf "$TMP_DIR/$FILENAME" -C "$TMP_DIR"
+
+    # Create install directory if it doesn't exist
+    mkdir -p "$INSTALL_DIR"
+
+    # Install — archives stage the binary under <stage>/<binary>
+    info "Installing to $INSTALL_DIR..."
+    if [ -f "$TMP_DIR/$STAGE/$BINARY_NAME" ]; then
+        mv "$TMP_DIR/$STAGE/$BINARY_NAME" "$INSTALL_DIR/"
+    elif [ -f "$TMP_DIR/$BINARY_NAME" ]; then
+        mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/"
+    else
+        error "Binary not found in archive (looked in $STAGE/ and root)"
+    fi
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    success "Installed $BINARY_NAME to $INSTALL_DIR"
+}
+
+# Verify SHA256 checksum
+verify_checksum() {
+    FILE="$1"
+    CHECKSUM_FILE="$2"
+
+    if [ ! -f "$CHECKSUM_FILE" ]; then
+        warn "Checksum file missing, skipping verification"
+        return
+    fi
+
+    EXPECTED=$(awk '{print $1}' "$CHECKSUM_FILE")
+    if [ -z "$EXPECTED" ]; then
+        warn "Empty checksum, skipping verification"
+        return
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$FILE" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$FILE" | awk '{print $1}')
+    elif command -v openssl >/dev/null 2>&1; then
+        ACTUAL=$(openssl dgst -sha256 "$FILE" | awk '{print $NF}')
+    else
+        warn "No checksum tool found (sha256sum, shasum, openssl), skipping verification"
+        return
+    fi
+
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        error "Checksum verification failed!\n  Expected: $EXPECTED\n  Actual:   $ACTUAL\n\nThe download may have been tampered with. Aborting."
+    fi
+
+    success "Checksum verified"
+}
+
+# Update PATH if necessary
+update_path() {
+    case ":$PATH:" in
+        *":$INSTALL_DIR:"*)
+            # Already in PATH
+            ;;
+        *)
+            warn "$INSTALL_DIR is not in your PATH"
+
+            # Detect shell and suggest appropriate config file
+            SHELL_NAME=$(basename "$SHELL")
+            case "$SHELL_NAME" in
+                bash)
+                    SHELL_CONFIG="$HOME/.bashrc"
+                    ;;
+                zsh)
+                    SHELL_CONFIG="$HOME/.zshrc"
+                    ;;
+                fish)
+                    SHELL_CONFIG="$HOME/.config/fish/config.fish"
+                    ;;
+                *)
+                    SHELL_CONFIG="$HOME/.profile"
+                    ;;
+            esac
+
+            echo ""
+            echo "Add the following to $SHELL_CONFIG:"
+            echo ""
+            if [ "$SHELL_NAME" = "fish" ]; then
+                echo "  set -gx PATH \$PATH $INSTALL_DIR"
+            else
+                echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
+            fi
+            echo ""
+            echo "Then run: source $SHELL_CONFIG"
+            echo ""
+            ;;
+    esac
+}
+
+# Verify installation
+verify_installation() {
+    if [ -x "$INSTALL_DIR/$BINARY_NAME" ]; then
+        VERSION_OUTPUT=$("$INSTALL_DIR/$BINARY_NAME" --version 2>/dev/null || echo "unknown")
+        success "Installation verified: $VERSION_OUTPUT"
+    else
+        error "Installation verification failed"
+    fi
+}
+
+# Print post-install message
+print_success() {
+    echo ""
+    echo "============================================"
+    printf "${GREEN}Mullama installed successfully!${NC}\n"
+    echo "============================================"
+    echo ""
+    echo "Quick start:"
+    echo "  mullama run llama3.2:1b    # Run a model"
+    echo "  mullama serve              # Start the daemon"
+    echo "  mullama chat               # Interactive chat"
+    echo ""
+    echo "For more information, visit:"
+    echo "  https://github.com/$REPO"
+    echo ""
+}
+
+# Main
+main() {
+    echo ""
+    echo "================================"
+    echo "   Mullama Installer"
+    echo "================================"
+    echo ""
+
+    detect_platform
+    detect_gpu
+    get_latest_version
+    download_and_install
+    update_path
+    verify_installation
+    print_success
+}
+
+main "$@"

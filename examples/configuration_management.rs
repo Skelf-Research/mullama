@@ -73,6 +73,8 @@ async fn demonstrate_basic_configuration() -> Result<(), MullamaError> {
             embeddings: false,
             flash_attn: true,
             offload_kqv: true,
+            type_k: mullama::KvCacheType::default(),
+            type_v: mullama::KvCacheType::default(),
         },
         sampling: mullama::config::SamplingConfig {
             temperature: 0.8,
@@ -497,9 +499,9 @@ async fn demonstrate_advanced_patterns() -> Result<(), MullamaError> {
 
     // Pattern 4: Configuration conversion
     println!("\n4️⃣ Configuration conversion:");
-    let model_params = dynamic_config.to_model_params();
-    let context_params = dynamic_config.to_context_params();
-    let sampler_params = dynamic_config.to_sampler_params();
+    let _model_params = dynamic_config.to_model_params();
+    let _context_params = dynamic_config.to_context_params();
+    let _sampler_params = dynamic_config.to_sampler_params();
 
     println!("   ✅ Converted to ModelParams");
     println!("   ✅ Converted to ContextParams");

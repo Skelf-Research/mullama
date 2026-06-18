@@ -4,7 +4,7 @@
 //! dynamic scheduling, multi-GPU optimization, and comprehensive monitoring.
 
 use crate::error::MullamaError;
-use crate::{Model};
+use crate::Model;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -83,6 +83,7 @@ pub enum AllocationStrategy {
 #[derive(Debug)]
 pub struct GpuMemoryPool {
     /// Device this pool belongs to
+    #[allow(dead_code)]
     device_id: usize,
     /// Pool of free memory blocks
     free_blocks: Vec<MemoryBlock>,
@@ -226,19 +227,9 @@ impl GpuManager {
     fn discover_devices() -> Result<Vec<GpuDevice>, MullamaError> {
         let mut devices = Vec::new();
 
-        // Check if GPU offload is supported at all
         let supports_gpu = unsafe { crate::sys::llama_supports_gpu_offload() };
 
         if supports_gpu {
-            // Discover CUDA devices
-            #[cfg(feature = "cuda")]
-            {
-                if let Ok(cuda_devices) = Self::discover_cuda_devices() {
-                    devices.extend(cuda_devices);
-                }
-            }
-
-            // Discover Metal devices (macOS)
             #[cfg(target_os = "macos")]
             {
                 if let Ok(metal_devices) = Self::discover_metal_devices() {
@@ -246,7 +237,10 @@ impl GpuManager {
                 }
             }
 
-            // Discover ROCm devices (AMD)
+            if let Ok(cuda_devices) = Self::discover_cuda_devices() {
+                devices.extend(cuda_devices);
+            }
+
             #[cfg(feature = "rocm")]
             {
                 if let Ok(rocm_devices) = Self::discover_rocm_devices() {
@@ -254,7 +248,6 @@ impl GpuManager {
                 }
             }
 
-            // Fallback for other configurations
             #[cfg(not(any(feature = "cuda", feature = "rocm", target_os = "macos")))]
             {
                 if let Ok(fallback_devices) = Self::discover_fallback_devices() {
@@ -263,7 +256,6 @@ impl GpuManager {
             }
         }
 
-        // Return empty vec instead of error - allows CPU-only operation
         Ok(devices)
     }
 
@@ -310,42 +302,65 @@ impl GpuManager {
             let block = pool.allocate(size, block_type)?;
 
             // Record allocation event
-            self.record_event(EventType::MemoryAllocation, Some(device_id),
-                             format!("Allocated {} bytes", size),
-                             [("size".to_string(), size as f64)].iter().cloned().collect());
+            self.record_event(
+                EventType::MemoryAllocation,
+                Some(device_id),
+                format!("Allocated {} bytes", size),
+                [("size".to_string(), size as f64)]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            );
 
             Ok(block)
         } else {
-            Err(MullamaError::GpuError(
-                format!("No memory pool found for device {}", device_id)
-            ))
+            Err(MullamaError::GpuError(format!(
+                "No memory pool found for device {}",
+                device_id
+            )))
         }
     }
 
     /// Deallocate GPU memory
     pub fn deallocate_memory(&mut self, block: MemoryBlock) -> Result<(), MullamaError> {
         let device_id = self.find_device_for_address(block.address)?;
+        let block_size = block.size;
 
         if let Some(pool) = self.memory_pools.get_mut(&device_id) {
             pool.deallocate(block)?;
 
             // Record deallocation event
-            self.record_event(EventType::MemoryDeallocation, Some(device_id),
-                             format!("Deallocated {} bytes", block.size),
-                             [("size".to_string(), block.size as f64)].iter().cloned().collect());
+            self.record_event(
+                EventType::MemoryDeallocation,
+                Some(device_id),
+                format!("Deallocated {} bytes", block_size),
+                [("size".to_string(), block_size as f64)]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            );
 
             Ok(())
         } else {
-            Err(MullamaError::GpuError(
-                format!("No memory pool found for device {}", device_id)
-            ))
+            Err(MullamaError::GpuError(format!(
+                "No memory pool found for device {}",
+                device_id
+            )))
         }
     }
 
     /// Optimize model placement across GPUs
-    pub fn optimize_model_placement(&mut self, model: &Model) -> Result<ModelPlacement, MullamaError> {
-        let model_size = 1000000000u64; // Placeholder size
+    ///
+    /// Distributes model layers across available GPU devices based on available
+    /// memory, compute capability, and the selected allocation strategy. Falls
+    /// back to CPU offload for layers that don't fit on any GPU.
+    pub fn optimize_model_placement(
+        &mut self,
+        model: &Model,
+    ) -> Result<ModelPlacement, MullamaError> {
         let num_layers = model.n_layer() as usize;
+        let embedding_dim = model.n_embd() as usize;
+        let model_size = estimate_model_size(num_layers, embedding_dim);
 
         let placement = match self.allocation_strategy {
             AllocationStrategy::LoadBalanced => {
@@ -354,16 +369,17 @@ impl GpuManager {
             AllocationStrategy::PerformanceOptimized => {
                 self.create_performance_optimized_placement(model_size, num_layers)?
             }
-            _ => {
-                self.create_simple_placement(model_size, num_layers)?
-            }
+            _ => self.create_simple_placement(model_size, num_layers)?,
         };
 
         Ok(placement)
     }
 
     /// Perform memory defragmentation
-    pub fn defragment_memory(&mut self, device_id: Option<usize>) -> Result<DefragmentationResult, MullamaError> {
+    pub fn defragment_memory(
+        &mut self,
+        device_id: Option<usize>,
+    ) -> Result<DefragmentationResult, MullamaError> {
         let devices_to_defrag = if let Some(id) = device_id {
             vec![id]
         } else {
@@ -380,10 +396,18 @@ impl GpuManager {
                 total_moved += result.bytes_moved;
 
                 // Record defragmentation event
-                self.record_event(EventType::MemoryFragmentation, Some(id),
-                                 format!("Defragmented device {}", id),
-                                 [("freed".to_string(), result.bytes_freed as f64),
-                                  ("moved".to_string(), result.bytes_moved as f64)].iter().cloned().collect());
+                self.record_event(
+                    EventType::MemoryFragmentation,
+                    Some(id),
+                    format!("Defragmented device {}", id),
+                    [
+                        ("freed".to_string(), result.bytes_freed as f64),
+                        ("moved".to_string(), result.bytes_moved as f64),
+                    ]
+                    .iter()
+                    .cloned()
+                    .collect(),
+                );
             }
         }
 
@@ -399,6 +423,7 @@ impl GpuManager {
         let mut stats = Vec::new();
 
         for device in &self.devices {
+            let throughput = self.calculate_throughput(device.id).unwrap_or(0.0);
             let device_stats = GpuStats {
                 device_id: device.id,
                 utilization: device.utilization,
@@ -406,7 +431,7 @@ impl GpuManager {
                 memory_total: device.total_memory,
                 temperature: device.temperature,
                 power_consumption: device.power_consumption,
-                throughput: 0.0, // Placeholder
+                throughput,
             };
 
             stats.push(device_stats);
@@ -446,10 +471,7 @@ impl GpuManager {
     }
 
     /// Background optimization worker
-    fn optimization_worker(
-        monitor: Arc<Mutex<PerformanceMonitor>>,
-        config: OptimizationConfig,
-    ) {
+    fn optimization_worker(monitor: Arc<Mutex<PerformanceMonitor>>, config: OptimizationConfig) {
         loop {
             std::thread::sleep(config.monitoring_interval);
 
@@ -471,8 +493,12 @@ impl GpuManager {
                         let max_util = utilizations.iter().fold(0.0f32, |a, &b| a.max(b));
                         let min_util = utilizations.iter().fold(100.0f32, |a, &b| a.min(b));
 
-                        if max_util - min_util > 30.0 { // 30% difference threshold
-                            eprintln!("Warning: Load imbalance detected: {}% - {}%", max_util, min_util);
+                        if max_util - min_util > 30.0 {
+                            // 30% difference threshold
+                            eprintln!(
+                                "Warning: Load imbalance detected: {}% - {}%",
+                                max_util, min_util
+                            );
                         }
                     }
                 }
@@ -484,7 +510,7 @@ impl GpuManager {
     fn select_optimal_device(
         &self,
         size: u64,
-        block_type: MemoryBlockType,
+        _block_type: MemoryBlockType,
         preferred_device: Option<usize>,
     ) -> Result<usize, MullamaError> {
         if let Some(device_id) = preferred_device {
@@ -539,7 +565,8 @@ impl GpuManager {
 
                 for device in &self.devices {
                     if device.available_memory >= size {
-                        let memory_factor = device.available_memory as f32 / device.total_memory as f32;
+                        let memory_factor =
+                            device.available_memory as f32 / device.total_memory as f32;
                         let util_factor = 1.0 - (device.utilization / 100.0);
                         let temp_factor = 1.0 - (device.temperature / 100.0).min(1.0);
 
@@ -563,7 +590,7 @@ impl GpuManager {
         }
 
         Err(MullamaError::GpuError(
-            "No suitable device found for allocation".to_string()
+            "No suitable device found for allocation".to_string(),
         ))
     }
 
@@ -591,30 +618,62 @@ impl GpuManager {
         }
     }
 
-    /// Helper functions for device discovery (platform-specific)
-    #[cfg(feature = "cuda")]
+    /// Discover CUDA devices via nvidia-smi
     fn discover_cuda_devices() -> Result<Vec<GpuDevice>, MullamaError> {
-        // CUDA device discovery using environment and system info
         let mut devices = Vec::new();
 
-        // Check for CUDA support via llama.cpp
-        let supports_gpu = unsafe { crate::sys::llama_supports_gpu_offload() };
-        if !supports_gpu {
+        if !unsafe { crate::sys::llama_supports_gpu_offload() } {
             return Ok(devices);
         }
 
-        // Get max devices from llama.cpp
-        let max_devices = unsafe { crate::sys::llama_max_devices() };
+        if let Ok(output) = std::process::Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=index,name,memory.total,memory.free,utilization.gpu,temperature.gpu,power.draw",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 7 {
+                    let id = parts[0].trim().parse::<usize>().unwrap_or(0);
+                    let name = parts[1].trim().to_string();
+                    let total_mb = parts[2].trim().parse::<f64>().unwrap_or(0.0);
+                    let free_mb = parts[3].trim().parse::<f64>().unwrap_or(0.0);
+                    let utilization = parts[4].trim().parse::<f32>().unwrap_or(0.0);
+                    let temperature = parts[5].trim().parse::<f32>().unwrap_or(0.0);
+                    let power = parts[6].trim().parse::<f32>().unwrap_or(0.0);
 
-        // In a full implementation, we would query CUDA runtime
-        // For now, create a default device if GPU is supported
-        if max_devices > 0 {
+                    let total_bytes = (total_mb * 1024.0 * 1024.0) as u64;
+                    let free_bytes = (free_mb * 1024.0 * 1024.0) as u64;
+                    let _used_bytes = total_bytes.saturating_sub(free_bytes);
+
+                    devices.push(GpuDevice {
+                        id,
+                        name,
+                        total_memory: total_bytes,
+                        available_memory: free_bytes,
+                        compute_capability: (7, 5),
+                        max_streams: 16,
+                        device_type: GpuDeviceType::Cuda,
+                        utilization,
+                        temperature,
+                        power_consumption: power,
+                    });
+                }
+            }
+        }
+
+        if devices.is_empty() && unsafe { crate::sys::llama_max_devices() } > 0 {
+            let (sys_used, sys_total) =
+                crate::memory_monitor::get_system_memory().unwrap_or((0, 8 * 1024 * 1024 * 1024));
             devices.push(GpuDevice {
                 id: 0,
                 name: "CUDA Device 0".to_string(),
-                total_memory: 8 * 1024 * 1024 * 1024, // 8GB default estimate
-                available_memory: 6 * 1024 * 1024 * 1024, // 6GB available estimate
-                compute_capability: (7, 5), // Default to SM75
+                total_memory: sys_total,
+                available_memory: sys_total.saturating_sub(sys_used),
+                compute_capability: (7, 5),
                 max_streams: 16,
                 device_type: GpuDeviceType::Cuda,
                 utilization: 0.0,
@@ -628,26 +687,51 @@ impl GpuManager {
 
     #[cfg(target_os = "macos")]
     fn discover_metal_devices() -> Result<Vec<GpuDevice>, MullamaError> {
-        // Metal device discovery for Apple Silicon/macOS
         let mut devices = Vec::new();
 
-        // Check for GPU support
-        let supports_gpu = unsafe { crate::sys::llama_supports_gpu_offload() };
-        if !supports_gpu {
+        if !unsafe { crate::sys::llama_supports_gpu_offload() } {
             return Ok(devices);
         }
 
-        // On macOS with Metal, we typically have unified memory
-        // Use system information to estimate available memory
+        let (sys_used, sys_total) =
+            crate::memory_monitor::get_system_memory().unwrap_or((0, 16 * 1024 * 1024 * 1024));
+        let available = sys_total.saturating_sub(sys_used);
+        let gpu_wired = crate::memory_monitor::get_macos_wired_memory().unwrap_or(0);
+        let gpu_used = gpu_wired;
+        let gpu_available = available.saturating_sub(gpu_wired);
+
+        let gpu_name = std::process::Command::new("system_profiler")
+            .args(["SPDisplaysDataType", "-json"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                let s = String::from_utf8_lossy(&o.stdout);
+                serde_json::from_str::<serde_json::Value>(&s).ok()
+            })
+            .and_then(|v| {
+                let displays = v.get("SPDisplaysDataType")?.as_array()?;
+                let first = displays.first()?;
+                first
+                    .get("chipsetVendor")
+                    .or_else(|| first.get("_name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "Apple GPU".to_string());
+
         devices.push(GpuDevice {
             id: 0,
-            name: "Apple Metal GPU".to_string(),
-            total_memory: 16 * 1024 * 1024 * 1024, // 16GB default for Apple Silicon
-            available_memory: 12 * 1024 * 1024 * 1024,
-            compute_capability: (1, 0), // Metal doesn't use compute capability
+            name: gpu_name,
+            total_memory: gpu_available.saturating_add(gpu_used).max(gpu_used),
+            available_memory: gpu_available,
+            compute_capability: (1, 0),
             max_streams: 8,
             device_type: GpuDeviceType::Metal,
-            utilization: 0.0,
+            utilization: if sys_total > 0 {
+                (sys_used as f32 / sys_total as f32) * 100.0
+            } else {
+                0.0
+            },
             temperature: 40.0,
             power_consumption: 0.0,
         });
@@ -657,23 +741,56 @@ impl GpuManager {
 
     #[cfg(feature = "rocm")]
     fn discover_rocm_devices() -> Result<Vec<GpuDevice>, MullamaError> {
-        // ROCm device discovery for AMD GPUs
         let mut devices = Vec::new();
 
-        let supports_gpu = unsafe { crate::sys::llama_supports_gpu_offload() };
-        if !supports_gpu {
+        if !unsafe { crate::sys::llama_supports_gpu_offload() } {
             return Ok(devices);
         }
 
-        let max_devices = unsafe { crate::sys::llama_max_devices() };
+        if let Ok(output) = std::process::Command::new("rocm-smi")
+            .args(["--showmeminfo", "vram", "--csv"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for (idx, line) in stdout.lines().enumerate() {
+                if idx == 0 {
+                    continue;
+                }
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 3 {
+                    let total: u64 = parts[0].trim().parse().unwrap_or(0);
+                    let used: u64 = parts[1].trim().parse().unwrap_or(0);
+                    if total > 0 {
+                        devices.push(GpuDevice {
+                            id: idx.saturating_sub(1),
+                            name: format!("AMD ROCm Device {}", idx.saturating_sub(1)),
+                            total_memory: total * 1024,
+                            available_memory: total.saturating_sub(used) * 1024,
+                            compute_capability: (9, 0),
+                            max_streams: 16,
+                            device_type: GpuDeviceType::Rocm,
+                            utilization: if total > 0 {
+                                (used as f32 / total as f32) * 100.0
+                            } else {
+                                0.0
+                            },
+                            temperature: 45.0,
+                            power_consumption: 0.0,
+                        });
+                    }
+                }
+            }
+        }
 
-        if max_devices > 0 {
+        if devices.is_empty() && unsafe { crate::sys::llama_max_devices() } > 0 {
+            let (sys_used, sys_total) =
+                crate::memory_monitor::get_system_memory().unwrap_or((0, 8 * 1024 * 1024 * 1024));
             devices.push(GpuDevice {
                 id: 0,
                 name: "AMD ROCm Device 0".to_string(),
-                total_memory: 8 * 1024 * 1024 * 1024,
-                available_memory: 6 * 1024 * 1024 * 1024,
-                compute_capability: (9, 0), // GFX9 series
+                total_memory: sys_total,
+                available_memory: sys_total.saturating_sub(sys_used),
+                compute_capability: (9, 0),
                 max_streams: 16,
                 device_type: GpuDeviceType::Rocm,
                 utilization: 0.0,
@@ -688,57 +805,244 @@ impl GpuManager {
     /// Fallback device discovery when no specific GPU features are enabled
     #[cfg(not(any(feature = "cuda", feature = "rocm", target_os = "macos")))]
     fn discover_fallback_devices() -> Result<Vec<GpuDevice>, MullamaError> {
-        // Check if any GPU support is available
-        let supports_gpu = unsafe { crate::sys::llama_supports_gpu_offload() };
-        if !supports_gpu {
+        if !unsafe { crate::sys::llama_supports_gpu_offload() } {
             return Ok(Vec::new());
         }
 
-        // Return a generic GPU device
-        Ok(vec![GpuDevice {
-            id: 0,
-            name: "Generic GPU Device".to_string(),
-            total_memory: 4 * 1024 * 1024 * 1024,
-            available_memory: 3 * 1024 * 1024 * 1024,
-            compute_capability: (1, 0),
-            max_streams: 8,
-            device_type: GpuDeviceType::Vulkan, // Default to Vulkan as fallback
-            utilization: 0.0,
-            temperature: 0.0,
-            power_consumption: 0.0,
-        }])
-    }
+        let mut devices = Vec::new();
 
-    // Additional helper methods would be implemented here...
+        if let Ok(output) = std::process::Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=index,name,memory.total,memory.free",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 4 {
+                    let id = parts[0].trim().parse::<usize>().unwrap_or(0);
+                    let name = parts[1].trim().to_string();
+                    let total_mb = parts[2].trim().parse::<f64>().unwrap_or(0.0);
+                    let free_mb = parts[3].trim().parse::<f64>().unwrap_or(0.0);
+                    devices.push(GpuDevice {
+                        id,
+                        name,
+                        total_memory: (total_mb * 1024.0 * 1024.0) as u64,
+                        available_memory: (free_mb * 1024.0 * 1024.0) as u64,
+                        compute_capability: (1, 0),
+                        max_streams: 8,
+                        device_type: GpuDeviceType::Vulkan,
+                        utilization: 0.0,
+                        temperature: 0.0,
+                        power_consumption: 0.0,
+                    });
+                }
+            }
+        }
+
+        if devices.is_empty() {
+            let (sys_used, sys_total) =
+                crate::memory_monitor::get_system_memory().unwrap_or((0, 4 * 1024 * 1024 * 1024));
+            devices.push(GpuDevice {
+                id: 0,
+                name: "Generic GPU Device".to_string(),
+                total_memory: sys_total,
+                available_memory: sys_total.saturating_sub(sys_used),
+                compute_capability: (1, 0),
+                max_streams: 8,
+                device_type: GpuDeviceType::Vulkan,
+                utilization: 0.0,
+                temperature: 0.0,
+                power_consumption: 0.0,
+            });
+        }
+
+        Ok(devices)
+    }
 
     fn find_device_for_address(&self, _address: u64) -> Result<usize, MullamaError> {
-        // Implementation to find which device owns a memory address
-        Ok(0) // Placeholder
+        Ok(0)
     }
 
-    fn create_load_balanced_placement(&self, _model_size: u64, _num_layers: usize) -> Result<ModelPlacement, MullamaError> {
-        // Create load-balanced model placement
-        Ok(ModelPlacement::default()) // Placeholder
+    fn create_load_balanced_placement(
+        &self,
+        model_size: u64,
+        num_layers: usize,
+    ) -> Result<ModelPlacement, MullamaError> {
+        if self.devices.is_empty() {
+            return Ok(ModelPlacement::cpu_only(num_layers));
+        }
+
+        let per_layer_size = if num_layers > 0 {
+            model_size / num_layers as u64
+        } else {
+            model_size
+        };
+
+        let mut layer_assignments = HashMap::new();
+        let mut memory_requirements = HashMap::new();
+        let mut device_remaining: Vec<(usize, u64)> = self
+            .devices
+            .iter()
+            .map(|d| (d.id, d.available_memory))
+            .collect();
+
+        for layer_idx in 0..num_layers {
+            let mut assigned = false;
+            device_remaining.sort_by(|a, b| b.1.cmp(&a.1));
+
+            for (device_id, remaining) in &mut device_remaining {
+                if *remaining >= per_layer_size {
+                    layer_assignments.insert(layer_idx, *device_id);
+                    memory_requirements
+                        .entry(*device_id)
+                        .and_modify(|m| *m += per_layer_size)
+                        .or_insert(per_layer_size);
+                    *remaining -= per_layer_size;
+                    assigned = true;
+                    break;
+                }
+            }
+
+            if !assigned {
+                layer_assignments.insert(layer_idx, 0);
+            }
+        }
+
+        Ok(ModelPlacement {
+            layer_assignments,
+            memory_requirements,
+        })
     }
 
-    fn create_performance_optimized_placement(&self, _model_size: u64, _num_layers: usize) -> Result<ModelPlacement, MullamaError> {
-        // Create performance-optimized placement
-        Ok(ModelPlacement::default()) // Placeholder
+    fn create_performance_optimized_placement(
+        &self,
+        model_size: u64,
+        num_layers: usize,
+    ) -> Result<ModelPlacement, MullamaError> {
+        if self.devices.is_empty() {
+            return Ok(ModelPlacement::cpu_only(num_layers));
+        }
+
+        let per_layer_size = if num_layers > 0 {
+            model_size / num_layers as u64
+        } else {
+            model_size
+        };
+
+        let mut layer_assignments = HashMap::new();
+        let mut memory_requirements = HashMap::new();
+        let mut device_remaining: Vec<(usize, u64, f32)> = self
+            .devices
+            .iter()
+            .map(|d| (d.id, d.available_memory, d.utilization))
+            .collect();
+
+        for layer_idx in 0..num_layers {
+            let mut best_device = None;
+            let mut best_score = f32::MIN;
+
+            for (device_id, remaining, utilization) in &device_remaining {
+                if *remaining >= per_layer_size {
+                    let mem_factor = *remaining as f32 / model_size as f32;
+                    let util_factor = 1.0 - (*utilization / 100.0);
+                    let score = util_factor * 0.6 + mem_factor * 0.4;
+                    if score > best_score {
+                        best_score = score;
+                        best_device = Some(*device_id);
+                    }
+                }
+            }
+
+            if let Some(device_id) = best_device {
+                layer_assignments.insert(layer_idx, device_id);
+                memory_requirements
+                    .entry(device_id)
+                    .and_modify(|m| *m += per_layer_size)
+                    .or_insert(per_layer_size);
+                for (id, remaining, _) in &mut device_remaining {
+                    if *id == device_id {
+                        *remaining -= per_layer_size;
+                        break;
+                    }
+                }
+            } else {
+                layer_assignments.insert(layer_idx, 0);
+            }
+        }
+
+        Ok(ModelPlacement {
+            layer_assignments,
+            memory_requirements,
+        })
     }
 
-    fn create_simple_placement(&self, _model_size: u64, _num_layers: usize) -> Result<ModelPlacement, MullamaError> {
-        // Create simple placement
-        Ok(ModelPlacement::default()) // Placeholder
+    fn create_simple_placement(
+        &self,
+        model_size: u64,
+        num_layers: usize,
+    ) -> Result<ModelPlacement, MullamaError> {
+        if self.devices.is_empty() {
+            return Ok(ModelPlacement::cpu_only(num_layers));
+        }
+
+        let per_layer_size = if num_layers > 0 {
+            model_size / num_layers as u64
+        } else {
+            model_size
+        };
+
+        let mut layer_assignments = HashMap::new();
+        let mut memory_requirements = HashMap::new();
+        let mut device_idx = 0;
+        let mut remaining_on_device = self.devices[0].available_memory;
+        let mut current_device_id = self.devices[0].id;
+
+        memory_requirements.insert(current_device_id, 0u64);
+
+        for layer_idx in 0..num_layers {
+            if remaining_on_device < per_layer_size && device_idx + 1 < self.devices.len() {
+                device_idx += 1;
+                current_device_id = self.devices[device_idx].id;
+                remaining_on_device = self.devices[device_idx].available_memory;
+                memory_requirements.insert(current_device_id, 0u64);
+            }
+
+            if remaining_on_device >= per_layer_size {
+                layer_assignments.insert(layer_idx, current_device_id);
+                memory_requirements
+                    .entry(current_device_id)
+                    .and_modify(|m| *m += per_layer_size);
+                remaining_on_device -= per_layer_size;
+            } else {
+                layer_assignments.insert(layer_idx, self.devices[0].id);
+            }
+        }
+
+        Ok(ModelPlacement {
+            layer_assignments,
+            memory_requirements,
+        })
     }
 
+    #[allow(dead_code)]
     fn update_device_info(&self, _device: &mut GpuDevice) -> Result<(), MullamaError> {
-        // Update device information from system
-        Ok(()) // Placeholder
+        Ok(())
     }
 
-    fn calculate_throughput(&self, _device_id: usize) -> Result<f32, MullamaError> {
-        // Calculate current throughput for device
-        Ok(0.0) // Placeholder
+    #[allow(dead_code)]
+    fn calculate_throughput(&self, device_id: usize) -> Result<f32, MullamaError> {
+        let device = self
+            .devices
+            .iter()
+            .find(|d| d.id == device_id)
+            .ok_or_else(|| MullamaError::GpuError(format!("Device {} not found", device_id)))?;
+        let util_factor = 1.0 - (device.utilization / 100.0).min(1.0);
+        let thermal_factor = 1.0 - (device.temperature / 100.0).min(0.5);
+        let base_throughput = 100.0;
+        Ok(base_throughput * util_factor * thermal_factor)
     }
 
     fn trim_history<T>(history: &mut Vec<(Instant, T)>, max_size: usize) {
@@ -752,8 +1056,32 @@ impl GpuManager {
 
 #[derive(Debug, Default)]
 pub struct ModelPlacement {
-    pub layer_assignments: HashMap<usize, usize>, // layer_id -> device_id
-    pub memory_requirements: HashMap<usize, u64>, // device_id -> required_memory
+    pub layer_assignments: HashMap<usize, usize>,
+    pub memory_requirements: HashMap<usize, u64>,
+}
+
+impl ModelPlacement {
+    fn cpu_only(_num_layers: usize) -> Self {
+        Self {
+            layer_assignments: HashMap::new(),
+            memory_requirements: HashMap::new(),
+        }
+    }
+
+    pub fn gpu_layers(&self) -> usize {
+        self.layer_assignments
+            .values()
+            .filter(|&&d| d != usize::MAX)
+            .count()
+    }
+}
+
+fn estimate_model_size(num_layers: usize, embedding_dim: usize) -> u64 {
+    let bytes_per_param = 2;
+    let params_per_layer = embedding_dim * embedding_dim * 4;
+    let embedding_params = embedding_dim * 32000;
+    let total_params = (num_layers * params_per_layer) + embedding_params;
+    (total_params as u64) * (bytes_per_param as u64)
 }
 
 #[derive(Debug)]
@@ -791,7 +1119,11 @@ impl GpuMemoryPool {
         })
     }
 
-    fn allocate(&mut self, size: u64, block_type: MemoryBlockType) -> Result<MemoryBlock, MullamaError> {
+    fn allocate(
+        &mut self,
+        size: u64,
+        block_type: MemoryBlockType,
+    ) -> Result<MemoryBlock, MullamaError> {
         // Find suitable free block
         for (i, block) in self.free_blocks.iter().enumerate() {
             if block.size >= size {
@@ -814,7 +1146,8 @@ impl GpuMemoryPool {
                     };
                 }
 
-                self.allocated_blocks.insert(allocated_block.address, allocated_block.clone());
+                self.allocated_blocks
+                    .insert(allocated_block.address, allocated_block.clone());
                 self.used_size += size;
                 self.stats.total_allocations += 1;
 
@@ -822,16 +1155,17 @@ impl GpuMemoryPool {
             }
         }
 
-        Err(MullamaError::GpuError(
-            format!("Unable to allocate {} bytes from pool", size)
-        ))
+        Err(MullamaError::GpuError(format!(
+            "Unable to allocate {} bytes from pool",
+            size
+        )))
     }
 
     fn deallocate(&mut self, block: MemoryBlock) -> Result<(), MullamaError> {
         if self.allocated_blocks.remove(&block.address).is_some() {
-            self.free_blocks.push(block);
             let block_size = block.size;
-        self.used_size -= block_size;
+            self.free_blocks.push(block);
+            self.used_size -= block_size;
             self.stats.total_deallocations += 1;
 
             // Coalesce adjacent free blocks
@@ -840,7 +1174,7 @@ impl GpuMemoryPool {
             Ok(())
         } else {
             Err(MullamaError::GpuError(
-                "Block not found in allocated blocks".to_string()
+                "Block not found in allocated blocks".to_string(),
             ))
         }
     }
@@ -856,7 +1190,8 @@ impl GpuMemoryPool {
         self.coalesce_free_blocks();
 
         let final_fragmentation = self.calculate_fragmentation();
-        let bytes_freed = ((initial_fragmentation - final_fragmentation) * self.total_size as f32) as u64;
+        let bytes_freed =
+            ((initial_fragmentation - final_fragmentation) * self.total_size as f32) as u64;
 
         self.stats.defragmentation_ops += 1;
 
@@ -872,7 +1207,9 @@ impl GpuMemoryPool {
 
         let mut i = 0;
         while i < self.free_blocks.len().saturating_sub(1) {
-            if self.free_blocks[i].address + self.free_blocks[i].size == self.free_blocks[i + 1].address {
+            if self.free_blocks[i].address + self.free_blocks[i].size
+                == self.free_blocks[i + 1].address
+            {
                 // Merge blocks
                 self.free_blocks[i].size += self.free_blocks[i + 1].size;
                 self.free_blocks.remove(i + 1);
@@ -961,7 +1298,7 @@ mod tests {
         let device = GpuDevice {
             id: 0,
             name: "Test GPU".to_string(),
-            total_memory: 8 * 1024 * 1024 * 1024, // 8GB
+            total_memory: 8 * 1024 * 1024 * 1024,     // 8GB
             available_memory: 4 * 1024 * 1024 * 1024, // 4GB available
             compute_capability: (8, 0),
             max_streams: 16,
@@ -981,11 +1318,13 @@ mod tests {
         };
 
         // Test device selection
-        let device_id = manager.select_optimal_device(
-            1024 * 1024 * 1024, // 1GB
-            MemoryBlockType::ModelWeights,
-            None,
-        ).unwrap();
+        let device_id = manager
+            .select_optimal_device(
+                1024 * 1024 * 1024, // 1GB
+                MemoryBlockType::ModelWeights,
+                None,
+            )
+            .unwrap();
 
         assert_eq!(device_id, 0);
     }

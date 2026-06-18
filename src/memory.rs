@@ -8,12 +8,12 @@
 
 use crate::error::MullamaError;
 use crate::sys;
-use std::collections::HashMap;
 
 /// Memory manager for model contexts
 ///
 /// Wraps llama.cpp's memory management API for KV cache and sequence operations.
 /// Can be used standalone or obtained from a Context.
+#[allow(dead_code)]
 pub struct MemoryManager {
     /// The underlying llama memory handle
     memory_ptr: sys::llama_memory_t,
@@ -76,8 +76,12 @@ impl MemoryManager {
     /// Create a memory manager from a context
     ///
     /// This extracts the memory handle from the context for direct memory operations.
-    pub fn from_context(ctx_ptr: *mut sys::llama_context) -> Option<Self> {
-        let memory_ptr = unsafe { sys::llama_get_memory(ctx_ptr) };
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `ctx_ptr` is a valid pointer to a llama_context.
+    pub unsafe fn from_context(ctx_ptr: *mut sys::llama_context) -> Option<Self> {
+        let memory_ptr = sys::llama_get_memory(ctx_ptr);
         if memory_ptr.is_null() {
             None
         } else {
@@ -520,6 +524,147 @@ impl KVCacheManager {
             let mem = self.get_memory();
             sys::llama_memory_can_shift(mem)
         }
+    }
+}
+
+/// Recommendations for running a model when RAM is limited.
+///
+/// llama.cpp uses mmap by default, which allows running models larger than
+/// available RAM by memory-mapping the model file and letting the OS page in
+/// only the portions that are needed. Combined with KV cache quantization
+/// (Q4_0 or Q8_0), this enables running large models on constrained hardware.
+#[derive(Debug, Clone)]
+pub struct ConstrainedMemoryConfig {
+    /// Whether mmap should be used (always true for larger-than-RAM)
+    pub use_mmap: bool,
+    /// Whether mlock should be used (true only if enough RAM)
+    pub use_mlock: bool,
+    /// Recommended KV cache type for keys
+    pub cache_type_k: crate::context::KvCacheType,
+    /// Recommended KV cache type for values
+    pub cache_type_v: crate::context::KvCacheType,
+    /// Recommended context size (may be reduced to fit memory)
+    pub context_size: u32,
+    /// Recommended batch size
+    pub batch_size: u32,
+    /// Number of GPU layers (0 if no GPU or not enough VRAM)
+    pub gpu_layers: i32,
+    /// Whether the model is larger than available RAM
+    pub model_larger_than_ram: bool,
+    /// Estimated total memory needed (model + KV cache + overhead)
+    pub estimated_memory_bytes: u64,
+    /// Available system memory
+    pub available_memory_bytes: u64,
+}
+
+/// Calculate optimal configuration for running a model with memory constraints.
+///
+/// This function uses llama.cpp's mmap support to enable running models that
+/// are larger than available system RAM. When a model is memory-mapped, only
+/// the active pages are loaded into physical RAM, allowing the OS to swap out
+/// unused portions.
+///
+/// # Arguments
+/// * `model_size_bytes` - Size of the GGUF model file in bytes
+/// * `context_size` - Desired context size (may be reduced)
+/// * `n_layers` - Total number of model layers
+/// * `n_embd` - Embedding dimension
+/// * `available_ram_bytes` - Available system RAM in bytes (0 to auto-detect)
+/// * `gpu_layers_requested` - Requested GPU layers (-1 for all)
+///
+/// # How larger-than-RAM models work
+///
+/// When `model_size > available_ram`:
+/// - mmap is enabled (model file is memory-mapped, not fully loaded)
+/// - mlock is disabled (would require all pages in RAM)
+/// - KV cache uses Q4_0 quantization (75% memory savings)
+/// - Context size is reduced if needed
+/// - GPU layers are reduced to fit available VRAM
+pub fn recommend_constrained_config(
+    model_size_bytes: u64,
+    context_size: u32,
+    n_layers: i32,
+    n_embd: i32,
+    available_ram_bytes: u64,
+    gpu_layers_requested: i32,
+) -> ConstrainedMemoryConfig {
+    let monitor = crate::memory_monitor::MemoryMonitor::with_defaults();
+    monitor.update_stats();
+    let (mem_used, mem_total) = monitor.system_memory();
+    let available = if available_ram_bytes > 0 {
+        available_ram_bytes
+    } else {
+        mem_total.saturating_sub(mem_used)
+    };
+
+    let model_larger_than_ram = model_size_bytes > available;
+
+    // Estimate KV cache memory: 2 * n_layers * n_embd * context_size * sizeof(element)
+    // For Q4_0: ~0.5 bytes per element, Q8_0: ~1 byte, F16: ~2 bytes
+    let kv_cache_f16 = 2u64 * n_layers as u64 * n_embd as u64 * context_size as u64 * 2;
+    let kv_cache_q8 = kv_cache_f16 / 2;
+    let kv_cache_q4 = kv_cache_f16 / 4;
+
+    let overhead = 512u64 * 1024 * 1024; // 512MB overhead estimate
+    let total_f16 = model_size_bytes + kv_cache_f16 + overhead;
+    let total_q8 = model_size_bytes + kv_cache_q8 + overhead;
+    let total_q4 = model_size_bytes + kv_cache_q4 + overhead;
+
+    // Select cache type based on what fits
+    let (cache_type_k, cache_type_v, estimated_memory) =
+        if total_q4 <= available || model_larger_than_ram {
+            (
+                crate::context::KvCacheType::Q4_0,
+                crate::context::KvCacheType::Q4_0,
+                total_q4,
+            )
+        } else if total_q8 <= available {
+            (
+                crate::context::KvCacheType::Q8_0,
+                crate::context::KvCacheType::Q8_0,
+                total_q8,
+            )
+        } else {
+            (
+                crate::context::KvCacheType::F16,
+                crate::context::KvCacheType::F16,
+                total_f16,
+            )
+        };
+
+    // Reduce context size if still doesn't fit and model fits in RAM
+    let adjusted_context = if !model_larger_than_ram && estimated_memory > available {
+        let ratio = available as f64 / estimated_memory as f64;
+        ((context_size as f64 * ratio * 0.8) as u32).max(512)
+    } else {
+        context_size
+    };
+
+    // GPU layers: reduce if model is larger than RAM (keep CPU for mmap efficiency)
+    let gpu_layers = if model_larger_than_ram {
+        if gpu_layers_requested < 0 {
+            (n_layers / 2).min(20) // Partial offload for mmap efficiency
+        } else {
+            gpu_layers_requested.min(n_layers / 2)
+        }
+    } else {
+        gpu_layers_requested
+    };
+
+    let use_mmap = true;
+    let use_mlock = !model_larger_than_ram && total_f16 <= available;
+
+    ConstrainedMemoryConfig {
+        use_mmap,
+        use_mlock,
+        cache_type_k,
+        cache_type_v,
+        context_size: adjusted_context,
+        batch_size: if model_larger_than_ram { 256 } else { 512 },
+        gpu_layers,
+        model_larger_than_ram,
+        estimated_memory_bytes: estimated_memory,
+        available_memory_bytes: available,
     }
 }
 

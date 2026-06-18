@@ -4,13 +4,29 @@ use crate::{
     sys,
     token::TokenId,
 };
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 use std::{ffi::CString, path::Path, ptr, sync::Arc};
+
+type ProgressCallbackFn = fn(f32) -> bool;
+
+struct ProgressCallbackData {
+    callback: ProgressCallbackFn,
+}
+
+unsafe extern "C" fn progress_callback_wrapper(
+    progress: std::os::raw::c_float,
+    user_data: *mut std::os::raw::c_void,
+) -> bool {
+    let data = &*(user_data as *const ProgressCallbackData);
+    (data.callback)(progress)
+}
 
 /// Inner struct to hold the model pointer with proper cleanup
 #[derive(Debug)]
 struct ModelInner {
     model_ptr: *mut sys::llama_model,
+    /// Cached vocab pointer to avoid repeated FFI calls
+    vocab_ptr: *const sys::llama_vocab,
 }
 
 impl Drop for ModelInner {
@@ -38,6 +54,7 @@ pub struct Model {
 
 impl Model {
     /// Get the raw model pointer (for internal use)
+    #[allow(dead_code)]
     pub(crate) fn model_ptr(&self) -> *mut sys::llama_model {
         self.inner.model_ptr
     }
@@ -114,12 +131,9 @@ impl Model {
         let c_path = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| MullamaError::ModelLoadError("Invalid path".to_string()))?;
 
-        // Initialize the llama backend if not already done. Also load dynamic
-        // backends (see crate::backend_init comment) — required for the
-        // shared-backend build; a harmless no-op in the static build.
+        // Initialize the llama backend if not already done
         unsafe {
             sys::llama_backend_init();
-            sys::ggml_backend_load_all();
         }
 
         // Get default model parameters from llama.cpp
@@ -150,7 +164,7 @@ impl Model {
         let kv_overrides: Vec<sys::llama_model_kv_override> = params
             .kv_overrides
             .iter()
-            .map(|override_| Self::convert_kv_override(override_))
+            .map(Self::convert_kv_override)
             .collect::<Result<Vec<_>, _>>()?;
 
         if !kv_overrides.is_empty() {
@@ -159,14 +173,23 @@ impl Model {
             llama_params.kv_overrides = ptr::null();
         }
 
-        // Set progress callback if provided
-        if params.progress_callback.is_some() {
-            // Note: This would require more complex callback handling in a real implementation
-            llama_params.progress_callback = None; // Placeholder
-            llama_params.progress_callback_user_data = ptr::null_mut();
+        let _callback_data: Option<Box<ProgressCallbackData>>;
+        if let Some(cb) = params.progress_callback {
+            let data = Box::new(ProgressCallbackData { callback: cb });
+            llama_params.progress_callback = Some(
+                progress_callback_wrapper
+                    as unsafe extern "C" fn(
+                        std::os::raw::c_float,
+                        *mut std::os::raw::c_void,
+                    ) -> bool,
+            );
+            llama_params.progress_callback_user_data =
+                &*data as *const ProgressCallbackData as *mut std::os::raw::c_void;
+            _callback_data = Some(data);
         } else {
             llama_params.progress_callback = None;
             llama_params.progress_callback_user_data = ptr::null_mut();
+            _callback_data = None;
         }
 
         // Set remaining parameters
@@ -182,8 +205,14 @@ impl Model {
             ));
         }
 
+        // Cache the vocab pointer to avoid repeated FFI calls during generation
+        let vocab_ptr = unsafe { sys::llama_model_get_vocab(model_ptr) };
+
         Ok(Model {
-            inner: Arc::new(ModelInner { model_ptr }),
+            inner: Arc::new(ModelInner {
+                model_ptr,
+                vocab_ptr,
+            }),
         })
     }
 
@@ -262,6 +291,13 @@ impl Model {
     }
 
     /// Detokenize tokens back to text with advanced options
+    ///
+    /// Uses token_to_str() for each token to avoid buffer size issues
+    /// with the llama_detokenize API.
+    ///
+    /// Note: SentencePiece tokenizers include a leading space marker on the first
+    /// token. If you need exact roundtrip for text that didn't start with a space,
+    /// you may need to strip the leading space from the result.
     pub fn detokenize(
         &self,
         tokens: &[TokenId],
@@ -272,66 +308,24 @@ impl Model {
             return Ok(String::new());
         }
 
-        // Get the vocab from the model
-        let vocab = unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) };
-        if vocab.is_null() {
-            return Err(MullamaError::TokenizationError(
-                "Failed to get vocabulary".to_string(),
-            ));
+        let mut result = String::new();
+        let mut is_first = true;
+
+        for &token in tokens {
+            // Skip control/special tokens if remove_special is true
+            if remove_special && self.token_is_control(token) {
+                continue;
+            }
+
+            // Convert token to string piece
+            // For the first non-special token, use lstrip=1 to remove leading space
+            // that SentencePiece adds for word boundary markers
+            let lstrip = if is_first { 1 } else { 0 };
+            let piece = self.token_to_str(token, lstrip, unparse_special)?;
+            result.push_str(&piece);
+            is_first = false;
         }
 
-        // Convert tokens to the correct type
-        let llama_tokens: Vec<sys::llama_token> =
-            tokens.iter().map(|&t| t as sys::llama_token).collect();
-
-        // First, get the required buffer size
-        let max_chars = unsafe {
-            sys::llama_detokenize(
-                vocab,
-                llama_tokens.as_ptr(),
-                tokens.len() as i32,
-                ptr::null_mut(),
-                0,
-                remove_special as sys::c_bool,
-                unparse_special as sys::c_bool,
-            )
-        };
-
-        if max_chars < 0 {
-            return Err(MullamaError::TokenizationError(format!(
-                "Detokenization failed with code: {}",
-                max_chars
-            )));
-        }
-
-        if max_chars == 0 {
-            return Ok(String::new());
-        }
-
-        // Allocate buffer and detokenize
-        let mut buffer = vec![0u8; max_chars as usize + 1]; // +1 for null terminator
-        let actual_chars = unsafe {
-            sys::llama_detokenize(
-                vocab,
-                llama_tokens.as_ptr(),
-                tokens.len() as i32,
-                buffer.as_mut_ptr() as *mut c_char,
-                buffer.len() as i32,
-                remove_special as sys::c_bool,
-                unparse_special as sys::c_bool,
-            )
-        };
-
-        if actual_chars < 0 {
-            return Err(MullamaError::TokenizationError(format!(
-                "Detokenization failed with code: {}",
-                actual_chars
-            )));
-        }
-
-        // Convert to string, handling the null terminator
-        let result_bytes = &buffer[..actual_chars as usize];
-        let result = String::from_utf8_lossy(result_bytes).to_string();
         Ok(result)
     }
 
@@ -385,10 +379,9 @@ impl Model {
             }
         }
 
-        // Convert to string, handling UTF-8 properly
+        // Convert to string - into_owned avoids double allocation for invalid UTF-8
         let result_bytes = &buf[..n_chars as usize];
-        let result = String::from_utf8_lossy(result_bytes).to_string();
-        Ok(result)
+        Ok(String::from_utf8_lossy(result_bytes).into_owned())
     }
 
     /// Get model training context size
@@ -443,8 +436,8 @@ impl Model {
         unsafe { sys::llama_model_rope_type(self.inner.model_ptr) }
     }
 
-    /// Get the internal model pointer (for use by other modules)
-    pub(crate) fn as_ptr(&self) -> *mut sys::llama_model {
+    /// Get the internal model pointer (for use by other modules and FFI)
+    pub fn as_ptr(&self) -> *mut sys::llama_model {
         self.inner.model_ptr
     }
 }
@@ -459,16 +452,16 @@ pub struct Token {
 }
 
 impl Model {
-    /// Get the vocab pointer for this model
+    /// Get the cached vocab pointer for this model (no FFI call)
+    #[inline]
     fn vocab(&self) -> *const sys::llama_vocab {
-        unsafe { sys::llama_model_get_vocab(self.inner.model_ptr) }
+        self.inner.vocab_ptr
     }
 
     /// Get complete token information including attributes
     pub fn get_token_info(&self, token: TokenId) -> Result<Token, MullamaError> {
         let vocab = self.vocab();
-        let text_ptr =
-            unsafe { sys::llama_vocab_get_text(vocab, token as sys::llama_token) };
+        let text_ptr = unsafe { sys::llama_vocab_get_text(vocab, token as sys::llama_token) };
         if text_ptr.is_null() {
             return Err(MullamaError::TokenizationError(
                 "Token not found".to_string(),
@@ -481,10 +474,8 @@ impl Model {
                 .to_string()
         };
 
-        let score =
-            unsafe { sys::llama_vocab_get_score(vocab, token as sys::llama_token) };
-        let attr =
-            unsafe { sys::llama_vocab_get_attr(vocab, token as sys::llama_token) };
+        let score = unsafe { sys::llama_vocab_get_score(vocab, token as sys::llama_token) };
+        let attr = unsafe { sys::llama_vocab_get_attr(vocab, token as sys::llama_token) };
 
         Ok(Token {
             id: token,
@@ -501,9 +492,7 @@ impl Model {
 
     /// Check if token is a control token
     pub fn token_is_control(&self, token: TokenId) -> bool {
-        unsafe {
-            sys::llama_vocab_is_control(self.vocab(), token as sys::llama_token) as bool
-        }
+        unsafe { sys::llama_vocab_is_control(self.vocab(), token as sys::llama_token) as bool }
     }
 
     /// Get special tokens
@@ -546,6 +535,16 @@ impl Model {
 impl Model {
     // ==================== Model Info ====================
 
+    /// Get the model architecture (e.g., "llama", "qwen2", "gemma")
+    pub fn architecture(&self) -> Option<String> {
+        self.meta_val("general.architecture")
+    }
+
+    /// Get the model name from metadata
+    pub fn name(&self) -> Option<String> {
+        self.meta_val("general.name")
+    }
+
     /// Get a description of the model
     pub fn desc(&self) -> String {
         let mut buf = vec![0u8; 256];
@@ -558,7 +557,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            String::from_utf8_lossy(&buf).to_string()
+            String::from_utf8_lossy(&buf).into_owned()
         } else {
             String::new()
         }
@@ -618,15 +617,99 @@ impl Model {
 
     /// Get the model's built-in chat template
     pub fn chat_template(&self) -> Option<String> {
-        let template_ptr = unsafe {
-            sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null())
-        };
+        let template_ptr =
+            unsafe { sys::llama_model_chat_template(self.inner.model_ptr, std::ptr::null()) };
         if template_ptr.is_null() {
             None
         } else {
             let cstr = unsafe { std::ffi::CStr::from_ptr(template_ptr) };
-            Some(cstr.to_string_lossy().to_string())
+            Some(cstr.to_string_lossy().into_owned())
         }
+    }
+
+    /// Extract stop sequences from the model's chat template and architecture
+    ///
+    /// Returns common end-of-turn markers found in the template that should
+    /// be used as stop sequences during generation. Also adds architecture-specific
+    /// stop sequences to ensure proper generation termination.
+    pub fn get_chat_stop_sequences(&self) -> Vec<String> {
+        let mut stops = Vec::new();
+
+        // First, add architecture-specific stop sequences
+        // This ensures we have the right stops even if chat template detection fails
+        if let Some(arch) = self.architecture() {
+            let arch_lower = arch.to_lowercase();
+            match arch_lower.as_str() {
+                // Qwen family (ChatML style)
+                "qwen" | "qwen2" | "qwen2moe" | "qwen2vl" | "qwen3" => {
+                    stops.push("<|im_end|>".to_string());
+                    stops.push("<|endoftext|>".to_string());
+                }
+                // Llama 3 family
+                "llama" => {
+                    stops.push("<|eot_id|>".to_string());
+                    stops.push("<|eom_id|>".to_string());
+                    // Also stop on header tokens that indicate new turn
+                    stops.push("<|start_header_id|>".to_string());
+                }
+                // Gemma family
+                "gemma" | "gemma2" | "gemma3" => {
+                    stops.push("<end_of_turn>".to_string());
+                }
+                // Phi family (uses ChatML style)
+                "phi" | "phi2" | "phi3" | "phi4" => {
+                    stops.push("<|end|>".to_string());
+                    stops.push("<|im_end|>".to_string());
+                }
+                // Mistral/Mixtral family
+                "mistral" | "mixtral" => {
+                    stops.push("</s>".to_string());
+                }
+                // DeepSeek family
+                "deepseek" | "deepseek2" => {
+                    stops.push("<|end▁of▁sentence|>".to_string());
+                    stops.push("<｜end▁of▁sentence｜>".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        // Also detect from chat template for additional coverage
+        if let Some(template) = self.chat_template() {
+            // ChatML/Qwen style (with and without angle brackets)
+            if template.contains("<|im_end|>") && !stops.contains(&"<|im_end|>".to_string()) {
+                stops.push("<|im_end|>".to_string());
+                // Some models generate without outer angle brackets
+                stops.push("|im_end|".to_string());
+            }
+            // Llama 3 style
+            if template.contains("<|eot_id|>") && !stops.contains(&"<|eot_id|>".to_string()) {
+                stops.push("<|eot_id|>".to_string());
+            }
+            if template.contains("<|eom_id|>") && !stops.contains(&"<|eom_id|>".to_string()) {
+                stops.push("<|eom_id|>".to_string());
+            }
+            // Generic end tokens
+            if template.contains("<|end|>") && !stops.contains(&"<|end|>".to_string()) {
+                stops.push("<|end|>".to_string());
+            }
+            if template.contains("<|endoftext|>") && !stops.contains(&"<|endoftext|>".to_string()) {
+                stops.push("<|endoftext|>".to_string());
+            }
+            // Gemma style
+            if template.contains("<end_of_turn>") && !stops.contains(&"<end_of_turn>".to_string()) {
+                stops.push("<end_of_turn>".to_string());
+            }
+            // Mistral style
+            if template.contains("[/INST]")
+                && template.contains("</s>")
+                && !stops.contains(&"</s>".to_string())
+            {
+                stops.push("</s>".to_string());
+            }
+        }
+
+        stops
     }
 
     /// Apply a chat template to format messages
@@ -637,7 +720,7 @@ impl Model {
     /// * `add_generation_prompt` - Whether to add the generation prompt
     ///
     /// # Example
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// let messages = vec![
     ///     ("system", "You are a helpful assistant."),
     ///     ("user", "Hello!"),
@@ -729,7 +812,7 @@ impl Model {
         }
 
         buffer.truncate(written as usize);
-        Ok(String::from_utf8_lossy(&buffer).to_string())
+        Ok(String::from_utf8_lossy(&buffer).into_owned())
     }
 
     // ==================== Model Metadata ====================
@@ -752,7 +835,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }
@@ -772,7 +855,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }
@@ -791,7 +874,7 @@ impl Model {
         };
         if len > 0 {
             buf.truncate(len as usize);
-            Some(String::from_utf8_lossy(&buf).to_string())
+            Some(String::from_utf8_lossy(&buf).into_owned())
         } else {
             None
         }
@@ -853,10 +936,10 @@ impl Model {
         }
 
         if !Path::new(path).exists() {
-            return Err(MullamaError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Model save failed: {}", path),
-            )));
+            return Err(MullamaError::IoError(std::io::Error::other(format!(
+                "Model save failed: {}",
+                path
+            ))));
         }
 
         Ok(())
@@ -882,21 +965,21 @@ impl Model {
 
         let (tag, value) = match &override_.value {
             ModelKvOverrideValue::Int(v) => {
-                let mut val = sys::llama_model_kv_override_value { val_i64: *v };
+                let val = sys::llama_model_kv_override_value { val_i64: *v };
                 (
                     sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_INT,
                     val,
                 )
             }
             ModelKvOverrideValue::Float(v) => {
-                let mut val = sys::llama_model_kv_override_value { val_f64: *v };
+                let val = sys::llama_model_kv_override_value { val_f64: *v };
                 (
                     sys::llama_model_kv_override_type::LLAMA_KV_OVERRIDE_TYPE_FLOAT,
                     val,
                 )
             }
             ModelKvOverrideValue::Bool(v) => {
-                let mut val = sys::llama_model_kv_override_value {
+                let val = sys::llama_model_kv_override_value {
                     val_bool: *v as sys::c_bool,
                 };
                 (

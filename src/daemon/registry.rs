@@ -1,0 +1,568 @@
+//! Model Registry for Mullama
+//!
+//! Maps short model names (like "llama3.2:1b") to HuggingFace repositories.
+//! Supports quantization suffixes and automatic file selection.
+
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// A model alias entry in the registry
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelAlias {
+    /// HuggingFace repository (e.g., "bartowski/Llama-3.2-1B-Instruct-GGUF")
+    pub repo: String,
+
+    /// Default GGUF file to use
+    #[serde(default)]
+    pub default_file: Option<String>,
+
+    /// Vision projector file for multimodal models
+    #[serde(default)]
+    pub mmproj: Option<String>,
+
+    /// Model family (llama, qwen, mistral, etc.)
+    #[serde(default)]
+    pub family: Option<String>,
+
+    /// Human-readable description
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Capability tags
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Quantization configuration
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct QuantizationConfig {
+    /// Maps quantization suffixes to file patterns
+    #[serde(flatten)]
+    pub mappings: HashMap<String, Vec<String>>,
+
+    /// Default quantization preference order
+    #[serde(default)]
+    pub default_order: Vec<String>,
+}
+
+/// Registry metadata
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RegistryMeta {
+    pub version: Option<String>,
+    pub updated: Option<String>,
+}
+
+/// The model registry
+#[derive(Debug, Clone, Default)]
+pub struct ModelRegistry {
+    /// Model aliases
+    pub aliases: HashMap<String, ModelAlias>,
+
+    /// Quantization configuration
+    pub quantizations: QuantizationConfig,
+
+    /// Registry metadata
+    pub meta: RegistryMeta,
+}
+
+/// Parsed model specification
+#[derive(Debug, Clone)]
+pub struct ParsedModelSpec {
+    /// The original input string
+    pub original: String,
+
+    /// Base model name (without quantization suffix)
+    pub name: String,
+
+    /// Requested quantization (e.g., "q4", "q8", "f16")
+    pub quantization: Option<String>,
+
+    /// Whether this is a HuggingFace spec (hf:...)
+    pub is_hf_spec: bool,
+
+    /// Whether this is a local path
+    pub is_local_path: bool,
+
+    /// Resolved alias (if found in registry)
+    pub alias: Option<ModelAlias>,
+}
+
+impl ModelRegistry {
+    /// Create an empty registry
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load the registry from standard locations.
+    ///
+    /// Lookup order:
+    /// 1. `MULLAMA_REGISTRY` environment variable (path to a TOML file).
+    /// 2. `<config_dir>/mullama/models.toml` — XDG config on Linux,
+    ///    `~/Library/Application Support` on macOS, `%APPDATA%` on Windows.
+    ///
+    /// If no file is found, returns an empty registry. Local paths and
+    /// explicit `hf:` / `ollama:` prefixes still resolve without a registry;
+    /// only the short-name aliases (e.g. `llama3.2:1b`) need one.
+    pub fn load_default() -> Result<Self, RegistryError> {
+        if let Some(path) = Self::default_path() {
+            if path.exists() {
+                return Self::from_file(path);
+            }
+        }
+        Ok(Self::new())
+    }
+
+    /// Path the default loader will inspect, if one can be determined.
+    pub fn default_path() -> Option<PathBuf> {
+        if let Ok(p) = std::env::var("MULLAMA_REGISTRY") {
+            return Some(PathBuf::from(p));
+        }
+        dirs::config_dir().map(|d| d.join("mullama").join("models.toml"))
+    }
+
+    /// Load registry from a TOML string
+    pub fn from_toml(content: &str) -> Result<Self, RegistryError> {
+        #[derive(Deserialize)]
+        struct RawRegistry {
+            #[serde(default)]
+            meta: RegistryMeta,
+            #[serde(default)]
+            aliases: HashMap<String, ModelAlias>,
+            #[serde(default)]
+            quantizations: QuantizationConfig,
+        }
+
+        let raw: RawRegistry =
+            toml::from_str(content).map_err(|e| RegistryError::ParseError(e.to_string()))?;
+
+        Ok(Self {
+            aliases: raw.aliases,
+            quantizations: raw.quantizations,
+            meta: raw.meta,
+        })
+    }
+
+    /// Load registry from a file path
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self, RegistryError> {
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| RegistryError::IoError(e.to_string()))?;
+        Self::from_toml(&content)
+    }
+
+    /// Look up a model alias
+    pub fn get(&self, name: &str) -> Option<&ModelAlias> {
+        self.aliases.get(name)
+    }
+
+    /// List all available aliases
+    pub fn list_aliases(&self) -> Vec<&str> {
+        self.aliases.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Search for aliases matching a pattern
+    pub fn search(&self, query: &str) -> Vec<(&str, &ModelAlias)> {
+        let query_lower = query.to_lowercase();
+        self.aliases
+            .iter()
+            .filter(|(name, alias)| {
+                name.to_lowercase().contains(&query_lower)
+                    || alias
+                        .description
+                        .as_ref()
+                        .map(|d| d.to_lowercase().contains(&query_lower))
+                        .unwrap_or(false)
+                    || alias
+                        .family
+                        .as_ref()
+                        .map(|f| f.to_lowercase().contains(&query_lower))
+                        .unwrap_or(false)
+                    || alias
+                        .tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
+            })
+            .map(|(name, alias)| (name.as_str(), alias))
+            .collect()
+    }
+
+    /// Parse a model specification
+    pub fn parse_spec(&self, input: &str) -> ParsedModelSpec {
+        let input = input.trim();
+
+        // Check if it's a HuggingFace spec
+        if input.starts_with("hf:") {
+            return ParsedModelSpec {
+                original: input.to_string(),
+                name: input.to_string(),
+                quantization: None,
+                is_hf_spec: true,
+                is_local_path: false,
+                alias: None,
+            };
+        }
+
+        // Check if it's a local path
+        if Self::looks_like_local_path(input) {
+            return ParsedModelSpec {
+                original: input.to_string(),
+                name: input.to_string(),
+                quantization: None,
+                is_hf_spec: false,
+                is_local_path: true,
+                alias: None,
+            };
+        }
+
+        // Try to parse as alias with optional quantization suffix
+        // Format: name:variant-quant or name:variant
+        // Examples: llama3.2:1b, llama3.2:1b-q8, qwen2.5:7b-instruct-q4
+
+        let (base_name, quantization) = self.extract_quantization(input);
+
+        // Look up the alias
+        let alias = self.get(&base_name).cloned();
+
+        ParsedModelSpec {
+            original: input.to_string(),
+            name: base_name,
+            quantization,
+            is_hf_spec: false,
+            is_local_path: false,
+            alias,
+        }
+    }
+
+    /// Extract quantization suffix from a model name
+    fn extract_quantization(&self, input: &str) -> (String, Option<String>) {
+        // Check for quantization suffix at the end
+        // Patterns: -q2, -q3, -q4, -q5, -q6, -q8, -f16, -f32
+        let quant_suffixes = ["q2", "q3", "q4", "q5", "q6", "q8", "f16", "f32"];
+
+        for suffix in quant_suffixes {
+            let pattern = format!("-{}", suffix);
+            if input.ends_with(&pattern) {
+                let base = input[..input.len() - pattern.len()].to_string();
+                return (base, Some(suffix.to_string()));
+            }
+        }
+
+        (input.to_string(), None)
+    }
+
+    fn looks_like_local_path(input: &str) -> bool {
+        let looks_like_windows_abs = input.len() >= 3
+            && input.as_bytes()[0].is_ascii_alphabetic()
+            && input.as_bytes()[1] == b':'
+            && (input.as_bytes()[2] == b'\\' || input.as_bytes()[2] == b'/');
+
+        input.starts_with('/')
+            || input.starts_with("./")
+            || input.starts_with("../")
+            || input.starts_with("~/")
+            || looks_like_windows_abs
+            || input.ends_with(".gguf")
+            || input.contains('\\')
+    }
+
+    /// Get the preferred quantization file patterns for a given suffix
+    pub fn get_quant_patterns(&self, suffix: &str) -> Vec<String> {
+        self.quantizations
+            .mappings
+            .get(suffix)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get the default quantization order
+    pub fn default_quant_order(&self) -> Vec<String> {
+        if self.quantizations.default_order.is_empty() {
+            vec![
+                "Q4_K_M".to_string(),
+                "Q4_K_S".to_string(),
+                "Q5_K_M".to_string(),
+                "Q4_0".to_string(),
+                "Q8_0".to_string(),
+                "F16".to_string(),
+            ]
+        } else {
+            self.quantizations.default_order.clone()
+        }
+    }
+
+    /// Convert a parsed spec to an HF model spec string
+    pub fn to_hf_spec(&self, spec: &ParsedModelSpec) -> Option<String> {
+        if spec.is_hf_spec {
+            return Some(spec.original.clone());
+        }
+
+        if spec.is_local_path {
+            return None;
+        }
+
+        let alias = spec.alias.as_ref()?;
+
+        let mut hf_spec = format!("hf:{}", alias.repo);
+
+        // Add filename if specified
+        if let Some(ref file) = alias.default_file {
+            hf_spec.push(':');
+            hf_spec.push_str(file);
+        }
+
+        Some(hf_spec)
+    }
+}
+
+/// Registry errors
+#[derive(Debug)]
+pub enum RegistryError {
+    IoError(String),
+    ParseError(String),
+}
+
+impl std::fmt::Display for RegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegistryError::IoError(e) => write!(f, "IO error: {}", e),
+            RegistryError::ParseError(e) => write!(f, "Parse error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for RegistryError {}
+
+/// Global registry instance
+static REGISTRY: std::sync::OnceLock<ModelRegistry> = std::sync::OnceLock::new();
+
+/// Get the global registry instance
+pub fn registry() -> &'static ModelRegistry {
+    REGISTRY.get_or_init(|| {
+        ModelRegistry::load_default().unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to load model registry: {}", e);
+            ModelRegistry::new()
+        })
+    })
+}
+
+/// Resolve a model name to an HF spec or Ollama reference
+///
+/// This is the main entry point for model resolution.
+/// Resolution priority:
+/// 1. Local path (starts with `/`, `.`, ends `.gguf`)
+/// 2. Explicit `hf:` prefix → HuggingFace
+/// 3. Explicit `ollama:` prefix → Ollama registry
+/// 4. Known Mullama alias → HuggingFace
+/// 5. Ollama-style name:tag format
+/// 6. Unknown
+pub fn resolve_model_name(name: &str) -> ResolvedModel {
+    let reg = registry();
+    let spec = reg.parse_spec(name);
+
+    // 1. Local path
+    if spec.is_local_path {
+        return ResolvedModel::LocalPath(PathBuf::from(&spec.name));
+    }
+
+    // 2. Explicit HuggingFace spec
+    if spec.is_hf_spec {
+        return ResolvedModel::HuggingFace {
+            spec: spec.original,
+            mmproj: None,
+        };
+    }
+
+    // 3. Explicit Ollama prefix
+    if let Some(ollama_name) = name.strip_prefix("ollama:") {
+        let (model_name, tag) = ollama_name
+            .split_once(':')
+            .unwrap_or((ollama_name, "latest"));
+        return ResolvedModel::Ollama {
+            name: model_name.to_string(),
+            tag: tag.to_string(),
+        };
+    }
+
+    // 4. Known Mullama aliases resolve to HuggingFace for deterministic behavior.
+    if let Some(ref alias) = spec.alias {
+        let hf_spec = reg
+            .to_hf_spec(&spec)
+            .unwrap_or_else(|| format!("hf:{}", alias.repo));
+
+        return ResolvedModel::HuggingFace {
+            spec: hf_spec,
+            mmproj: alias.mmproj.clone(),
+        };
+    }
+
+    // 5. Try Ollama-style name:tag format
+    if super::ollama::OllamaClient::is_ollama_ref(name) {
+        let (model_name, tag) = if name.contains(':') {
+            let parts: Vec<&str> = name.splitn(2, ':').collect();
+            (
+                parts[0].to_string(),
+                parts.get(1).unwrap_or(&"latest").to_string(),
+            )
+        } else {
+            (name.to_string(), "latest".to_string())
+        };
+
+        return ResolvedModel::Ollama {
+            name: model_name,
+            tag,
+        };
+    }
+
+    // 6. Unknown model
+    ResolvedModel::Unknown(name.to_string())
+}
+
+/// Result of resolving a model name
+#[derive(Debug, Clone)]
+pub enum ResolvedModel {
+    /// A local file path
+    LocalPath(PathBuf),
+
+    /// A HuggingFace model spec
+    HuggingFace {
+        spec: String,
+        mmproj: Option<String>,
+    },
+
+    /// An Ollama registry model
+    Ollama { name: String, tag: String },
+
+    /// Unknown model name (not in registry)
+    Unknown(String),
+}
+
+impl ResolvedModel {
+    /// Check if this is a local path
+    pub fn is_local(&self) -> bool {
+        matches!(self, ResolvedModel::LocalPath(_))
+    }
+
+    /// Check if this is a HuggingFace model
+    pub fn is_hf(&self) -> bool {
+        matches!(self, ResolvedModel::HuggingFace { .. })
+    }
+
+    /// Check if this is an Ollama model
+    pub fn is_ollama(&self) -> bool {
+        matches!(self, ResolvedModel::Ollama { .. })
+    }
+
+    /// Check if this is unknown
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, ResolvedModel::Unknown(_))
+    }
+
+    /// Get the Ollama model name if this is an Ollama model
+    pub fn ollama_name(&self) -> Option<String> {
+        match self {
+            ResolvedModel::Ollama { name, tag } => Some(format!("{}:{}", name, tag)),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_registry() -> ModelRegistry {
+        let toml = r#"
+[aliases."llama3.2:1b"]
+repo = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+default_file = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+family = "llama"
+description = "Compact and fast"
+tags = ["chat", "instruct", "fast", "coding"]
+
+[quantizations]
+q4 = ["Q4_K_M", "Q4_K_S"]
+q8 = ["Q8_0"]
+default_order = ["Q4_K_M", "Q4_K_S"]
+"#;
+        ModelRegistry::from_toml(toml).expect("inline test registry must parse")
+    }
+
+    #[test]
+    fn test_parse_alias() {
+        let reg = test_registry();
+        let spec = reg.parse_spec("llama3.2:1b");
+
+        assert_eq!(spec.name, "llama3.2:1b");
+        assert!(spec.alias.is_some());
+        assert!(!spec.is_hf_spec);
+        assert!(!spec.is_local_path);
+    }
+
+    #[test]
+    fn test_parse_with_quantization() {
+        let reg = test_registry();
+        let spec = reg.parse_spec("llama3.2:1b-q8");
+
+        assert_eq!(spec.name, "llama3.2:1b");
+        assert_eq!(spec.quantization, Some("q8".to_string()));
+    }
+
+    #[test]
+    fn test_parse_hf_spec() {
+        let reg = test_registry();
+        let spec = reg.parse_spec("hf:TheBloke/Llama-2-7B-GGUF");
+
+        assert!(spec.is_hf_spec);
+        assert!(!spec.is_local_path);
+        assert!(spec.alias.is_none());
+    }
+
+    #[test]
+    fn test_parse_local_path() {
+        let reg = test_registry();
+
+        let spec1 = reg.parse_spec("./model.gguf");
+        assert!(spec1.is_local_path);
+
+        let spec2 = reg.parse_spec("/home/user/model.gguf");
+        assert!(spec2.is_local_path);
+
+        let spec3 = reg.parse_spec("model.gguf");
+        assert!(spec3.is_local_path);
+    }
+
+    #[test]
+    fn test_search() {
+        let reg = test_registry();
+
+        let results = reg.search("llama");
+        assert!(!results.is_empty());
+
+        let results = reg.search("coding");
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_local() {
+        let resolved = resolve_model_name("./model.gguf");
+        assert!(resolved.is_local());
+    }
+
+    #[test]
+    fn test_resolve_ollama_user_model() {
+        let resolved = resolve_model_name("user/model:tag");
+        assert!(resolved.is_ollama());
+    }
+
+    #[test]
+    fn test_load_default_no_file_is_empty() {
+        // With no MULLAMA_REGISTRY pointing at a real file and no config-dir
+        // file present, load_default() must succeed with an empty registry
+        // rather than failing.
+        let nonexistent = std::env::temp_dir().join("mullama-nonexistent-registry.toml");
+        std::env::set_var("MULLAMA_REGISTRY", &nonexistent);
+        let reg = ModelRegistry::load_default().unwrap();
+        std::env::remove_var("MULLAMA_REGISTRY");
+        assert!(reg.aliases.is_empty());
+    }
+}

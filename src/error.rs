@@ -83,6 +83,9 @@ pub enum MullamaError {
     #[error("Hugging Face error: {0}")]
     HuggingFaceError(String),
 
+    #[error("Ollama registry error: {0}")]
+    OllamaError(String),
+
     #[error("Operation failed: {0}")]
     OperationFailed(String),
 

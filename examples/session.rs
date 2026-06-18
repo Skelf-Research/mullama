@@ -5,8 +5,7 @@
 //! 2. Session API usage patterns
 //! 3. State management concepts
 
-use mullama::{ContextParams, Model, MullamaError, Session};
-use std::sync::Arc;
+use mullama::{ContextParams, MullamaError, Session};
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama session management example");

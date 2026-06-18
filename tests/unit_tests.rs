@@ -4,11 +4,9 @@
 //! They test data structures, parameter validation, type safety, and API consistency.
 
 use mullama::*;
-use std::sync::Arc;
 
 #[cfg(test)]
 mod ffi_tests {
-    use super::*;
     use mullama::sys;
 
     #[test]
@@ -114,7 +112,10 @@ mod parameter_tests {
         assert!(params.n_threads > 0);
         assert!(params.n_threads_batch > 0);
         assert_eq!(params.embeddings, false);
-        assert_eq!(params.flash_attn, false);
+        assert_eq!(
+            params.flash_attn_type,
+            mullama::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO
+        );
         assert_eq!(params.offload_kqv, true);
         assert_eq!(params.swa_full, true);
         assert_eq!(params.kv_unified, false);

@@ -5,8 +5,7 @@
 //! 2. Batch API usage patterns
 //! 3. Efficient processing concepts
 
-use mullama::{Batch, ContextParams, Model, MullamaError};
-use std::sync::Arc;
+use mullama::{Batch, ContextParams, MullamaError};
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama batch processing example");
@@ -18,7 +17,7 @@ fn main() -> Result<(), MullamaError> {
     println!("Demonstrating batch API...");
 
     println!("Creating batch...");
-    let batch = Batch::new(1024, 0, 4); // Max 1024 tokens, 0 embedding size, 4 sequences
+    let _batch = Batch::new(1024, 0, 4); // Max 1024 tokens, 0 embedding size, 4 sequences
     println!(" Batch created with capacity for {} tokens", 1024);
 
     println!("Creating batch from tokens...");

@@ -1,9 +1,22 @@
-use crate::{sys, token::TokenId};
+use crate::{
+    sys,
+    token::{TokenBuffer, TokenId},
+};
 
 /// Represents a batch of tokens for processing
+///
+/// ## Memory Safety Note
+///
+/// The `tokens_storage` uses `Vec<TokenId>` (heap-allocated) rather than `SmallVec`
+/// because `llama_batch_get_one` stores a raw pointer to the token data internally.
+/// If we used SmallVec's inline storage, the pointer would become invalid when the
+/// Batch struct is moved (as SmallVec copies inline data during moves).
+/// Vec's data is always heap-allocated, so the pointer remains stable.
+#[allow(dead_code)]
 pub struct Batch {
     inner: Option<sys::llama_batch>,
     /// Store tokens to ensure they outlive the batch (for llama_batch_get_one)
+    /// Uses Vec for heap allocation to ensure stable pointer after struct moves
     tokens_storage: Option<Vec<TokenId>>,
     /// Whether this batch was created with llama_batch_init (needs to be freed)
     needs_free: bool,
@@ -21,9 +34,10 @@ impl Batch {
         }
     }
 
-    /// Create a batch from tokens using llama_batch_get_one
-    /// This is simpler and safer for single-sequence inference
-    pub fn from_tokens(tokens: &[TokenId]) -> Self {
+    /// Create a batch from a TokenBuffer using llama_batch_get_one
+    ///
+    /// Converts to Vec for heap allocation to ensure pointer stability.
+    pub fn from_token_buffer(tokens: TokenBuffer) -> Self {
         if tokens.is_empty() {
             return Self {
                 inner: None,
@@ -32,21 +46,50 @@ impl Batch {
             };
         }
 
-        // Store tokens so they outlive the batch
-        let mut tokens_storage = tokens.to_vec();
+        // Convert to Vec to ensure heap allocation - the pointer must remain
+        // stable after the Batch struct is moved. SmallVec's inline storage
+        // would invalidate the pointer on move.
+        let mut vec_tokens: Vec<TokenId> = tokens.into_vec();
 
-        let inner = unsafe {
-            sys::llama_batch_get_one(tokens_storage.as_mut_ptr(), tokens_storage.len() as i32)
-        };
+        let inner =
+            unsafe { sys::llama_batch_get_one(vec_tokens.as_mut_ptr(), vec_tokens.len() as i32) };
 
         Self {
             inner: Some(inner),
-            tokens_storage: Some(tokens_storage),
-            needs_free: false, // llama_batch_get_one doesn't allocate memory that needs freeing
+            tokens_storage: Some(vec_tokens),
+            needs_free: false,
         }
     }
 
+    /// Create a batch from owned tokens using llama_batch_get_one
+    /// This avoids copying when you already have a Vec
+    pub fn from_tokens_owned(mut tokens: Vec<TokenId>) -> Self {
+        if tokens.is_empty() {
+            return Self {
+                inner: None,
+                tokens_storage: None,
+                needs_free: false,
+            };
+        }
+
+        let inner = unsafe { sys::llama_batch_get_one(tokens.as_mut_ptr(), tokens.len() as i32) };
+
+        Self {
+            inner: Some(inner),
+            tokens_storage: Some(tokens),
+            needs_free: false,
+        }
+    }
+
+    /// Create a batch from a token slice using llama_batch_get_one
+    ///
+    /// Copies the tokens to ensure heap allocation for pointer stability.
+    pub fn from_tokens(tokens: &[TokenId]) -> Self {
+        Self::from_token_buffer(TokenBuffer::from_slice(tokens))
+    }
+
     /// Get the internal llama_batch struct
+    #[allow(dead_code)]
     pub(crate) fn as_llama_batch(&self) -> Option<&sys::llama_batch> {
         self.inner.as_ref()
     }

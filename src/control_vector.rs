@@ -9,6 +9,8 @@ use crate::sys;
 use crate::Context;
 use crate::Model;
 use std::collections::HashMap;
+#[cfg(feature = "daemon")]
+use std::io::{Read, Write};
 use std::path::Path;
 
 /// A control vector that can influence model behavior
@@ -381,7 +383,7 @@ impl ControlVector {
                 metadata_json
                     .get("recommended_strength")
                     .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.get(0))
+                    .and_then(|arr| arr.first())
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.1) as f32,
                 metadata_json
@@ -489,32 +491,358 @@ impl ControlVector {
         Ok(())
     }
 
-    /// Load from NPZ format (placeholder)
-    fn load_npz<P: AsRef<Path>>(_path: P) -> Result<Self, MullamaError> {
-        Err(MullamaError::NotImplemented(
-            "NPZ format loading not yet implemented".to_string(),
-        ))
+    /// Load from NPZ format
+    fn load_npz<P: AsRef<Path>>(path: P) -> Result<Self, MullamaError> {
+        #[cfg(feature = "daemon")]
+        {
+            let file = std::fs::File::open(path).map_err(|e| {
+                MullamaError::ControlVectorError(format!("Failed to open NPZ file: {}", e))
+            })?;
+            let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+                MullamaError::ControlVectorError(format!("Failed to read NPZ archive: {}", e))
+            })?;
+
+            let mut layers = Vec::new();
+            let mut embedding_dim = 0usize;
+
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).map_err(|e| {
+                    MullamaError::ControlVectorError(format!("Failed to read NPZ entry: {}", e))
+                })?;
+                let name = entry.name().to_string();
+
+                if !name.ends_with(".npy") {
+                    continue;
+                }
+
+                let layer_idx: usize = name.trim_end_matches(".npy").parse().unwrap_or(i);
+
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data).map_err(|e| {
+                    MullamaError::ControlVectorError(format!(
+                        "Failed to read NPZ entry data: {}",
+                        e
+                    ))
+                })?;
+
+                let values = parse_npy_data(&data)?;
+                if embedding_dim == 0 {
+                    embedding_dim = values.len();
+                }
+                layers.push((layer_idx, values));
+            }
+
+            if layers.is_empty() {
+                return Err(MullamaError::ControlVectorError(
+                    "No layer data found in NPZ file".to_string(),
+                ));
+            }
+
+            layers.sort_by_key(|(idx, _)| *idx);
+            let max_idx = layers.iter().map(|(idx, _)| *idx).max().unwrap_or(0);
+            let num_layers = max_idx + 1;
+
+            let mut vector = Self::new(
+                "npz_control_vector".to_string(),
+                "Loaded from NPZ format".to_string(),
+                embedding_dim,
+                num_layers,
+            );
+
+            for (idx, values) in layers {
+                if idx < vector.layers.len() {
+                    vector.layers[idx].values = values;
+                }
+            }
+
+            Ok(vector)
+        }
+
+        #[cfg(not(feature = "daemon"))]
+        {
+            let _ = path;
+            Err(MullamaError::NotImplemented(
+                "NPZ format requires 'daemon' feature (zip crate)".to_string(),
+            ))
+        }
     }
 
-    /// Save to NPZ format (placeholder)
-    fn save_npz<P: AsRef<Path>>(&self, _path: P) -> Result<(), MullamaError> {
-        Err(MullamaError::NotImplemented(
-            "NPZ format saving not yet implemented".to_string(),
-        ))
+    /// Save to NPZ format
+    fn save_npz<P: AsRef<Path>>(&self, path: P) -> Result<(), MullamaError> {
+        #[cfg(feature = "daemon")]
+        {
+            let file = std::fs::File::create(path).map_err(|e| {
+                MullamaError::ControlVectorError(format!("Failed to create NPZ file: {}", e))
+            })?;
+            let mut zip_writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            for layer in &self.layers {
+                let entry_name = format!("{}.npy", layer.layer_index);
+                zip_writer.start_file(&entry_name, options).map_err(|e| {
+                    MullamaError::ControlVectorError(format!("Failed to write NPZ entry: {}", e))
+                })?;
+
+                let npy_data = build_npy_data(&layer.values);
+                zip_writer.write_all(&npy_data).map_err(|e| {
+                    MullamaError::ControlVectorError(format!("Failed to write NPZ data: {}", e))
+                })?;
+            }
+
+            zip_writer.finish().map_err(|e| {
+                MullamaError::ControlVectorError(format!("Failed to finalize NPZ archive: {}", e))
+            })?;
+
+            Ok(())
+        }
+
+        #[cfg(not(feature = "daemon"))]
+        {
+            let _ = path;
+            Err(MullamaError::NotImplemented(
+                "NPZ format requires 'daemon' feature (zip crate)".to_string(),
+            ))
+        }
     }
 
-    /// Load from SafeTensors format (placeholder)
-    fn load_safetensors<P: AsRef<Path>>(_path: P) -> Result<Self, MullamaError> {
-        Err(MullamaError::NotImplemented(
-            "SafeTensors format loading not yet implemented".to_string(),
-        ))
+    /// Load from SafeTensors format
+    fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<Self, MullamaError> {
+        let data = std::fs::read(path).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to read SafeTensors file: {}", e))
+        })?;
+
+        if data.len() < 8 {
+            return Err(MullamaError::ControlVectorError(
+                "SafeTensors file too small".to_string(),
+            ));
+        }
+
+        let header_size = u64::from_le_bytes(
+            data[..8]
+                .try_into()
+                .map_err(|_| MullamaError::ControlVectorError("Invalid header size".to_string()))?,
+        ) as usize;
+
+        if data.len() < 8 + header_size {
+            return Err(MullamaError::ControlVectorError(
+                "SafeTensors file truncated".to_string(),
+            ));
+        }
+
+        let header_str = std::str::from_utf8(&data[8..8 + header_size]).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Invalid SafeTensors header: {}", e))
+        })?;
+
+        let header: serde_json::Map<String, serde_json::Value> = serde_json::from_str(header_str)
+            .map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to parse SafeTensors header: {}", e))
+        })?;
+
+        let body_offset = 8 + header_size;
+        let mut layers = Vec::new();
+        let mut embedding_dim = 0usize;
+
+        for (tensor_name, tensor_info) in &header {
+            if tensor_name == "__metadata__" {
+                continue;
+            }
+
+            let info = tensor_info.as_object().ok_or_else(|| {
+                MullamaError::ControlVectorError(format!(
+                    "Invalid tensor info for '{}'",
+                    tensor_name
+                ))
+            })?;
+
+            let offsets = info
+                .get("data_offsets")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    MullamaError::ControlVectorError(format!(
+                        "Missing data_offsets for '{}'",
+                        tensor_name
+                    ))
+                })?;
+
+            if offsets.len() < 2 {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "data_offsets for '{}' must have at least 2 elements, got {}",
+                    tensor_name,
+                    offsets.len()
+                )));
+            }
+
+            let start = offsets[0].as_u64().unwrap_or(0) as usize;
+            let end = offsets[1].as_u64().unwrap_or(0) as usize;
+
+            if start > end {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "Invalid data_offsets for '{}': start {} > end {}",
+                    tensor_name, start, end
+                )));
+            }
+
+            let data_end = body_offset.checked_add(end).ok_or_else(|| {
+                MullamaError::ControlVectorError(format!(
+                    "data_offsets overflow for '{}'",
+                    tensor_name
+                ))
+            })?;
+            if data_end > data.len() {
+                return Err(MullamaError::ControlVectorError(format!(
+                    "data_offsets for '{}' exceed file size ({} > {})",
+                    tensor_name,
+                    data_end,
+                    data.len()
+                )));
+            }
+
+            let dtype = info.get("dtype").and_then(|v| v.as_str()).unwrap_or("F32");
+
+            let tensor_data = &data[body_offset + start..body_offset + end];
+            let values = match dtype {
+                "F32" | "BF16" | "F16" => parse_safetensor_f32(tensor_data, dtype)?,
+                "F64" => parse_safetensor_f64(tensor_data)?,
+                _ => {
+                    return Err(MullamaError::ControlVectorError(format!(
+                        "Unsupported SafeTensors dtype: {}",
+                        dtype
+                    )));
+                }
+            };
+
+            if embedding_dim == 0 {
+                embedding_dim = values.len();
+            }
+
+            let layer_idx: usize = tensor_name
+                .trim_start_matches("layer_")
+                .trim_start_matches("layers.")
+                .parse()
+                .unwrap_or(layers.len());
+
+            layers.push((layer_idx, values));
+        }
+
+        if layers.is_empty() {
+            return Err(MullamaError::ControlVectorError(
+                "No tensor data found in SafeTensors file".to_string(),
+            ));
+        }
+
+        layers.sort_by_key(|(idx, _)| *idx);
+        let max_idx = layers.iter().map(|(idx, _)| *idx).max().unwrap_or(0);
+        let num_layers = max_idx + 1;
+
+        let mut vector = Self::new(
+            "safetensors_control_vector".to_string(),
+            "Loaded from SafeTensors format".to_string(),
+            embedding_dim,
+            num_layers,
+        );
+
+        if let Some(meta) = header.get("__metadata__") {
+            if let Some(obj) = meta.as_object() {
+                if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                    vector.metadata.name = name.to_string();
+                }
+                if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                    vector.metadata.description = desc.to_string();
+                }
+            }
+        }
+
+        for (idx, values) in layers {
+            if idx < vector.layers.len() {
+                vector.layers[idx].values = values;
+            }
+        }
+
+        Ok(vector)
     }
 
-    /// Save to SafeTensors format (placeholder)
-    fn save_safetensors<P: AsRef<Path>>(&self, _path: P) -> Result<(), MullamaError> {
-        Err(MullamaError::NotImplemented(
-            "SafeTensors format saving not yet implemented".to_string(),
-        ))
+    /// Save to SafeTensors format
+    fn save_safetensors<P: AsRef<Path>>(&self, path: P) -> Result<(), MullamaError> {
+        let mut tensors = serde_json::Map::new();
+
+        let mut current_offset: u64 = 0;
+        let mut data_offsets = Vec::new();
+
+        for layer in &self.layers {
+            let tensor_name = format!("layer_{}", layer.layer_index);
+            let byte_len = (layer.values.len() * std::mem::size_of::<f32>()) as u64;
+            data_offsets.push((current_offset, current_offset + byte_len));
+
+            let mut shape = serde_json::Map::new();
+            shape.insert(
+                "dtype".to_string(),
+                serde_json::Value::String("F32".to_string()),
+            );
+            shape.insert(
+                "shape".to_string(),
+                serde_json::json!([1, layer.values.len()]),
+            );
+            shape.insert(
+                "data_offsets".to_string(),
+                serde_json::json!([current_offset, current_offset + byte_len]),
+            );
+
+            tensors.insert(tensor_name, serde_json::Value::Object(shape));
+            current_offset += byte_len;
+        }
+
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "name".to_string(),
+            serde_json::Value::String(self.metadata.name.clone()),
+        );
+        metadata.insert(
+            "description".to_string(),
+            serde_json::Value::String(self.metadata.description.clone()),
+        );
+        metadata.insert(
+            "recommended_strength".to_string(),
+            serde_json::json!([
+                self.metadata.recommended_strength.0,
+                self.metadata.recommended_strength.1
+            ]),
+        );
+        tensors.insert(
+            "__metadata__".to_string(),
+            serde_json::Value::Object(metadata),
+        );
+
+        let header_json =
+            serde_json::to_string(&serde_json::Value::Object(tensors)).map_err(|e| {
+                MullamaError::ControlVectorError(format!("Failed to serialize header: {}", e))
+            })?;
+
+        let header_bytes = header_json.as_bytes();
+        let header_size = (header_bytes.len() as u64).to_le_bytes();
+
+        let mut file = std::fs::File::create(path).map_err(|e| {
+            MullamaError::ControlVectorError(format!("Failed to create SafeTensors file: {}", e))
+        })?;
+
+        use std::io::Write;
+        file.write_all(&header_size)
+            .map_err(|e| MullamaError::ControlVectorError(format!("Write error: {}", e)))?;
+        file.write_all(header_bytes)
+            .map_err(|e| MullamaError::ControlVectorError(format!("Write error: {}", e)))?;
+
+        for layer in &self.layers {
+            let byte_slice = unsafe {
+                std::slice::from_raw_parts(
+                    layer.values.as_ptr() as *const u8,
+                    layer.values.len() * std::mem::size_of::<f32>(),
+                )
+            };
+            file.write_all(byte_slice)
+                .map_err(|e| MullamaError::ControlVectorError(format!("Write error: {}", e)))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -750,6 +1078,155 @@ pub mod presets {
             num_layers,
             0.8,
         )
+    }
+}
+
+/// Parse NPY binary data (numpy .npy format) into f32 values
+#[cfg(feature = "daemon")]
+fn parse_npy_data(data: &[u8]) -> Result<Vec<f32>, MullamaError> {
+    let magic = b"\x93NUMPY";
+    if data.len() < magic.len() || &data[..magic.len()] != magic {
+        return Err(MullamaError::ControlVectorError(
+            "Invalid NPY format: missing magic number".to_string(),
+        ));
+    }
+
+    let version = data.get(magic.len()).copied().unwrap_or(0);
+    let header_len_size = if version <= 1 { 2usize } else { 4 };
+
+    if data.len() < magic.len() + 1 + header_len_size {
+        return Err(MullamaError::ControlVectorError(
+            "Invalid NPY format: truncated header".to_string(),
+        ));
+    }
+
+    let header_len_offset = magic.len() + 1;
+    let header_len = if version <= 1 {
+        u16::from_le_bytes([data[header_len_offset], data[header_len_offset + 1]]) as usize
+    } else {
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&data[header_len_offset..header_len_offset + 4]);
+        u32::from_le_bytes(bytes) as usize
+    };
+
+    let data_offset = header_len_offset + header_len_size + header_len;
+    if data_offset > data.len() {
+        return Err(MullamaError::ControlVectorError(
+            "Invalid NPY format: data offset beyond file".to_string(),
+        ));
+    }
+
+    let tensor_data = &data[data_offset..];
+    let float_count = tensor_data.len() / 4;
+    let mut values = Vec::with_capacity(float_count);
+
+    for chunk in tensor_data.chunks_exact(4) {
+        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        values.push(f32::from_le_bytes(bytes));
+    }
+
+    Ok(values)
+}
+
+/// Build NPY binary data from f32 values
+#[cfg(feature = "daemon")]
+fn build_npy_data(values: &[f32]) -> Vec<u8> {
+    let dict_str = format!(
+        "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
+        values.len()
+    );
+    let header_str = format!("{:60}", format!("{}\n", dict_str));
+    let header_bytes = header_str.as_bytes();
+    let header_len = header_bytes.len() as u16;
+
+    let mut result = Vec::with_capacity(8 + header_bytes.len() + values.len() * 4);
+    result.extend_from_slice(b"\x93NUMPY");
+    result.push(0x01); // version
+    result.extend_from_slice(&header_len.to_le_bytes());
+    result.extend_from_slice(header_bytes);
+
+    for val in values {
+        result.extend_from_slice(&val.to_le_bytes());
+    }
+
+    result
+}
+
+/// Parse SafeTensors tensor data as f32 (supports F32, F16, BF16)
+fn parse_safetensor_f32(data: &[u8], dtype: &str) -> Result<Vec<f32>, MullamaError> {
+    match dtype {
+        "F32" => {
+            let count = data.len() / 4;
+            let mut values = Vec::with_capacity(count);
+            for chunk in data.chunks_exact(4) {
+                values.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            Ok(values)
+        }
+        "F16" => {
+            let count = data.len() / 2;
+            let mut values = Vec::with_capacity(count);
+            for chunk in data.chunks_exact(2) {
+                let half = half_to_f32(u16::from_le_bytes([chunk[0], chunk[1]]));
+                values.push(half);
+            }
+            Ok(values)
+        }
+        "BF16" => {
+            let count = data.len() / 2;
+            let mut values = Vec::with_capacity(count);
+            for chunk in data.chunks_exact(2) {
+                let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+                let f32_bits = (bits as u32) << 16;
+                values.push(f32::from_bits(f32_bits));
+            }
+            Ok(values)
+        }
+        _ => Err(MullamaError::ControlVectorError(format!(
+            "Unsupported dtype for f32 conversion: {}",
+            dtype
+        ))),
+    }
+}
+
+/// Parse SafeTensors tensor data as f64 -> f32
+fn parse_safetensor_f64(data: &[u8]) -> Result<Vec<f32>, MullamaError> {
+    let count = data.len() / 8;
+    let mut values = Vec::with_capacity(count);
+    for chunk in data.chunks_exact(8) {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(chunk);
+        values.push(f64::from_le_bytes(bytes) as f32);
+    }
+    Ok(values)
+}
+
+/// Convert IEEE 754 half-precision (f16) to f32
+fn half_to_f32(half: u16) -> f32 {
+    let sign = ((half >> 15) & 1) as u32;
+    let exponent = ((half >> 10) & 0x1f) as u32;
+    let mantissa = (half & 0x3ff) as u32;
+
+    if exponent == 0 {
+        if mantissa == 0 {
+            let result: u32 = sign << 31;
+            f32::from_bits(result)
+        } else {
+            let mut m = mantissa;
+            let mut e: u32 = 0;
+            while m & 0x400 == 0 {
+                m <<= 1;
+                e += 1;
+            }
+            let result = sign << 31 | (127 - 15 - e) << 23 | (m & 0x3ff) << 13;
+            f32::from_bits(result)
+        }
+    } else if exponent == 0x1f {
+        let result = sign << 31 | 0xffu32 << 23 | mantissa << 13;
+        f32::from_bits(result)
+    } else {
+        let result = sign << 31 | ((exponent + 127 - 15) << 23) | (mantissa << 13);
+        f32::from_bits(result)
     }
 }
 

@@ -6,11 +6,7 @@
 //! - Sampling chain composition
 //! - Performance monitoring concepts
 
-use mullama::{
-    Batch, Context, ContextParams, Model, ModelParams, MullamaError, SamplerChain,
-    SamplerChainParams, SamplerParams,
-};
-use std::sync::Arc;
+use mullama::{ContextParams, ModelParams, MullamaError, SamplerParams};
 
 fn main() -> Result<(), MullamaError> {
     println!("Mullama Advanced Generation Example");
@@ -42,8 +38,8 @@ fn main() -> Result<(), MullamaError> {
         n_threads: 8,       // Generation threads
         n_threads_batch: 8, // Batch processing threads
         embeddings: true,   // Enable embeddings
-        flash_attn: true,   // Use flash attention
-        offload_kqv: true,  // Offload KV operations to GPU
+        flash_attn_type: mullama::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED,
+        offload_kqv: true, // Offload KV operations to GPU
         ..Default::default()
     };
 
@@ -54,7 +50,7 @@ fn main() -> Result<(), MullamaError> {
     println!("   - Generation threads: {}", ctx_params.n_threads);
     println!("   - Batch threads: {}", ctx_params.n_threads_batch);
     println!("   - Embeddings enabled: {}", ctx_params.embeddings);
-    println!("   - Flash attention: {}", ctx_params.flash_attn);
+    println!("   - Flash attention: {:?}", ctx_params.flash_attn_type);
 
     // Advanced sampling parameters
     println!("\nAdvanced Sampling Parameters:");

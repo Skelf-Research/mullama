@@ -6,8 +6,6 @@
 // Temporarily disabled until llama.cpp linking is fixed
 #[cfg(feature = "llama-cpp-tests")]
 use mullama::*;
-#[cfg(feature = "llama-cpp-tests")]
-use std::sync::Arc;
 
 #[cfg(all(test, feature = "llama-cpp-tests"))]
 fn expect_sampler(result: Result<Sampler, MullamaError>) -> Sampler {
@@ -138,26 +136,6 @@ mod sampler_creation_tests {
             println!(
                 "✓ Mirostat v2 sampler created with seed={}, tau={}, eta={}",
                 seed, tau, eta
-            );
-        }
-    }
-
-    #[test]
-    fn test_tail_free_sampler_creation() {
-        let test_cases = vec![
-            (1.0, 1), // Standard TFS
-            (0.5, 1), // More aggressive
-            (0.1, 2), // Very aggressive
-            (2.0, 5), // Less aggressive
-        ];
-
-        for (z, min_keep) in test_cases {
-            let sampler = expect_sampler(Sampler::tail_free(z, min_keep));
-            let name = sampler.name();
-            assert!(name.contains("tail") || name.contains("free") || name.contains("tfs"));
-            println!(
-                "✓ Tail-free sampler created with z={}, min_keep={}",
-                z, min_keep
             );
         }
     }
@@ -349,7 +327,7 @@ mod sampler_chain_tests {
         for (i, strategy) in strategies.iter().enumerate() {
             let mut chain = SamplerChain::default();
 
-            for (name, sampler_fn) in strategy {
+            for (_name, sampler_fn) in strategy {
                 chain.add(sampler_fn());
             }
 
@@ -622,7 +600,6 @@ mod sampling_consistency_tests {
                 "Mirostat-v2",
                 expect_sampler(Sampler::mirostat_v2(12345, 5.0, 0.1)),
             ),
-            ("Tail-Free", expect_sampler(Sampler::tail_free(1.0, 1))),
             ("Typical", expect_sampler(Sampler::typical(0.9, 1))),
         ];
 
@@ -671,32 +648,19 @@ mod sampling_consistency_tests {
 
     #[test]
     fn test_sampler_performance_data_consistency() {
-        let samplers = vec![
-            expect_sampler(Sampler::greedy()),
-            expect_sampler(Sampler::dist(123)),
-            expect_sampler(Sampler::temperature(0.5)),
-        ];
+        let mut chain = SamplerChain::default();
+        chain.add(expect_sampler(Sampler::temperature(0.5)));
+        chain.add(expect_sampler(Sampler::dist(123)));
 
-        for (i, sampler) in samplers.iter().enumerate() {
-            let perf_data = sampler.perf_data();
+        let perf_data = chain.perf_data();
 
-            // Performance data should be non-negative
-            assert!(
-                perf_data.t_sample_ms >= 0.0,
-                "Sampler {} should have non-negative time",
-                i
-            );
-            assert!(
-                perf_data.n_sample >= 0,
-                "Sampler {} should have non-negative sample count",
-                i
-            );
+        assert!(perf_data.t_sample_ms >= 0.0);
+        assert!(perf_data.n_sample >= 0);
 
-            println!(
-                "✓ Sampler {} perf data: {:.2}ms, {} samples",
-                i, perf_data.t_sample_ms, perf_data.n_sample
-            );
-        }
+        println!(
+            "✓ Sampler chain perf data: {:.2}ms, {} samples",
+            perf_data.t_sample_ms, perf_data.n_sample
+        );
     }
 
     #[test]

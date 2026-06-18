@@ -1,21 +1,9 @@
-//! # Streaming Audio Integration Demo
+//! Streaming audio integration demo for the current Mullama APIs.
 //!
-//! This example demonstrates real-time audio streaming capabilities with format conversion,
-//! voice activity detection, and live audio processing for LLM inference.
-//!
-//! Features demonstrated:
-//! - Real-time audio capture with CPAL
-//! - Voice activity detection and noise reduction
-//! - Format conversion between audio formats
-//! - Integration with multimodal LLM processing
-//! - WebSocket streaming for remote audio processing
-//! - Performance monitoring and metrics
-//!
-//! Run with: cargo run --example streaming_audio_demo --features "full,streaming-audio"
+//! Run with: cargo run --example streaming_audio_demo --features "full"
 
 use mullama::prelude::*;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use tokio::time::{sleep, timeout};
 
 #[cfg(all(
@@ -24,10 +12,23 @@ use tokio::time::{sleep, timeout};
     feature = "format-conversion"
 ))]
 use mullama::{
-    AudioChunk, AudioConverter, AudioConverterConfig, AudioFormat, AudioInput, AudioStream,
-    AudioStreamConfig, ConversionConfig, DevicePreference, MultimodalProcessor,
-    StreamingAudioProcessor, StreamingMetrics,
+    AudioChunk, AudioConverter, AudioConverterConfig, AudioFormat, AudioInput, AudioStreamConfig,
+    StreamingAudioProcessor,
 };
+
+#[cfg(all(
+    feature = "streaming-audio",
+    feature = "multimodal",
+    feature = "format-conversion"
+))]
+fn wav_audio_format() -> AudioFormat {
+    AudioFormat {
+        container: "wav".to_string(),
+        codec: "pcm".to_string(),
+        bit_depth: 16,
+        bitrate: None,
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), MullamaError> {
@@ -46,29 +47,29 @@ async fn main() -> Result<(), MullamaError> {
         // 2. Initialize streaming audio processor
         let mut audio_processor = initialize_audio_processor(audio_config).await?;
 
-        // 3. Setup format conversion
+        // 3. Setup format conversion.
         let audio_converter = setup_audio_converter().await?;
 
-        // 4. Setup multimodal processor for AI inference
-        let multimodal_processor = setup_multimodal_processor().await?;
+        // 4. Demonstrate real-time audio streaming.
+        demonstrate_real_time_streaming(&mut audio_processor).await?;
 
-        // 5. Demonstrate real-time audio streaming
-        demonstrate_real_time_streaming(&mut audio_processor, &multimodal_processor).await?;
-
-        // 6. Demonstrate format conversion with streaming
+        // 5. Demonstrate format conversion with streaming.
         demonstrate_format_conversion_streaming(&audio_converter, &mut audio_processor).await?;
 
-        // 7. Demonstrate voice activity detection
+        // 6. Demonstrate voice activity detection.
         demonstrate_voice_activity_detection(&mut audio_processor).await?;
 
-        // 8. Show performance metrics
+        // 7. Show performance metrics.
         show_performance_metrics(&audio_processor).await?;
 
-        // 9. Demonstrate WebSocket integration
+        // 8. Demonstrate WebSocket integration.
         demonstrate_websocket_integration().await?;
 
-        // 10. Advanced streaming patterns
+        // 9. Advanced streaming patterns.
         demonstrate_advanced_streaming_patterns().await?;
+
+        // 10. Error recovery behavior.
+        simulate_error_recovery().await?;
 
         // Cleanup
         audio_processor.stop_capture().await?;
@@ -81,9 +82,9 @@ async fn main() -> Result<(), MullamaError> {
     )))]
     {
         println!(
-            "❌ This demo requires streaming-audio, multimodal, and format-conversion features"
+            "This demo requires streaming-audio, multimodal, and format-conversion features"
         );
-        println!("Run with: cargo run --example streaming_audio_demo --features \"full,streaming-audio\"");
+        println!("Run with: cargo run --example streaming_audio_demo --features full");
     }
 
     println!("\n✨ Streaming audio demo completed!");
@@ -160,12 +161,16 @@ async fn setup_audio_converter() -> Result<AudioConverter, MullamaError> {
     println!("\n🔄 Setting up Audio Converter");
     println!("=============================");
 
-    let config = AudioConverterConfig::new()
-        .max_concurrent_conversions(4)
-        .enable_cache(true)
-        .cache_size_mb(100);
+    let config = AudioConverterConfig {
+        max_concurrent: 4,
+        enable_cache: true,
+        default_quality: 0.8,
+        default_sample_rate: 16000,
+        default_channels: 1,
+        temp_dir: None,
+    };
 
-    let converter = AudioConverter::new(config)?;
+    let converter = AudioConverter::with_config(config);
 
     println!("✅ Audio converter configured");
     println!("   🔄 Max concurrent conversions: 4");
@@ -179,30 +184,8 @@ async fn setup_audio_converter() -> Result<AudioConverter, MullamaError> {
     feature = "multimodal",
     feature = "format-conversion"
 ))]
-async fn setup_multimodal_processor() -> Result<MultimodalProcessor, MullamaError> {
-    println!("\n🎭 Setting up Multimodal Processor");
-    println!("==================================");
-
-    let processor = MultimodalProcessor::new()
-        .enable_image_processing()
-        .enable_audio_processing()
-        .build();
-
-    println!("✅ Multimodal processor ready for inference");
-    println!("   🖼️ Image processing: enabled");
-    println!("   🎵 Audio processing: enabled");
-
-    Ok(processor)
-}
-
-#[cfg(all(
-    feature = "streaming-audio",
-    feature = "multimodal",
-    feature = "format-conversion"
-))]
 async fn demonstrate_real_time_streaming(
     audio_processor: &mut StreamingAudioProcessor,
-    multimodal_processor: &MultimodalProcessor,
 ) -> Result<(), MullamaError> {
     println!("\n🌊 Real-time Audio Streaming Demo");
     println!("=================================");
@@ -215,7 +198,7 @@ async fn demonstrate_real_time_streaming(
         Err(_) => {
             println!("⚠️ Audio capture not available (no audio devices or permissions)");
             println!("   Simulating audio stream instead...");
-            return simulate_audio_stream(multimodal_processor).await;
+            return simulate_audio_stream().await;
         }
     };
 
@@ -240,7 +223,7 @@ async fn demonstrate_real_time_streaming(
 
             // Convert to multimodal input for AI processing
             if processed_chunk.voice_detected {
-                let audio_input = processed_chunk.to_audio_input();
+                let _audio_input = processed_chunk.to_audio_input();
                 println!("   🤖 Processing with AI model (simulated)...");
                 // In real scenario: let result = multimodal_processor.process_audio(&audio_input).await?;
                 println!("   ✅ AI processing completed");
@@ -268,9 +251,7 @@ async fn demonstrate_real_time_streaming(
     feature = "multimodal",
     feature = "format-conversion"
 ))]
-async fn simulate_audio_stream(
-    multimodal_processor: &MultimodalProcessor,
-) -> Result<(), MullamaError> {
+async fn simulate_audio_stream() -> Result<(), MullamaError> {
     println!("🎭 Simulating audio stream processing...");
 
     for i in 1..=5 {
@@ -302,8 +283,8 @@ async fn simulate_audio_stream(
     feature = "format-conversion"
 ))]
 async fn demonstrate_format_conversion_streaming(
-    audio_converter: &AudioConverter,
-    audio_processor: &mut StreamingAudioProcessor,
+    _audio_converter: &AudioConverter,
+    _audio_processor: &mut StreamingAudioProcessor,
 ) -> Result<(), MullamaError> {
     println!("\n🔄 Format Conversion with Streaming");
     println!("===================================");
@@ -327,10 +308,11 @@ async fn demonstrate_format_conversion_streaming(
             sample_rate: 16000,
             channels: 1,
             duration: 1024.0 / 16000.0,
-            format: AudioFormat::WAV,
+            format: wav_audio_format(),
             transcript: None,
-            metadata: std::collections::HashMap::new(),
+            metadata: HashMap::new(),
         };
+        let _ = audio_input;
 
         // Simulate format conversion
         println!("   ✅ Conversion {} completed", i + 1);
@@ -386,7 +368,7 @@ async fn demonstrate_voice_activity_detection(
     ];
 
     for (scenario, samples) in test_scenarios {
-        let mut chunk = AudioChunk::new(samples, 1, 16000);
+        let chunk = AudioChunk::new(samples, 1, 16000);
         let processed_chunk = audio_processor.process_chunk(&chunk).await?;
 
         println!(
@@ -462,7 +444,7 @@ async fn demonstrate_websocket_integration() -> Result<(), MullamaError> {
             .enable_audio()
             .enable_compression();
 
-        let server = WebSocketServer::new(ws_config).build().await?;
+        let _server = WebSocketServer::new(ws_config).build().await?;
 
         println!("✅ WebSocket server configured");
         println!("   📍 Audio streaming endpoint: ws://localhost:8080/ws/audio");
