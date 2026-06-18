@@ -102,6 +102,17 @@ pub(crate) async fn run_server(
 
     let mut resolved_models: Vec<(String, PathBuf, Option<ModelConfig>)> = Vec::new();
     for spec in &models {
+        // Preserve the documented alias:path form before registry resolution.
+        // Registry specs also contain colons, so only accept it when the
+        // portion after the first colon is an existing local path.
+        if let Some((alias, path)) = spec.split_once(':') {
+            let path = PathBuf::from(path);
+            if !alias.is_empty() && path.exists() {
+                resolved_models.push((alias.to_string(), path, None));
+                continue;
+            }
+        }
+
         match resolve_model_name(spec) {
             ResolvedModel::LocalPath(path) => {
                 resolved_models.push((derive_alias_from_path(&path), path, None));
