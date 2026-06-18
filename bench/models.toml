@@ -1,0 +1,34 @@
+# Bench model manifest.
+#
+# Each entry maps a bench alias (used by BOTH mullama and ollama, so the harness
+# addresses them by one name) to a HuggingFace GGUF repo. The filename is
+# omitted on purpose: `mullama pull` auto-detects the best GGUF, which the
+# downloader ranks as Q4_K_M first (see src/daemon/hf.rs::find_best_gguf).
+#
+# Strict parity requires BOTH engines to run the SAME GGUF file. setup.sh pulls
+# each file once with mullama, then registers the exact same file in ollama via
+# `ollama create <alias> -f Modelfile.<alias>` with `FROM <abs path>`. Ollama
+# copies the weights into its blob store, so weights are byte-identical.
+#
+# All four are CPU-friendly (<=2 GB at Q4_K_M) and span Qwen2.5 + Llama-3.2
+# architectures/tokenizers for breadth.
+
+[[model]]
+alias = "qwen2.5-0.5b"
+hf   = "bartowski/Qwen2.5-0.5B-Instruct-GGUF"   # ~0.4 GB Q4_K_M
+size_gb = 0.4
+
+[[model]]
+alias = "llama3.2-1b"
+hf   = "unsloth/Llama-3.2-1B-Instruct-GGUF" # ~0.8 GB Q4_K_M
+size_gb = 0.8
+
+[[model]]
+alias = "qwen2.5-1.5b"
+hf   = "bartowski/Qwen2.5-1.5B-Instruct-GGUF"   # ~1.0 GB Q4_K_M
+size_gb = 1.0
+
+[[model]]
+alias = "llama3.2-3b"
+hf   = "unsloth/Llama-3.2-3B-Instruct-GGUF" # ~2.0 GB Q4_K_M
+size_gb = 2.0

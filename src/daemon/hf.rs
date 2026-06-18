@@ -522,23 +522,22 @@ impl HfDownloader {
             ));
         }
 
-        // Sort by quantization preference (Q4_K_M is a good default)
+        // Sort by quantization preference (Q4_K_M is a good default).
+        // Match case-insensitively: GGUF filenames use lowercase (`q4_k_m`,
+        // `q4_0`) while the preference table is canonical uppercase.
         let preference_order = [
             "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q4_0", "Q4_1",
             "Q8_0", "Q6_K", "Q3_K_M", "Q3_K_S", "Q2_K",
         ];
+        let score = |fname: &str| -> usize {
+            let lower = fname.to_lowercase();
+            preference_order
+                .iter()
+                .position(|q| lower.contains(&q.to_lowercase()))
+                .unwrap_or(100)
+        };
 
-        gguf_files.sort_by(|a, b| {
-            let a_score = preference_order
-                .iter()
-                .position(|q| a.filename.contains(q))
-                .unwrap_or(100);
-            let b_score = preference_order
-                .iter()
-                .position(|q| b.filename.contains(q))
-                .unwrap_or(100);
-            a_score.cmp(&b_score)
-        });
+        gguf_files.sort_by(|a, b| score(&a.filename).cmp(&score(&b.filename)));
 
         Ok(gguf_files[0].filename.clone())
     }

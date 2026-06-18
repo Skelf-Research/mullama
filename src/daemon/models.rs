@@ -56,6 +56,17 @@ pub struct ModelLoadConfig {
     pub gpu_layers: i32,
     pub context_size: u32,
     pub threads: i32,
+    /// Whether to enable flash attention. Off by default.
+    ///
+    /// The parity bench surfaced that this flag materially affects output:
+    /// mullama and ollama ship *different* llama.cpp attention kernels, so no
+    /// single setting yields full greedy parity — some prompts match ollama
+    /// with flash_attn=false, others with flash_attn=true. Enabling it also
+    /// produced a wrong answer on a simple `2+2` raw prompt on this CPU build
+    /// (a quality regression), so the safe, correct default is off. Exposed
+    /// as an opt-in knob for users who want to trade correctness on some
+    /// prompts for closer parity on others.
+    pub flash_attn: bool,
 }
 
 impl ModelLoadConfig {
@@ -66,6 +77,7 @@ impl ModelLoadConfig {
             gpu_layers: 0,
             context_size: 4096,
             threads: num_cpus::get() as i32,
+            flash_attn: false,
         }
     }
 
@@ -81,6 +93,11 @@ impl ModelLoadConfig {
 
     pub fn threads(mut self, threads: i32) -> Self {
         self.threads = threads;
+        self
+    }
+
+    pub fn flash_attn(mut self, on: bool) -> Self {
+        self.flash_attn = on;
         self
     }
 }
@@ -126,6 +143,7 @@ impl ModelManager {
         ctx_params.n_ctx = config.context_size;
         ctx_params.n_threads = config.threads;
         ctx_params.n_threads_batch = config.threads;
+        ctx_params.flash_attn = config.flash_attn;
 
         let context = Context::new(model.clone(), ctx_params)?;
 

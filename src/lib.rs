@@ -141,6 +141,15 @@ pub use huggingface::{GGUFFile, HFClient, HFModelInfo, ModelSearchFilters, Quant
 pub fn backend_init() {
     unsafe {
         sys::llama_backend_init();
+        // In this llama.cpp version `llama_backend_init()` no longer loads
+        // dynamic backends itself. We must load them explicitly: this scans
+        // the executable directory (+ GGML_BACKEND_PATH) for
+        // libggml-cpu-<variant>.so and registers the best one for the host
+        // CPU (e.g. alderlake). With the static build (no GGML_BACKEND_DL)
+        // the CPU backend is registered at static-init time, so this is a
+        // harmless no-op there. Without it the shared-backend build fails
+        // model load with "no backends are loaded".
+        sys::ggml_backend_load_all();
     }
 }
 
@@ -452,6 +461,7 @@ mod tests {
         // Test that we can initialize the backend
         unsafe {
             sys::llama_backend_init();
+            sys::ggml_backend_load_all();
             sys::llama_backend_free();
         }
         assert_eq!(2 + 2, 4);

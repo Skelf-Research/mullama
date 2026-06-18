@@ -1,0 +1,8 @@
+{"id":"factual","prompt":"What is 2 + 2? Reply with only the number."}
+{"id":"list","prompt":"List three primary colors, separated by commas."}
+{"id":"complete","prompt":"The capital of France is"}
+{"id":"code","prompt":"Write a Python function that returns the factorial of n."}
+{"id":"summary","prompt":"Summarize in one sentence: Water boils at 100 degrees Celsius at sea level, turning into steam."}
+{"id":"translate","prompt":"Translate to French: Good morning, how are you?"}
+{"id":"reasoning","prompt":"If a train travels 60 km in 1 hour, how far does it travel in 2.5 hours? Answer with only the number."}
+{"id":"repeat","prompt":"Repeat exactly: The quick brown fox jumps over the lazy dog."}

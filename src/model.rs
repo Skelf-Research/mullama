@@ -114,9 +114,12 @@ impl Model {
         let c_path = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| MullamaError::ModelLoadError("Invalid path".to_string()))?;
 
-        // Initialize the llama backend if not already done
+        // Initialize the llama backend if not already done. Also load dynamic
+        // backends (see crate::backend_init comment) — required for the
+        // shared-backend build; a harmless no-op in the static build.
         unsafe {
             sys::llama_backend_init();
+            sys::ggml_backend_load_all();
         }
 
         // Get default model parameters from llama.cpp

@@ -51,7 +51,7 @@ mod hf;
 // Protocol types (IPC)
 pub use protocol::{
     Request, Response, ErrorCode, DaemonStatus, DaemonStats,
-    ModelInfo, ModelStatus, ChatMessage, Usage, EmbeddingInput,
+    ModelInfo, ModelStatus, ChatMessage, Usage, EmbeddingInput, Timings,
     ChatCompletionResponse as IpcChatCompletionResponse,
     CompletionResponse as IpcCompletionResponse,
     ChatChoice as IpcChatChoice,

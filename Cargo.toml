@@ -128,3 +128,8 @@ anyhow = "1.0"
 name = "mullama"
 path = "src/bin/mullama.rs"
 required-features = ["daemon"]
+
+[[bin]]
+name = "mullama-bench"
+path = "src/bin/mullama-bench.rs"
+required-features = ["daemon"]

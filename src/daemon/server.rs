@@ -12,6 +12,20 @@ use super::models::{ModelLoadConfig, ModelManager, RequestGuard};
 use super::protocol::*;
 use crate::{MullamaError, SamplerParams};
 
+/// Whether verbose debug logging is enabled (`MULLAMA_DEBUG=1`).
+///
+/// Checked once per process via a static atomic so the per-token hot path
+/// never touches the environment.
+fn debug_enabled() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static FLAG: AtomicBool = AtomicBool::new(false);
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        FLAG.store(std::env::var_os("MULLAMA_DEBUG").is_some(), Ordering::Relaxed)
+    });
+    FLAG.load(Ordering::Relaxed)
+}
+
 /// Daemon server configuration
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
@@ -27,6 +41,8 @@ pub struct DaemonConfig {
     pub default_gpu_layers: i32,
     /// Number of threads per model
     pub threads_per_model: i32,
+    /// Default flash-attention setting for models loaded on startup
+    pub default_flash_attn: bool,
 }
 
 impl Default for DaemonConfig {
@@ -38,6 +54,7 @@ impl Default for DaemonConfig {
             default_context_size: 4096,
             default_gpu_layers: 0,
             threads_per_model: (num_cpus::get() / 2).max(1) as i32,
+            default_flash_attn: false,
         }
     }
 }
@@ -95,9 +112,14 @@ impl Daemon {
                 temperature,
                 stream,
                 stop,
+                seed,
+                top_p,
+                top_k,
             } => {
-                self.handle_chat_completion(model, messages, max_tokens, temperature, stream, stop)
-                    .await
+                self.handle_chat_completion(
+                    model, messages, max_tokens, temperature, stream, stop, seed, top_p, top_k,
+                )
+                .await
             }
 
             Request::Completion {
@@ -106,9 +128,14 @@ impl Daemon {
                 max_tokens,
                 temperature,
                 stream,
+                seed,
+                top_p,
+                top_k,
             } => {
-                self.handle_completion(model, prompt, max_tokens, temperature, stream)
-                    .await
+                self.handle_completion(
+                    model, prompt, max_tokens, temperature, stream, seed, top_p, top_k,
+                )
+                .await
             }
 
             Request::Embeddings { model, input } => {
@@ -174,7 +201,8 @@ impl Daemon {
         let config = ModelLoadConfig::new(&alias, &path)
             .gpu_layers(if gpu_layers == 0 { self.config.default_gpu_layers } else { gpu_layers })
             .context_size(if context_size == 0 { self.config.default_context_size } else { context_size })
-            .threads(self.config.threads_per_model);
+            .threads(self.config.threads_per_model)
+            .flash_attn(self.config.default_flash_attn);
 
         match self.models.load(config).await {
             Ok(info) => Response::ModelLoaded { alias, info },
@@ -204,39 +232,35 @@ impl Daemon {
         temperature: f32,
         _stream: bool,
         _stop: Vec<String>,
+        seed: Option<u32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
     ) -> Response {
-        eprintln!("[DEBUG] handle_chat_completion: ENTRY - model={:?}, messages={}, max_tokens={}",
-                  model, messages.len(), max_tokens);
-        use std::io::Write;
-        std::io::stderr().flush().ok();
+        let dbg = debug_enabled();
+        if dbg {
+            eprintln!("[chat_completion] model={:?} messages={} max_tokens={}", model, messages.len(), max_tokens);
+        }
 
-        // Get model
-        eprintln!("[DEBUG] handle_chat_completion: getting model");
-        std::io::stderr().flush().ok();
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
             Err(e) => return Response::error(ErrorCode::ModelNotFound, e.to_string()),
         };
-        eprintln!("[DEBUG] handle_chat_completion: got model");
-        std::io::stderr().flush().ok();
 
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::SeqCst);
 
-        // Build prompt from messages using model's chat template
-        eprintln!("[DEBUG] handle_chat_completion: building prompt");
-        std::io::stderr().flush().ok();
+        // Build prompt from messages using the model's real chat template.
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
-        eprintln!("[DEBUG] handle_chat_completion: prompt built, length={}", prompt.len());
-        std::io::stderr().flush().ok();
 
         // Generate
-        let result = self.generate_text(&loaded, &prompt, max_tokens, temperature).await;
+        let result = self
+            .generate_text(&loaded, &prompt, max_tokens, temperature, seed, top_p, top_k)
+            .await;
 
         self.active_requests.fetch_sub(1, Ordering::SeqCst);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens)) => {
+            Ok((text, timings)) => {
                 let created = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -257,10 +281,11 @@ impl Daemon {
                         finish_reason: Some("stop".to_string()),
                     }],
                     usage: Usage {
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens: prompt_tokens + completion_tokens,
+                        prompt_tokens: timings.prompt_tokens,
+                        completion_tokens: timings.completion_tokens,
+                        total_tokens: timings.prompt_tokens + timings.completion_tokens,
                     },
+                    timings: Some(timings),
                 })
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
@@ -274,6 +299,9 @@ impl Daemon {
         max_tokens: u32,
         temperature: f32,
         _stream: bool,
+        seed: Option<u32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
     ) -> Response {
         let loaded = match self.models.get(model.as_deref()).await {
             Ok(m) => m,
@@ -283,12 +311,14 @@ impl Daemon {
         let _guard = RequestGuard::new(loaded.clone());
         self.active_requests.fetch_add(1, Ordering::SeqCst);
 
-        let result = self.generate_text(&loaded, &prompt, max_tokens, temperature).await;
+        let result = self
+            .generate_text(&loaded, &prompt, max_tokens, temperature, seed, top_p, top_k)
+            .await;
 
         self.active_requests.fetch_sub(1, Ordering::SeqCst);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens)) => {
+            Ok((text, timings)) => {
                 let created = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -305,10 +335,11 @@ impl Daemon {
                         finish_reason: Some("stop".to_string()),
                     }],
                     usage: Usage {
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens: prompt_tokens + completion_tokens,
+                        prompt_tokens: timings.prompt_tokens,
+                        completion_tokens: timings.completion_tokens,
+                        total_tokens: timings.prompt_tokens + timings.completion_tokens,
                     },
+                    timings: Some(timings),
                 })
             }
             Err(e) => Response::error(ErrorCode::GenerationFailed, e.to_string()),
@@ -338,110 +369,157 @@ impl Daemon {
         }
     }
 
-    fn build_chat_prompt(&self, _model: &crate::Model, messages: &[ChatMessage]) -> String {
-        // TODO: Use model.apply_chat_template when llama.cpp supports raw Jinja templates
-        // For now, use a simple format to avoid crashes with unsupported template formats
-        let mut prompt = String::new();
-
-        for msg in messages {
-            match msg.role.as_str() {
-                "system" => {
-                    prompt.push_str(&format!("System: {}\n\n", msg.content));
-                }
-                "user" => {
-                    prompt.push_str(&format!("User: {}\n\n", msg.content));
-                }
-                "assistant" => {
-                    prompt.push_str(&format!("Assistant: {}\n\n", msg.content));
-                }
-                _ => {
-                    prompt.push_str(&format!("{}: {}\n\n", msg.role, msg.content));
+    /// Build a chat prompt from messages using the model's real chat template.
+    ///
+    /// Falls back to a naive `Role: content` format only when the model ships
+    /// no embedded chat template (so such models still work instead of crashing).
+    fn build_chat_prompt(&self, model: &crate::Model, messages: &[ChatMessage]) -> String {
+        // Only attempt the real template if the model actually declares one.
+        if model.chat_template().is_some() {
+            let msgs: Vec<(&str, &str)> =
+                messages.iter().map(|m| (m.role.as_str(), m.content.as_str())).collect();
+            match model.apply_chat_template(None, &msgs, true) {
+                Ok(prompt) => return prompt,
+                Err(e) => {
+                    if debug_enabled() {
+                        eprintln!("[chat_template] apply failed ({}); falling back to naive format", e);
+                    }
                 }
             }
         }
 
+        // Naive fallback (no embedded template, or template application failed).
+        let mut prompt = String::new();
+        for msg in messages {
+            prompt.push_str(&format!("{}: {}\n\n", msg.role, msg.content));
+        }
         prompt.push_str("Assistant:");
         prompt
     }
 
+    /// Run a single non-streaming generation and return the text plus engine timings.
     async fn generate_text(
         &self,
         loaded: &super::models::LoadedModel,
         prompt: &str,
         max_tokens: u32,
         temperature: f32,
-    ) -> Result<(String, u32, u32), MullamaError> {
-        use std::io::Write;
-        eprintln!("[DEBUG] generate_text: starting");
-        std::io::stderr().flush().ok();
+        seed: Option<u32>,
+        top_p: Option<f32>,
+        top_k: Option<i32>,
+    ) -> Result<(String, Timings), MullamaError> {
+        let dbg = debug_enabled();
 
-        // Tokenize
-        let tokens = loaded.model.tokenize(prompt, true, false)?;
+        // Tokenize. Respect the model's add_bos flag (Qwen2.5 etc. declare
+        // add_bos_token=false; hardcoding true would prepend a BOS ollama does
+        // not, breaking greedy parity from the first token). Parse special
+        // tokens (`special=true`) so chat-template markers like `<|im_start|>`
+        // / `<|im_end|>` tokenize as single tokens instead of being shattered
+        // (which corrupts the prompt and triggers premature EOG stops).
+        let add_bos = loaded.model.add_bos_token();
+        let tokens = loaded.model.tokenize(prompt, add_bos, true)?;
         let prompt_tokens = tokens.len() as u32;
-        eprintln!("[DEBUG] generate_text: tokenized {} tokens", prompt_tokens);
-        std::io::stderr().flush().ok();
+        if dbg {
+            eprintln!("[generate_text] prompt_tokens={}", prompt_tokens);
+        }
 
         // Get context lock
         let mut context = loaded.context.write().await;
-        eprintln!("[DEBUG] generate_text: got context lock, ctx_ptr={:?}", context.as_ptr());
-        std::io::stderr().flush().ok();
 
         // Clear KV cache to start fresh for each request
         context.kv_cache_clear();
-        eprintln!("[DEBUG] generate_text: cleared KV cache");
-        std::io::stderr().flush().ok();
 
-        // Setup sampler
+        // Setup sampler. Defaults preserve prior behavior (top_p=0.9, top_k=40);
+        // request overrides apply when Some. At temperature=0 sampling is greedy
+        // regardless of the other knobs, which is what parity testing relies on.
         let mut sampler_params = SamplerParams::default();
         sampler_params.temperature = temperature;
-        sampler_params.top_p = 0.9;
-        sampler_params.top_k = 40;
+        sampler_params.top_p = top_p.unwrap_or(0.9);
+        sampler_params.top_k = top_k.unwrap_or(40);
+        if let Some(s) = seed {
+            sampler_params.seed = s;
+        }
 
-        eprintln!("[DEBUG] generate_text: about to build sampler chain");
-        std::io::stderr().flush().ok();
         let mut sampler = sampler_params.build_chain(loaded.model.clone())?;
-        eprintln!("[DEBUG] generate_text: built sampler chain");
-        std::io::stderr().flush().ok();
 
-        // Decode prompt
-        eprintln!("[DEBUG] generate_text: about to decode prompt with {} tokens", tokens.len());
-        std::io::stderr().flush().ok();
+        // Decode prompt (timed).
+        let prompt_start = Instant::now();
         context.decode(&tokens)?;
-        eprintln!("[DEBUG] generate_text: decoded prompt successfully");
-        std::io::stderr().flush().ok();
+        let prompt_eval_ns = prompt_start.elapsed().as_nanos() as u64;
 
-        // Generate
+        // Generate (timed).
         let mut generated = String::new();
         let mut completion_tokens = 0u32;
 
-        for i in 0..max_tokens {
-            eprintln!("[DEBUG] generate_text: loop iteration {}, about to sample", i);
-            // Use -1 to sample from the last token's logits
+        // Per-component accumulators. `dec_ns` (decode-only) is always
+        // accumulated because it is the fair engine-compute number — it
+        // matches ollama's `eval_duration`, which times only `llama_decode`
+        // and excludes per-token sampling / token-to-string work. Reporting
+        // the whole-loop time here as `eval_ns` previously counted the ~1.8
+        // ms/token `llama_sampler_sample` cost that ollama excludes, making
+        // mullama look ~1.15x slower than it is. `samp_ns` / `tok_ns` stay
+        // debug-only diagnostics.
+        let mut dec_ns: u64 = 0;
+        let mut samp_ns: u64 = 0;
+        let mut tok_ns: u64 = 0;
+
+        let gen_start = Instant::now();
+        for _ in 0..max_tokens {
+            // Sample from the last token's logits.
+            let s = Instant::now();
             let next_token = sampler.sample(&mut *context, -1);
-            eprintln!("[DEBUG] generate_text: sampled token {}", next_token);
+            if dbg {
+                samp_ns += s.elapsed().as_nanos() as u64;
+            }
 
             if loaded.model.vocab_is_eog(next_token) {
-                eprintln!("[DEBUG] generate_text: EOG token, breaking");
                 break;
             }
 
+            let t = Instant::now();
             if let Ok(text) = loaded.model.token_to_str(next_token, 0, false) {
                 generated.push_str(&text);
+            }
+            if dbg {
+                tok_ns += t.elapsed().as_nanos() as u64;
             }
 
             // Accept the token to update sampler state (grammar, repetition, etc.)
             sampler.accept(next_token);
 
-            eprintln!("[DEBUG] generate_text: about to decode single token");
+            let d = Instant::now();
             context.decode(&[next_token])?;
-            eprintln!("[DEBUG] generate_text: decoded single token");
+            dec_ns += d.elapsed().as_nanos() as u64;
             completion_tokens += 1;
         }
+        let _gen_total_ns = gen_start.elapsed().as_nanos() as u64;
+        // eval_ns is decode-only (matches ollama eval_duration). Fall back to
+        // the whole-loop time only if no tokens were decoded.
+        let eval_ns = if dec_ns > 0 { dec_ns } else { _gen_total_ns };
 
         self.models.add_tokens(completion_tokens as u64);
-        eprintln!("[DEBUG] generate_text: done, generated {} tokens", completion_tokens);
+        if dbg {
+            let n = completion_tokens.max(1) as u64;
+            eprintln!(
+                "[generate_text] n={} total={}ns | per-token: decode={}ns sample={}ns tokstr={}ns (sum={}ns)",
+                completion_tokens,
+                _gen_total_ns,
+                dec_ns / n,
+                samp_ns / n,
+                tok_ns / n,
+                (dec_ns + samp_ns + tok_ns) / n,
+            );
+        }
 
-        Ok((generated, prompt_tokens, completion_tokens))
+        Ok((
+            generated,
+            Timings {
+                prompt_eval_ns,
+                eval_ns,
+                prompt_tokens,
+                completion_tokens,
+            },
+        ))
     }
 
     /// Check if shutdown was requested
@@ -499,6 +577,12 @@ impl DaemonBuilder {
         self
     }
 
+    /// Default flash-attention setting for models loaded on startup
+    pub fn default_flash_attn(mut self, on: bool) -> Self {
+        self.config.default_flash_attn = on;
+        self
+    }
+
     /// Add a model to load on startup (format: "alias:path" or just "path")
     pub fn model(mut self, spec: impl Into<String>) -> Self {
         let spec = spec.into();
@@ -518,7 +602,8 @@ impl DaemonBuilder {
             ModelLoadConfig::new(alias, path)
                 .gpu_layers(self.config.default_gpu_layers)
                 .context_size(self.config.default_context_size)
-                .threads(self.config.threads_per_model),
+                .threads(self.config.threads_per_model)
+                .flash_attn(self.config.default_flash_attn),
         );
         self
     }

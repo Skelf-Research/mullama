@@ -586,6 +586,38 @@ impl SamplerParams {
     pub fn build_chain(&self, _model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
         let mut chain = SamplerChain::default();
 
+        // temperature <= 0 means GREEDY (deterministic argmax) per the
+        // OpenAI/ollama convention. We must NOT fall through to `dist()` here:
+        // `dist(seed)` is a *random* categorical sampler, so at temperature=0
+        // it would produce stochastic output instead of greedy — silently
+        // breaking parity and run-to-run reproducibility.
+        //
+        // In greedy mode we keep the penalties stage (penalties *do* move the
+        // argmax, and ollama applies repeat_penalty at temp=0 too, so dropping
+        // them would break parity) but we SKIP the top_k / top_p / min_p /
+        // typical filters. Those filters only ever mask *non*-winner tokens
+        // (the highest-logit token always survives top-k, the top-p mass, and
+        // the min_p threshold), so the greedy argmax is identical with or
+        // without them. Running them anyway costs ~1.8ms/token — two full-vocab
+        // softmaxes (top_p + min_p) on a 151936-wide Qwen vocab — which is pure
+        // overhead at temp=0. Skipping them is a parity-neutral ~8-10% greedy
+        // throughput win.
+        if self.temperature <= 0.0 {
+            if self.penalty_repeat != 1.0 || self.penalty_freq != 0.0 || self.penalty_present != 0.0 {
+                let penalties = Sampler::penalties(
+                    self.penalty_last_n,
+                    self.penalty_repeat,
+                    self.penalty_freq,
+                    self.penalty_present,
+                )?;
+                chain.add(penalties);
+            }
+            chain.add(Sampler::greedy()?);
+            return Ok(chain);
+        }
+
+        // Non-greedy path: full chain.
+
         // Add penalties first (simplified API - no longer needs vocab/model)
         if self.penalty_repeat != 1.0 || self.penalty_freq != 0.0 || self.penalty_present != 0.0 {
             let penalties = Sampler::penalties(
@@ -617,12 +649,8 @@ impl SamplerParams {
             chain.add(Sampler::min_p(self.min_p, 1)?);
         }
 
-        // Add temperature scaling
-        if self.temperature > 0.0 {
-            chain.add(Sampler::temperature(self.temperature)?);
-        }
-
-        // Add final distribution sampler
+        // Temperature scaling + final categorical sampler.
+        chain.add(Sampler::temperature(self.temperature)?);
         chain.add(Sampler::dist(self.seed)?);
 
         Ok(chain)

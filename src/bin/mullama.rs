@@ -89,6 +89,10 @@ enum Commands {
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
+
+        /// Enable flash attention (off by default; see ModelLoadConfig::flash_attn)
+        #[arg(long, default_value_t = false)]
+        flash_attn: bool,
     },
 
     /// Interactive TUI chat client
@@ -311,6 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             context_size,
             threads,
             verbose,
+            flash_attn,
         } => {
             run_server(
                 model,
@@ -321,6 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 context_size,
                 threads,
                 verbose,
+                flash_attn,
             )
             .await?;
         }
@@ -417,6 +423,7 @@ async fn run_server(
     context_size: u32,
     threads: Option<i32>,
     verbose: bool,
+    flash_attn: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize backend
     mullama::backend_init();
@@ -428,6 +435,7 @@ async fn run_server(
     }
     println!("  GPU Layers: {}", gpu_layers);
     println!("  Context:    {}", context_size);
+    println!("  Flash Attn: {}", flash_attn);
     println!();
 
     // Resolve model paths (download HF models if needed)
@@ -487,6 +495,8 @@ async fn run_server(
     if let Some(t) = threads {
         builder = builder.threads_per_model(t);
     }
+
+    builder = builder.default_flash_attn(flash_attn);
 
     // Add resolved models
     for (alias, path) in &resolved_models {

@@ -499,6 +499,12 @@ extern "C" {
     //
     pub fn llama_backend_init();
     pub fn llama_backend_free();
+    // Loads dynamic backends (scans executable dir + GGML_BACKEND_PATH for
+    // libggml-cpu-<variant>.so and registers the best for the host). Required
+    // for the shared-backend build (GGML_BACKEND_DL) — llama_backend_init no
+    // longer calls it. Harmless no-op in the static build (CPU backend is
+    // registered at static-init time).
+    pub fn ggml_backend_load_all();
     pub fn llama_numa_init(numa: ggml_numa_strategy);
     pub fn llama_time_us() -> i64;
     pub fn llama_max_devices() -> usize;

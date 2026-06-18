@@ -14,7 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::protocol::{ChatMessage, EmbeddingInput, Usage};
+use super::protocol::{ChatMessage, EmbeddingInput, Timings, Usage};
 use super::server::Daemon;
 
 /// Shared state for the HTTP server
@@ -65,6 +65,10 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     pub frequency_penalty: Option<f32>,
     #[serde(default)]
+    pub seed: Option<u32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
     pub user: Option<String>,
 }
 
@@ -77,6 +81,9 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub choices: Vec<ChatChoice>,
     pub usage: Usage,
+    /// Engine timings (extension field; omitted when absent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<Timings>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +106,12 @@ pub struct CompletionRequest {
     pub stream: bool,
     #[serde(default)]
     pub stop: Option<Vec<String>>,
+    #[serde(default)]
+    pub seed: Option<u32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<i32>,
 }
 
 /// Text completion response
@@ -110,6 +123,9 @@ pub struct CompletionResponse {
     pub model: String,
     pub choices: Vec<CompletionChoice>,
     pub usage: Usage,
+    /// Engine timings (extension field; omitted when absent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<Timings>,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,6 +206,9 @@ async fn chat_completions(
         temperature: req.temperature,
         stream: req.stream,
         stop: req.stop.unwrap_or_default(),
+        seed: req.seed,
+        top_p: req.top_p,
+        top_k: req.top_k,
     };
 
     match daemon.handle_request(request).await {
@@ -205,6 +224,7 @@ async fn chat_completions(
                     finish_reason: c.finish_reason,
                 }).collect(),
                 usage: resp.usage,
+                timings: resp.timings,
             }))
         }
         super::protocol::Response::Error { code, message, .. } => {
@@ -225,6 +245,9 @@ async fn completions(
         max_tokens: req.max_tokens,
         temperature: req.temperature,
         stream: req.stream,
+        seed: req.seed,
+        top_p: req.top_p,
+        top_k: req.top_k,
     };
 
     match daemon.handle_request(request).await {
@@ -240,6 +263,7 @@ async fn completions(
                     finish_reason: c.finish_reason,
                 }).collect(),
                 usage: resp.usage,
+                timings: resp.timings,
             }))
         }
         super::protocol::Response::Error { code, message, .. } => {

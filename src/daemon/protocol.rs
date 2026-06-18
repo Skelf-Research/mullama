@@ -46,6 +46,15 @@ pub enum Request {
         stream: bool,
         #[serde(default)]
         stop: Vec<String>,
+        /// RNG seed for reproducible sampling (None = random)
+        #[serde(default)]
+        seed: Option<u32>,
+        /// Override top_p (None = daemon default 0.9)
+        #[serde(default)]
+        top_p: Option<f32>,
+        /// Override top_k (None = daemon default 40)
+        #[serde(default)]
+        top_k: Option<i32>,
     },
 
     /// Text completion
@@ -58,6 +67,12 @@ pub enum Request {
         temperature: f32,
         #[serde(default)]
         stream: bool,
+        #[serde(default)]
+        seed: Option<u32>,
+        #[serde(default)]
+        top_p: Option<f32>,
+        #[serde(default)]
+        top_k: Option<i32>,
     },
 
     /// Generate embeddings
@@ -206,6 +221,9 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub choices: Vec<ChatChoice>,
     pub usage: Usage,
+    /// Server-side engine timings (nanoseconds), mirroring ollama's durations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<Timings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +242,9 @@ pub struct CompletionResponse {
     pub model: String,
     pub choices: Vec<CompletionChoice>,
     pub usage: Usage,
+    /// Server-side engine timings (nanoseconds), mirroring ollama's durations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<Timings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +269,29 @@ pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+}
+
+/// Server-side engine timings in nanoseconds.
+///
+/// Mirrors ollama's `prompt_eval_duration` / `eval_duration` so the bench
+/// harness can compute comparable engine tokens/sec:
+/// `eval_tok_s = completion_tokens / eval_ns`.
+///
+/// `eval_ns` is **decode-only** — the cumulative `llama_decode` time during
+/// generation — exactly matching ollama's `eval_duration`, which excludes
+/// per-token sampling / token-to-string work. (Counting the whole loop here
+/// previously included the ~1.8 ms/token `llama_sampler_sample` cost and made
+/// mullama look ~1.15x slower than ollama.)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Timings {
+    /// Time to evaluate (decode) the prompt, in nanoseconds.
+    pub prompt_eval_ns: u64,
+    /// Decode-only generation time (matches ollama `eval_duration`), in ns.
+    pub eval_ns: u64,
+    /// Prompt tokens evaluated.
+    pub prompt_tokens: u32,
+    /// Completion tokens generated.
+    pub completion_tokens: u32,
 }
 
 /// Embeddings response

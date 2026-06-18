@@ -221,6 +221,9 @@ impl DaemonClient {
                 temperature,
                 stream: false,
                 stop: vec![],
+                seed: None,
+                top_p: None,
+                top_k: None,
             },
             generation_timeout,
         )? {
@@ -260,6 +263,9 @@ impl DaemonClient {
                 max_tokens,
                 temperature,
                 stream: false,
+                seed: None,
+                top_p: None,
+                top_k: None,
             },
             generation_timeout,
         )? {
