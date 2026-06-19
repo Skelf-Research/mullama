@@ -91,7 +91,9 @@ impl ModelManager {
             ctx_params.flash_attn_type = if flash_attn {
                 crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED
             } else {
-                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED
+                // Match llama.cpp and Ollama defaults: choose the supported
+                // implementation automatically unless explicitly enabled.
+                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO
             };
             if let Some(ref k) = cache_type_k {
                 if let Some(kt) = crate::context::KvCacheType::from_str(k) {

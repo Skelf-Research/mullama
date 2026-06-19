@@ -75,6 +75,9 @@ invocation to use.
    - `--mode perf`: engine tok/s (mullama `timings` vs ollama native
      `/api/generate` `eval_duration`), wall tok/s, latency.
    - `--mode both`: parity then perf.
+   - Parity modes exit non-zero when any strict text/token comparison differs.
+     Use `--allow-parity-diffs` only when intentionally measuring across
+     different llama.cpp/GGML implementations.
 
 ## Reading the report
 
@@ -82,6 +85,7 @@ invocation to use.
   counts, first-diff char) and a perf table (engine tok/s, wall tok/s,
   `mullama/ollama` ratio).
 - `report.json`: full per-run records for diffing across fix rounds.
+- Generated root-level `report*.json` files are ignored by git.
 - `token_match` tolerates a ±1 EOG-counting convention difference: ollama's
   `eval_count` includes the stop token, mullama's `completion_tokens` excludes
   it (the generate loop breaks before counting). So a generation that stops at

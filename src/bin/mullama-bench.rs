@@ -110,6 +110,10 @@ struct Args {
     /// Also hit ollama native /api/generate + /api/chat as a parity cross-check.
     #[arg(long, default_value_t = true)]
     native_crosscheck: bool,
+
+    /// Return success even when strict parity comparisons differ.
+    #[arg(long, default_value_t = false)]
+    allow_parity_diffs: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +804,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         print_perf_summary(&perf_records);
     }
 
+    let parity_failures = parity_records
+        .iter()
+        .filter(|record| !record.text_match || !record.token_match)
+        .count();
+
     let report = Report {
         config: serde_json::to_value(&args).unwrap_or(Value::Null),
         parity: parity_records,
@@ -807,6 +816,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     std::fs::write(&args.report, serde_json::to_string_pretty(&report)?)?;
     println!("\nreport written to {}", args.report);
+
+    if parity_failures > 0 && !args.allow_parity_diffs {
+        return Err(format!(
+            "strict parity failed for {parity_failures} comparison(s); use --allow-parity-diffs only for exploratory runs"
+        )
+        .into());
+    }
 
     Ok(())
 }

@@ -40,6 +40,13 @@ impl Daemon {
 
             let mut sampler = sampler_params.build_chain(model.clone())?;
 
+            // Repetition penalties include prompt history. Seed the base
+            // sampler before adding grammar so prompt tokens affect penalties
+            // without being consumed as generated grammar tokens.
+            for &token in &tokens {
+                sampler.accept(token);
+            }
+
             if let Some(gbnf) = &grammar_gbnf {
                 let grammar_sampler =
                     crate::sampling::Sampler::grammar(model.clone(), gbnf, "root")?;
@@ -104,6 +111,9 @@ impl Daemon {
             let result = tokio::task::block_in_place(|| {
                 context.kv_cache_clear();
                 let mut sampler = sampler_params.build_chain(model.clone())?;
+                for &token in &tokens {
+                    sampler.accept(token);
+                }
                 context.decode(&tokens)?;
 
                 generate_tokens(
