@@ -88,10 +88,11 @@ impl ModelManager {
                 n_threads_batch: threads,
                 ..ContextParams::default()
             };
-            if flash_attn {
-                ctx_params.flash_attn_type =
-                    crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
-            }
+            ctx_params.flash_attn_type = if flash_attn {
+                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED
+            } else {
+                crate::sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED
+            };
             if let Some(ref k) = cache_type_k {
                 if let Some(kt) = crate::context::KvCacheType::from_str(k) {
                     ctx_params.type_k = kt;

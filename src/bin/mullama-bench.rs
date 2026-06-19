@@ -556,6 +556,7 @@ async fn run_perf(
             let mut m_eng = Vec::new();
             let mut m_wall = Vec::new();
             let mut m_ctoks = Vec::new();
+            let mut m_wall_secs = Vec::new();
             for _ in 0..args.warmup {
                 let _ =
                     mullama_completions(client, &args.mullama_url, model, &p.prompt, args).await?;
@@ -566,6 +567,7 @@ async fn run_perf(
                 m_eng.push(s.engine_tok_s().unwrap_or(0.0));
                 m_wall.push(s.wall_tok_s());
                 m_ctoks.push(s.completion_tokens as f64);
+                m_wall_secs.push(s.wall_secs);
             }
             out.push(PerfRecord {
                 model: model.clone(),
@@ -575,7 +577,7 @@ async fn run_perf(
                 engine_tok_s_mean: m_eng.iter().sum::<f64>() / args.runs as f64,
                 engine_tok_s_p50: pct(&mut m_eng.clone(), 0.5),
                 wall_tok_s_mean: m_wall.iter().sum::<f64>() / args.runs as f64,
-                wall_secs_mean: 0.0, // filled below
+                wall_secs_mean: m_wall_secs.iter().sum::<f64>() / args.runs as f64,
                 completion_tokens_mean: m_ctoks.iter().sum::<f64>() / args.runs as f64,
             });
 
