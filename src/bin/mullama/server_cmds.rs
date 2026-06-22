@@ -74,6 +74,7 @@ pub(crate) async fn run_server(
     }
 
     println!("Starting Mullama Daemon...");
+    println!("  Native core: {}", mullama::LLAMA_BASELINE);
     println!("  IPC Socket: {}", socket);
     if http_port > 0 {
         println!("  HTTP API:   http://{}:{}", http_addr, http_port);

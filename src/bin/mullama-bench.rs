@@ -185,6 +185,7 @@ struct PerfRecord {
 #[derive(Debug, Clone, Serialize)]
 struct Report {
     config: Value,
+    runtime: Value,
     parity: Vec<ParityRecord>,
     perf: Vec<PerfRecord>,
 }
@@ -210,6 +211,14 @@ async fn post_json(client: &reqwest::Client, url: &str, body: Value) -> Result<V
     }
     serde_json::from_str::<Value>(&text)
         .map_err(|e| format!("parse json {} failed: {} (body: {})", url, e, text))
+}
+
+async fn runtime_version(client: &reqwest::Client, base_url: &str) -> Value {
+    let url = format!("{}/api/version", base_url.trim_end_matches('/'));
+    match client.get(&url).send().await {
+        Ok(response) => response.json().await.unwrap_or(Value::Null),
+        Err(error) => serde_json::json!({ "error": error.to_string() }),
+    }
 }
 
 fn u32_at(v: &Value, path: &[&str]) -> Option<u32> {
@@ -732,6 +741,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()?;
+    let runtime = serde_json::json!({
+        "mullama": {
+            "version": runtime_version(&client, &args.mullama_url).await,
+            "llama_baseline": mullama::LLAMA_BASELINE,
+        },
+        "ollama": {
+            "version": runtime_version(&client, &args.ollama_url).await,
+        },
+    });
 
     // Total work units for the progress bar.
     let total = match mode {
@@ -811,6 +829,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let report = Report {
         config: serde_json::to_value(&args).unwrap_or(Value::Null),
+        runtime,
         parity: parity_records,
         perf: perf_records,
     };

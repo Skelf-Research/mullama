@@ -595,6 +595,7 @@ extern "C" {
     //
     pub fn llama_backend_init();
     pub fn llama_backend_free();
+    pub fn ggml_backend_load_all();
     pub fn llama_numa_init(numa: ggml_numa_strategy);
     pub fn llama_time_us() -> i64;
     pub fn llama_max_devices() -> usize;

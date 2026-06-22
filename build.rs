@@ -28,6 +28,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_AVX_VNNI");
     println!("cargo:rerun-if-env-changed=LLAMA_FMA");
     println!("cargo:rerun-if-env-changed=LLAMA_F16C");
+    println!("cargo:rerun-if-env-changed=MULLAMA_STATIC");
+    println!("cargo:rerun-if-env-changed=MULLAMA_LTO");
+    println!("cargo:rerun-if-env-changed=MULLAMA_OPENMP");
+    println!("cargo:rustc-env=MULLAMA_LLAMA_BASELINE=ollama-v0.24.0");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_ARCHS");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_FORCE_MMQ");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_NO_PEER_COPY");
@@ -447,19 +451,36 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
         cmake_config.define("GGML_ACCELERATE", "OFF");
     }
 
-    // CPU feature configuration (configurable via env vars)
-    if env::var("LLAMA_PORTABLE").is_ok() {
-        cmake_config.define("GGML_NATIVE", "OFF");
-    } else {
-        cmake_config.define("GGML_NATIVE", "ON");
-    }
-    // GCC LTO objects in static GGML archives cannot be consumed by rust-lld.
-    // Keep LTO disabled unless the native libraries are linked as shared objects.
-    cmake_config.define("GGML_LTO", "OFF");
+    let gpu_backend = env::var("LLAMA_CUDA").is_ok()
+        || env::var("LLAMA_METAL").is_ok()
+        || env::var("LLAMA_HIPBLAS").is_ok()
+        || env::var("LLAMA_CLBLAST").is_ok()
+        || env::var("LLAMA_VULKAN").is_ok()
+        || env::var("LLAMA_SYCL").is_ok();
+    let shared = cfg!(all(target_os = "linux", target_arch = "x86_64"))
+        && env::var("MULLAMA_STATIC").is_err()
+        && !gpu_backend;
 
-    // The internal GGML threadpool avoids OpenMP's per-operation fork/join
-    // overhead and matches the backend configuration used by Ollama runners.
-    cmake_config.define("GGML_OPENMP", "OFF");
+    // Ollama uses runtime-dispatched x86 CPU variants. Native is incompatible
+    // with GGML_BACKEND_DL; each shared variant supplies its own ISA flags.
+    cmake_config.define(
+        "GGML_NATIVE",
+        if shared || env::var("LLAMA_PORTABLE").is_ok() {
+            "OFF"
+        } else {
+            "ON"
+        },
+    );
+    cmake_config.define(
+        "GGML_LTO",
+        if env::var("MULLAMA_LTO").is_ok() {
+            "ON"
+        } else {
+            "OFF"
+        },
+    );
+    let openmp = env::var("MULLAMA_OPENMP").is_ok();
+    cmake_config.define("GGML_OPENMP", if openmp { "ON" } else { "OFF" });
 
     // AVX/FMA/F16C: ON by default, disable with =0
     let avx = env::var("LLAMA_AVX").map(|v| v != "0").unwrap_or(true);
@@ -492,8 +513,14 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     cmake_config.define("LLAMA_BUILD_TESTS", "OFF");
     cmake_config.define("LLAMA_BUILD_EXAMPLES", "OFF");
     cmake_config.define("LLAMA_CURL", "OFF");
-    cmake_config.define("BUILD_SHARED_LIBS", "OFF");
-    cmake_config.define("GGML_STATIC", "ON");
+    cmake_config.define("BUILD_SHARED_LIBS", if shared { "ON" } else { "OFF" });
+    cmake_config.define("GGML_STATIC", if shared { "OFF" } else { "ON" });
+    if shared {
+        cmake_config.define("GGML_BACKEND_DL", "ON");
+        cmake_config.define("GGML_BACKEND_SHARED", "ON");
+        cmake_config.define("GGML_CPU_ALL_VARIANTS", "ON");
+        cmake_config.define("GGML_SCHED_MAX_COPIES", "4");
+    }
 
     // Build common library (required for tools) and mtmd (multimodal) library
     cmake_config.define("LLAMA_BUILD_COMMON", "ON");
@@ -508,7 +535,9 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     // Platform-specific library linking
     // The ggml libraries have circular dependencies, so we use +whole-archive
     // to include all symbols (Rust 1.61+ feature)
-    if cfg!(target_os = "windows") {
+    if shared {
+        link_shared_llama(&dst);
+    } else if cfg!(target_os = "windows") {
         println!("cargo:rustc-link-lib=static=llama");
         println!("cargo:rustc-link-lib=static=ggml_static");
         // Link mtmd for multimodal support
@@ -581,7 +610,9 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     // Link standard libraries
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=stdc++");
-        println!("cargo:rustc-link-lib=gomp"); // OpenMP
+        if openmp {
+            println!("cargo:rustc-link-lib=gomp");
+        }
     } else if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=c++");
     } else if cfg!(target_os = "windows") {
@@ -589,6 +620,68 @@ fn build_llama_cpp(llama_cpp_path: &PathBuf) -> PathBuf {
     }
 
     dst
+}
+
+fn link_shared_llama(dst: &Path) {
+    let lib_dir = dst.join("lib");
+    let bin_dir = dst.join("bin");
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    println!("cargo:rustc-link-lib=dylib=llama");
+    println!("cargo:rustc-link-lib=dylib=mtmd");
+    println!("cargo:rustc-link-lib=dylib=ggml");
+    println!("cargo:rustc-link-lib=dylib=ggml-base");
+    println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let profile_dir = out_dir
+        .ancestors()
+        .nth(3)
+        .expect("OUT_DIR is under target/<profile>/build");
+    let mut installed = std::collections::HashSet::new();
+    for src_dir in [&lib_dir, &bin_dir] {
+        let Ok(entries) = fs::read_dir(src_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.contains(".so") {
+                installed.insert(name.to_owned());
+                let destination = profile_dir.join(name);
+                if let Err(error) = fs::copy(&path, &destination) {
+                    println!(
+                        "cargo:warning=failed to copy {} to {}: {}",
+                        path.display(),
+                        destination.display(),
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    // Cargo does not track these copied runtime modules. Remove variants left
+    // by an older llama.cpp build so backend selection is reproducible.
+    if let Ok(entries) = fs::read_dir(profile_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.starts_with("libggml-cpu-")
+                && name.ends_with(".so")
+                && !installed.contains(name)
+            {
+                if let Err(error) = fs::remove_file(&path) {
+                    println!("cargo:warning=failed to remove {}: {}", path.display(), error);
+                }
+            }
+        }
+    }
 }
 
 fn configure_cuda_linking() {

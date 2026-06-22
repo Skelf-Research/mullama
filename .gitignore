@@ -76,7 +76,7 @@ audit/
 *.tmp
 *.temp
 .cache/
-/report*.json
+/*report*.json
 
 # llama.cpp submodule build artifacts
 llama.cpp/build/

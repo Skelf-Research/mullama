@@ -159,6 +159,11 @@ pub use structured_output::{JsonSchemaConverter, StructuredOutputError};
 // Export presets
 pub use presets::HardwarePreset;
 
+/// Native inference source baseline used for this build.
+pub const LLAMA_BASELINE: &str = env!("MULLAMA_LLAMA_BASELINE");
+
+static DYNAMIC_BACKENDS: std::sync::Once = std::sync::Once::new();
+
 // ==================== System-level Functions ====================
 
 /// Initialize the llama.cpp backend
@@ -169,6 +174,7 @@ pub fn backend_init() {
     unsafe {
         sys::llama_backend_init();
     }
+    DYNAMIC_BACKENDS.call_once(|| unsafe { sys::ggml_backend_load_all() });
 }
 
 /// Free the llama.cpp backend resources
@@ -512,6 +518,7 @@ mod tests {
         // Test that we can initialize the backend
         unsafe {
             sys::llama_backend_init();
+            sys::ggml_backend_load_all();
             sys::llama_backend_free();
         }
         assert_eq!(2 + 2, 4);

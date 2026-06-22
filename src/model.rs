@@ -132,9 +132,7 @@ impl Model {
             .map_err(|_| MullamaError::ModelLoadError("Invalid path".to_string()))?;
 
         // Initialize the llama backend if not already done
-        unsafe {
-            sys::llama_backend_init();
-        }
+        crate::backend_init();
 
         // Get default model parameters from llama.cpp
         let mut llama_params = unsafe { sys::llama_model_default_params() };
