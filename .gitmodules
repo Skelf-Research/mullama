@@ -1,3 +1,4 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
-	url = https://github.com/ggml-org/llama.cpp.git
+	url = https://github.com/cognisoc/llama.cpp.git
+	branch = mullama-parity
