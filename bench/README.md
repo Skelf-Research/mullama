@@ -86,11 +86,20 @@ invocation to use.
   `mullama/ollama` ratio).
 - `report.json`: full per-run records for diffing across fix rounds.
 - Generated root-level `report*.json` files are ignored by git.
-- `token_match` tolerates a ±1 EOG-counting convention difference: ollama's
-  `eval_count` includes the stop token, mullama's `completion_tokens` excludes
-  it (the generate loop breaks before counting). So a generation that stops at
-  EOG differs by exactly 1; one that hits `max_tokens` is equal. `text_match` is
-  the primary parity signal.
+- `token_match` is a real token-sequence comparison, not a count match. Both
+  engines' output texts are tokenized with mullama's loaded model tokenizer
+  (the same GGUF, so the same tokenizer) via `POST /v1/tokenize`, and
+  `token_match` is `true` iff the shorter token stream is a prefix of the
+  longer — i.e. there is **no mid-stream sampling divergence**, only a
+  length/truncation difference. `first_diff_token` records the exact token
+  index where the two streams first differ (`None` when one is a prefix of the
+  other). Use it to tell truncation (`first_diff_token: None`) from a flipped
+  argmax (`first_diff_token: Some(k)`) at a glance.
+- `completion_tokens` counts now include the sampled EOG/stop token to match
+  ollama's `eval_count` convention (mullama's generate loop previously broke
+  before counting it, reporting one fewer token for every EOG-terminated
+  generation). Server-side counts are still reported for diagnostics but no
+  longer drive `token_match`.
 
 ## Performance — measure → diagnose
 

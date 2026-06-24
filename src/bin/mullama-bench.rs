@@ -43,6 +43,12 @@ enum Mode {
     Parity,
     Perf,
     Both,
+    /// Replays a multi-turn agent trace and reports per-turn prefill/decode
+    /// timings. This is the verification harness for the cross-turn KV
+    /// reuse work: the win shows up as prompt_eval_ns collapsing on turn 2+
+    /// (only the delta is prefilled) instead of staying flat at the full-history
+    /// cost (the stock behaviour of re-prefilling every turn).
+    AgentLoop,
 }
 
 impl Mode {
@@ -51,7 +57,8 @@ impl Mode {
             "parity" => Ok(Mode::Parity),
             "perf" => Ok(Mode::Perf),
             "both" => Ok(Mode::Both),
-            other => Err(format!("invalid mode '{}' (parity|perf|both)", other)),
+            "agent-loop" => Ok(Mode::AgentLoop),
+            other => Err(format!("invalid mode '{}' (parity|perf|both|agent-loop)", other)),
         }
     }
 }
@@ -114,6 +121,23 @@ struct Args {
     /// Return success even when strict parity comparisons differ.
     #[arg(long, default_value_t = false)]
     allow_parity_diffs: bool,
+
+    /// Path to a JSONL agent-trace file for `agent-loop` mode. Each line is one
+    /// trace: `{"id","turns":["user msg 1","user msg 2",...]}`. The bench replays
+    /// the trace by sending the user turns incrementally, feeding the model's
+    /// own assistant replies back into the history — a real agent loop.
+    #[arg(long, default_value = "bench/trace.jsonl")]
+    trace_file: String,
+
+    /// Limit each agent trace to the first N user turns (0 = use the whole trace).
+    #[arg(long, default_value_t = 0)]
+    turns: usize,
+
+    /// Max tokens generated per agent turn (agents emit short turns; keep this
+    /// small so decode stays a minor slice and prefill dominates — the slice
+    /// whose collapse proves the KV-reuse thesis).
+    #[arg(long, default_value_t = 64)]
+    agent_max_tokens: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +148,33 @@ struct Args {
 struct Prompt {
     id: String,
     prompt: String,
+}
+
+/// A multi-turn agent trace: an ordered list of user turns. The bench replays it
+/// as a real agent loop — each user turn is appended to the running history, the
+/// model generates an assistant reply, and that reply is fed back as context for
+/// the next turn. With cross-turn KV reuse, turn N prefills only `user_turn_N`;
+/// without it, turn N re-prefills the whole accumulated history.
+#[derive(Debug, Clone, Deserialize)]
+struct Trace {
+    id: String,
+    turns: Vec<String>,
+}
+
+/// One row of an agent-loop replay: per-turn prefill (prompt_eval_ns) and
+/// decode (eval_ns) timings from the daemon's `timings` extension, plus the
+/// prompt/completion token counts and client wall-clock. The KV-reuse win is
+/// read off `prompt_eval_ns`: it should collapse on turn 2+ vs turn 1.
+#[derive(Debug, Clone, Serialize)]
+struct AgentLoopRecord {
+    model: String,
+    trace_id: String,
+    turn: usize,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    prompt_eval_ns: Option<u64>,
+    eval_ns: Option<u64>,
+    wall_secs: f64,
 }
 
 /// A single measured sample from one engine.
@@ -166,6 +217,12 @@ struct ParityRecord {
     mullama_completion_tokens: u32,
     ollama_completion_tokens: u32,
     first_diff_char: Option<usize>,
+    /// First token position (0-based, into the tokenized outputs) where the two
+    /// engines diverge. `None` means one output's token stream is a prefix of
+    /// the other's (i.e. no sampling divergence — only a length/truncation
+    /// difference). Both engines' texts are tokenized with mullama's loaded
+    /// model tokenizer (same GGUF), so the comparison is apples-to-apples.
+    first_diff_token: Option<usize>,
 }
 
 /// Aggregated perf for one (model, endpoint, engine).
@@ -188,6 +245,7 @@ struct Report {
     runtime: Value,
     parity: Vec<ParityRecord>,
     perf: Vec<PerfRecord>,
+    agent_loop: Vec<AgentLoopRecord>,
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +385,49 @@ fn timings_from_extension(v: &Value) -> (Option<u64>, Option<u64>) {
             .and_then(|x| x.as_u64()),
         t.and_then(|x| x.get("eval_ns")).and_then(|x| x.as_u64()),
     )
+}
+
+/// Tokenize `text` with mullama's loaded model tokenizer via POST /v1/tokenize.
+///
+/// Both engines run the same GGUF, so the same tokenizer is the correct shared
+/// yardstick for a token-level comparison. Returns the token-id stream that
+/// the model's tokenizer assigns to the (already-detokenized) output text.
+async fn mullama_tokenize(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+    text: &str,
+) -> Result<Vec<i32>, String> {
+    let body = json!({ "model": model, "text": text });
+    let v = post_json(client, &format!("{}/v1/tokenize", base), body).await?;
+    Ok(v.get("tokens")
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_i64().map(|n| n as i32))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Index of the first diverging token between two token streams, or `None` if
+/// one stream is a prefix of the other (no mid-stream divergence).
+fn first_diff_token(a: &[i32], b: &[i32]) -> Option<usize> {
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        if a[i] != b[i] {
+            return Some(i);
+        }
+    }
+    (a.len() != b.len()).then_some(n)
+}
+
+/// `true` if the two token streams agree on every shared position — i.e. the
+/// shorter is a token-prefix of the longer. This is the real "no sampling
+/// divergence" signal: a difference is purely length/truncation, not a flipped
+/// argmax. Replaces the old count-based `tok_eq` which masked real divergences.
+fn token_prefix_match(a: &[i32], b: &[i32]) -> bool {
+    first_diff_token(a, b).is_none()
 }
 
 /// ollama OpenAI-compatible POST /v1/completions (raw prompt).
@@ -475,6 +576,7 @@ fn norm_ws(s: &str) -> String {
 /// Compare completion-token counts tolerating the EOG-counting convention
 /// difference between mullama (excludes the stop token) and ollama (includes
 /// it). Equal, or off-by-one with ollama one higher, both count as a match.
+#[allow(dead_code)]
 fn tok_eq(m: u32, o: u32) -> bool {
     m == o || m + 1 == o
 }
@@ -505,6 +607,10 @@ async fn run_parity(
             let m = mullama_completions(client, &args.mullama_url, model, &p.prompt, args).await?;
             let o =
                 ollama_generate_native(client, &args.ollama_url, model, &p.prompt, args).await?;
+            let mt = mullama_tokenize(client, &args.mullama_url, model, &m.text).await
+                .unwrap_or_default();
+            let ot = mullama_tokenize(client, &args.mullama_url, model, &o.text).await
+                .unwrap_or_default();
             out.push(ParityRecord {
                 model: model.clone(),
                 prompt_id: p.id.clone(),
@@ -512,20 +618,27 @@ async fn run_parity(
                 mullama_text: m.text.clone(),
                 ollama_text: o.text.clone(),
                 text_match: norm_ws(&m.text) == norm_ws(&o.text),
-                // Tolerate the EOG-counting convention difference: ollama's
-                // eval_count includes the stop/EOG token, mullama's
-                // completion_tokens excludes it (the loop breaks before
-                // counting). So a generation that stops at EOG differs by 1;
-                // one that hits max_tokens is equal. Accept either.
-                token_match: tok_eq(m.completion_tokens, o.completion_tokens),
+                // Real token-sequence parity: the two token streams agree on
+                // every shared position (shorter is a prefix of longer). This
+                // distinguishes pure truncation from a flipped-argmax sampling
+                // divergence; see first_diff_token for the exact divergence
+                // point. Server-side counts may still differ by the EOG/stop
+                // convention, so they are reported separately below and no
+                // longer drive token_match.
+                token_match: token_prefix_match(&mt, &ot),
                 mullama_completion_tokens: m.completion_tokens,
                 ollama_completion_tokens: o.completion_tokens,
                 first_diff_char: first_diff(&m.text, &o.text),
+                first_diff_token: first_diff_token(&mt, &ot),
             });
 
             // Endpoint: chat completions (real chat template on both).
             let mc = mullama_chat(client, &args.mullama_url, model, &p.prompt, args).await?;
             let oc = ollama_chat_openai(client, &args.ollama_url, model, &p.prompt, args).await?;
+            let mct = mullama_tokenize(client, &args.mullama_url, model, &mc.text).await
+                .unwrap_or_default();
+            let oct = mullama_tokenize(client, &args.mullama_url, model, &oc.text).await
+                .unwrap_or_default();
             out.push(ParityRecord {
                 model: model.clone(),
                 prompt_id: p.id.clone(),
@@ -533,10 +646,11 @@ async fn run_parity(
                 mullama_text: mc.text.clone(),
                 ollama_text: oc.text.clone(),
                 text_match: norm_ws(&mc.text) == norm_ws(&oc.text),
-                token_match: tok_eq(mc.completion_tokens, oc.completion_tokens),
+                token_match: token_prefix_match(&mct, &oct),
                 mullama_completion_tokens: mc.completion_tokens,
                 ollama_completion_tokens: oc.completion_tokens,
                 first_diff_char: first_diff(&mc.text, &oc.text),
+                first_diff_token: first_diff_token(&mct, &oct),
             });
         }
     }
@@ -654,7 +768,13 @@ fn print_parity_summary(records: &[ParityRecord]) {
             if r.text_match {
                 "".to_string()
             } else {
-                format!("  first_diff@{}", r.first_diff_char.unwrap_or(0))
+                format!(
+                    "  diff_char@{} diff_tok@{}",
+                    r.first_diff_char.unwrap_or(0),
+                    r.first_diff_token
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "none".into())
+                )
             },
         );
     }
@@ -704,6 +824,130 @@ fn print_perf_summary(records: &[PerfRecord]) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent loop
+// ---------------------------------------------------------------------------
+
+/// Replays one agent trace against mullama as a real agent loop: each user
+/// turn is appended to the running history, the model's assistant reply is fed
+/// back, and we record per-turn prefill/decode timings. The cross-turn KV-reuse
+/// win reads off `prompt_eval_ns`: with reuse, turn 2+ prefills only the new
+/// user turn (a small delta); without it, every turn re-prefills the whole
+/// accumulated history.
+async fn run_agent_loop(
+    client: &reqwest::Client,
+    args: &Args,
+    model: &str,
+    trace: &Trace,
+    out: &mut Vec<AgentLoopRecord>,
+) -> Result<(), String> {
+    let url = format!("{}/v1/chat/completions", args.mullama_url.trim_end_matches('/'));
+    let turns: Vec<&String> = if args.turns > 0 {
+        trace.turns.iter().take(args.turns).collect()
+    } else {
+        trace.turns.iter().collect()
+    };
+
+    // Running conversation: the chat template is applied server-side, so we
+    // send the full message history each turn and let the daemon decide what
+    // to prefill (with cross-turn KV reuse, only the delta is actually computed).
+    let mut history: Vec<Value> = Vec::new();
+    for (i, user_turn) in turns.iter().enumerate() {
+        history.push(json!({ "role": "user", "content": user_turn }));
+        let body = json!({
+            "model": model,
+            "messages": history,
+            "max_tokens": args.agent_max_tokens,
+            "temperature": args.temperature,
+            "seed": args.seed,
+            "stream": false,
+        });
+        let start = Instant::now();
+        let v = post_json(client, &url, body).await?;
+        let wall = start.elapsed().as_secs_f64();
+
+        let text = v
+            .pointer("/choices/0/message/content")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let prompt_tokens = u32_at(&v, &["usage", "prompt_tokens"]).unwrap_or(0);
+        let completion_tokens = u32_at(&v, &["usage", "completion_tokens"]).unwrap_or(0);
+        let (prompt_eval_ns, eval_ns) = timings_from_extension(&v);
+
+        out.push(AgentLoopRecord {
+            model: model.to_string(),
+            trace_id: trace.id.clone(),
+            turn: i + 1,
+            prompt_tokens,
+            completion_tokens,
+            prompt_eval_ns,
+            eval_ns,
+            wall_secs: wall,
+        });
+
+        // Feed the assistant reply back as context for the next turn.
+        history.push(json!({ "role": "assistant", "content": text }));
+    }
+    Ok(())
+}
+
+fn print_agent_loop_summary(records: &[AgentLoopRecord]) {
+    println!("\n=== Agent loop (per-turn prefill/decode) ===");
+    println!(
+        "{:<18} {:<10} {:>5} {:>10} {:>10} {:>12} {:>12} {:>9}",
+        "model", "trace", "turn", "p_toks", "c_toks", "prefill_ms", "decode_ms", "wall_s",
+    );
+    // Group by (model, trace) so each trace's turn sequence stays together.
+    let mut groups: BTreeMap<(String, String), Vec<&AgentLoopRecord>> = BTreeMap::new();
+    for r in records {
+        groups
+            .entry((r.model.clone(), r.trace_id.clone()))
+            .or_default()
+            .push(r);
+    }
+    for ((model, trace_id), rs) in &groups {
+        let mut first_prefill_ns: Option<u64> = None;
+        for r in rs {
+            let prefill_ms = r.prompt_eval_ns.map(|n| n as f64 / 1e6);
+            let decode_ms = r.eval_ns.map(|n| n as f64 / 1e6);
+            println!(
+                "{:<18} {:<10} {:>5} {:>10} {:>10} {:>12.2} {:>12.2} {:>9.3}",
+                model,
+                trace_id,
+                r.turn,
+                r.prompt_tokens,
+                r.completion_tokens,
+                prefill_ms.unwrap_or(0.0),
+                decode_ms.unwrap_or(0.0),
+                r.wall_secs,
+            );
+            if r.turn == 1 {
+                first_prefill_ns = r.prompt_eval_ns;
+            }
+        }
+        // The headline number: how much later-turn prefill collapses vs turn 1.
+        // With cross-turn KV reuse this ratio should be large (turn 1 full
+        // prefill, turns 2+ only the delta); without it the ratio stays ~1.0
+        // because every turn re-prefills the whole history.
+        if let (Some(first), Some(last)) = (
+            first_prefill_ns,
+            rs.last().and_then(|r| r.prompt_eval_ns),
+        ) {
+            if last > 0 {
+                let ratio = first as f64 / last as f64;
+                println!(
+                    "{:<18} {:<10} {:>5} {:>12}",
+                    "",
+                    "",
+                    "",
+                    format!("reuse ratio turn1/turnN: {:.1}x prefill saved", ratio),
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -725,6 +969,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|l| serde_json::from_str::<Prompt>(l).map_err(|e| format!("bad prompt line: {}", e)))
         .collect::<Result<_, _>>()?;
 
+    // Load agent traces for agent-loop mode.
+    let traces: Vec<Trace> = if mode == Mode::AgentLoop {
+        let trace_text = std::fs::read_to_string(&args.trace_file)
+            .map_err(|e| format!("read trace file {}: {}", args.trace_file, e))?;
+        trace_text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<Trace>(l).map_err(|e| format!("bad trace line: {}", e)))
+            .collect::<Result<_, _>>()?
+    } else {
+        Vec::new()
+    };
+
     println!(
         "mullama-bench: {} models, {} prompts, mode={:?}, runs={} warmup={} max_tokens={} temp={}",
         args.models.len(),
@@ -735,6 +992,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.max_tokens,
         args.temperature,
     );
+    if mode == Mode::AgentLoop {
+        let total_turns: usize = traces.iter().map(|t| t.turns.len()).sum();
+        println!(
+            "  agent-loop: {} traces, {} total turns, max {} tok/turn",
+            traces.len(),
+            total_turns,
+            args.agent_max_tokens,
+        );
+    }
     println!("  mullama: {}", args.mullama_url);
     println!("  ollama:  {}", args.ollama_url);
 
@@ -756,6 +1022,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mode::Parity => args.models.len() * prompts.len() * 2,
         Mode::Perf => args.models.len() * prompts.len(),
         Mode::Both => args.models.len() * prompts.len() * 3,
+        Mode::AgentLoop => {
+            args.models.len()
+                * traces
+                    .iter()
+                    .map(|t| if args.turns > 0 { args.turns.min(t.turns.len()) } else { t.turns.len() })
+                    .sum::<usize>()
+        }
     };
     let bar = ProgressBar::new(total as u64);
     bar.set_style(
@@ -764,6 +1037,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut parity_records = Vec::new();
     let mut perf_records = Vec::new();
+    let mut agent_loop_records = Vec::new();
 
     // Run per-model so progress and partial reports stay meaningful.
     for model in &args.models {
@@ -811,6 +1085,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
                 bar.inc(prompts.len() as u64);
             }
+            Mode::AgentLoop => {
+                for trace in &traces {
+                    run_agent_loop(&client, &args, model, trace, &mut agent_loop_records).await?;
+                    let n = if args.turns > 0 {
+                        args.turns.min(trace.turns.len())
+                    } else {
+                        trace.turns.len()
+                    };
+                    bar.inc(n as u64);
+                }
+            }
         }
     }
     bar.finish_with_message("done");
@@ -820,6 +1105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches!(mode, Mode::Perf | Mode::Both) {
         print_perf_summary(&perf_records);
+    }
+    if mode == Mode::AgentLoop {
+        print_agent_loop_summary(&agent_loop_records);
     }
 
     let parity_failures = parity_records
@@ -832,6 +1120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime,
         parity: parity_records,
         perf: perf_records,
+        agent_loop: agent_loop_records,
     };
     std::fs::write(&args.report, serde_json::to_string_pretty(&report)?)?;
     println!("\nreport written to {}", args.report);

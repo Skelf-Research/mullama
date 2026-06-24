@@ -70,6 +70,8 @@ venv/
 
 # Audit logs
 *.jsonl
+# ...but bench fixtures are tracked (prompts, traces).
+!bench/*.jsonl
 audit/
 
 # Temporary files
