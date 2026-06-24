@@ -13,6 +13,7 @@ mod models;
 mod router;
 mod system;
 pub mod types;
+mod tokenize;
 mod ui;
 
 use std::sync::Arc;

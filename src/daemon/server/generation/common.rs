@@ -57,6 +57,12 @@ pub(super) fn generate_tokens(
         let next_token = sampler.sample(context, -1);
 
         if model.vocab_is_eog(next_token) {
+            // Match Ollama's eval_count convention: the sampled EOG token is
+            // counted even though it is not fed back into the model. mullama's
+            // loop breaks before the per-token increment below, so without
+            // this it would report one fewer completion token than Ollama for
+            // every EOG-terminated generation.
+            completion_tokens += 1;
             break;
         }
 
@@ -81,6 +87,10 @@ pub(super) fn generate_tokens(
                     }
                 }
                 generated.truncate(pos);
+                // Match Ollama's eval_count: the token that produced the stop
+                // sequence was sampled/decoded, so it is counted even though
+                // its text is discarded here.
+                let completion_tokens = completion_tokens + 1;
                 return Ok(GenerationResult {
                     generated,
                     completion_tokens,

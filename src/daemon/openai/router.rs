@@ -21,6 +21,7 @@ pub fn create_openai_router(daemon: AppState) -> Router {
         .route("/v1/models", get(super::models::list_models))
         .route("/v1/models/:model", get(super::models::get_model))
         .route("/v1/embeddings", post(super::embeddings::embeddings))
+        .route("/v1/tokenize", post(super::tokenize::tokenize))
         .route(
             "/v1/messages",
             post(crate::daemon::anthropic::messages_handler),

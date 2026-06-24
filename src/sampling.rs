@@ -764,6 +764,8 @@ impl SamplerParams {
 
         // OpenAI and Ollama define temperature=0 as deterministic argmax.
         // A distribution sampler without temperature scaling is still random.
+        // Ollama applies repetition penalties even at temperature=0, so we
+        // keep them to match its token stream; removing them diverges earlier.
         if self.temperature <= 0.0 {
             if self.penalty_repeat != 1.0 || self.penalty_freq != 0.0 || self.penalty_present != 0.0
             {
