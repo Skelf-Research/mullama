@@ -144,6 +144,13 @@ struct Args {
     /// history) for comparison against the reuse-enabled run.
     #[arg(long, default_value_t = false)]
     no_kv_reuse: bool,
+
+    /// Prune the session history to the last N user turns each turn (mullama
+    /// `session_keep_turns`). Bounds prompt + KV so a long session can't
+    /// overflow `n_ctx`. 0 = no pruning (send full history). Requires reuse
+    /// (a `session` id); ignored with `--no-kv-reuse`.
+    #[arg(long, default_value_t = 0)]
+    keep_turns: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -881,6 +888,9 @@ async fn run_agent_loop(
         });
         if let Some(ref sid) = session {
             body["session"] = json!(sid);
+            if args.keep_turns > 0 {
+                body["session_keep_turns"] = json!(args.keep_turns);
+            }
         }
         let start = Instant::now();
         let v = post_json(client, &url, body).await?;

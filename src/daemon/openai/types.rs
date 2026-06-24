@@ -34,6 +34,10 @@ pub struct ChatCompletionRequest {
     /// requests reuses the pinned context's KV cache (delta-only prefill).
     #[serde(default)]
     pub session: Option<String>,
+    /// Sliding-window turn bound for the session (mullama extension). Keeps
+    /// the last N user turns, bounding prompt + KV for long sessions.
+    #[serde(default)]
+    pub session_keep_turns: Option<u32>,
 }
 
 /// Chat completion response
@@ -286,6 +290,7 @@ impl From<ChatCompletionRequest> for crate::daemon::protocol::ChatCompletionPara
             tool_choice: None,
             thinking: None,
             session: req.session,
+            session_keep_turns: req.session_keep_turns,
         }
     }
 }

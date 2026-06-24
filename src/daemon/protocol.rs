@@ -98,6 +98,15 @@ pub struct ChatCompletionParams {
     /// Omit (or set null) for the stock stateless behaviour.
     #[serde(default)]
     pub session: Option<String>,
+    /// Sliding-window pruning bound for `session`-tagged requests. When set,
+    /// the daemon trims the message history to the last N user turns (keeping
+    /// any system prompt) before rendering the prompt. This bounds both the
+    /// rendered prompt and the pinned KV cache so a long-running session can
+    /// not grow toward `n_ctx` and overflow — at the cost of forgetting older
+    /// turns, the standard context-eviction trade-off. Ignored without a
+    /// `session` (stateless requests send their full history anyway).
+    #[serde(default)]
+    pub session_keep_turns: Option<u32>,
 }
 
 /// Parameters for text completion requests

@@ -61,12 +61,23 @@ impl Daemon {
         let sampler_params = self.build_chat_sampler(&loaded, &params);
         let messages = self
             .apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
+        // Sliding-window pruning: when a session is active and a turn bound is
+        // requested, drop everything older than the last N user turns before
+        // rendering the prompt. This bounds both the prompt and the pinned KV
+        // so a long session can't overflow `n_ctx`. Stateless requests keep
+        // their full history — pruning only helps the reuse path.
+        let session_id = params.session.clone().filter(|s| !s.is_empty());
+        let messages = match (session_id.as_ref(), params.session_keep_turns) {
+            (Some(_), Some(n)) if n > 0 => {
+                super::super::prompt::trim_to_last_n_user_turns(&messages, n)
+            }
+            _ => messages,
+        };
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
         // Cross-turn KV reuse: if a session id is present, pin to its slot and
         // prefill only the new delta this turn.
-        let session_id = params.session.clone().filter(|s| !s.is_empty());
         let kv_reuse = session_id.as_ref().map(|id| {
             let (slot, cached) = self
                 .sessions

@@ -7,6 +7,55 @@ use super::super::protocol::ChatMessage;
 use super::super::protocol::{ContentPart, MessageContent};
 use super::Daemon;
 
+/// Trim a message history to the last `keep_turns` user turns, preserving any
+/// leading system block. A "turn" is one user message plus every non-user
+/// message (assistant / tool) that follows it up to the next user message, so
+/// trimming never splits an assistant reply from its prompt.
+///
+/// This is the server-side half of "pruning old turns": bounding the rendered
+/// prompt also bounds the pinned session's KV cache (the cache-is-the-
+/// conversation model from `session.rs`), so a long-running agent can't grow
+/// toward `n_ctx` and overflow. Older turns are simply forgotten — the
+/// standard context-eviction trade-off, not a free lunch.
+pub(super) fn trim_to_last_n_user_turns(messages: &[ChatMessage], keep_turns: u32) -> Vec<ChatMessage> {
+    if keep_turns == 0 {
+        return messages.to_vec();
+    }
+    // Preserve any leading run of system messages verbatim.
+    let sys_end = messages
+        .iter()
+        .position(|m| !m.role.eq_ignore_ascii_case("system"))
+        .unwrap_or(messages.len());
+
+    let rest = &messages[sys_end..];
+    if rest.is_empty() {
+        return messages.to_vec();
+    }
+
+    // Walk from the end, counting user messages until we've seen `keep_turns`
+    // of them; the cut point is the index (within `rest`) of that user msg.
+    let mut user_count = 0u32;
+    let mut cut = 0usize;
+    for (i, m) in rest.iter().enumerate().rev() {
+        if m.role.eq_ignore_ascii_case("user") {
+            user_count += 1;
+            cut = i;
+            if user_count >= keep_turns {
+                break;
+            }
+        }
+    }
+    if user_count < keep_turns {
+        // Fewer user turns than the bound: keep everything.
+        return messages.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(sys_end + (rest.len() - cut));
+    out.extend_from_slice(&messages[..sys_end]);
+    out.extend_from_slice(&rest[cut..]);
+    out
+}
+
 #[inline]
 pub(super) fn find_stop_in_recent_window(
     generated: &str,
@@ -267,5 +316,82 @@ impl Daemon {
                 prompt
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::protocol::MessageContent;
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: MessageContent::Text(content.to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    fn roles(msgs: &[ChatMessage]) -> Vec<&str> {
+        msgs.iter().map(|m| m.role.as_str()).collect()
+    }
+
+    // [sys, u1, a1, u2, a2, u3, a3, u4]: three complete turns + a final user.
+    fn sample() -> Vec<ChatMessage> {
+        vec![
+            msg("system", "s"),
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+            msg("assistant", "a2"),
+            msg("user", "u3"),
+            msg("assistant", "a3"),
+            msg("user", "u4"),
+        ]
+    }
+
+    #[test]
+    fn trim_keep_last_two_user_turns() {
+        let m = sample();
+        let out = trim_to_last_n_user_turns(&m, 2);
+        // system + u3,a3 + u4
+        assert_eq!(roles(&out), vec!["system", "user", "assistant", "user"]);
+    }
+
+    #[test]
+    fn trim_keep_one_user_turn_drops_assistant_of_older_turns() {
+        let m = sample();
+        let out = trim_to_last_n_user_turns(&m, 1);
+        assert_eq!(roles(&out), vec!["system", "user"]);
+        assert_eq!(out[1].content.text(), "u4");
+    }
+
+    #[test]
+    fn trim_keep_zero_is_noop() {
+        let m = sample();
+        let out = trim_to_last_n_user_turns(&m, 0);
+        assert_eq!(out.len(), m.len());
+    }
+
+    #[test]
+    fn trim_bound_larger_than_history_is_noop() {
+        let m = sample();
+        let out = trim_to_last_n_user_turns(&m, 99);
+        assert_eq!(out.len(), m.len());
+    }
+
+    #[test]
+    fn trim_preserves_all_leading_system_messages() {
+        let m = vec![
+            msg("system", "s1"),
+            msg("system", "s2"),
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+        ];
+        let out = trim_to_last_n_user_turns(&m, 1);
+        assert_eq!(roles(&out), vec!["system", "system", "user"]);
     }
 }
