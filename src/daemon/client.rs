@@ -284,6 +284,7 @@ impl DaemonClient {
                 tools: None,
                 tool_choice: None,
                 thinking: None,
+                session: None,
             }),
             generation_timeout,
         )? {

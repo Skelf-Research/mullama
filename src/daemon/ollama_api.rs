@@ -319,8 +319,9 @@ async fn ollama_generate(
         sampler_params,
         &stop_sequences,
         None,
+        None,
     ).await {
-        Ok((text, prompt_tokens, completion_tokens, _timings)) => {
+        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached)) => {
             let elapsed = start.elapsed();
             OllamaGenerateResponse {
                 model: model_alias,
@@ -467,8 +468,9 @@ async fn ollama_chat(
         sampler_params,
         &stop_sequences,
         None,
+        None,
     ).await {
-        Ok((text, prompt_tokens, completion_tokens, _timings)) => {
+        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached)) => {
             let elapsed = start.elapsed();
             OllamaChatResponse {
                 model: model_alias,

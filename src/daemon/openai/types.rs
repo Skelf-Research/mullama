@@ -30,6 +30,10 @@ pub struct ChatCompletionRequest {
     /// Response format for structured outputs (JSON Schema validation)
     #[serde(default)]
     pub response_format: Option<ResponseFormat>,
+    /// Cross-turn KV-reuse session id (mullama extension). Same id across
+    /// requests reuses the pinned context's KV cache (delta-only prefill).
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 /// Chat completion response
@@ -281,6 +285,7 @@ impl From<ChatCompletionRequest> for crate::daemon::protocol::ChatCompletionPara
             tools: None,
             tool_choice: None,
             thinking: None,
+            session: req.session,
         }
     }
 }

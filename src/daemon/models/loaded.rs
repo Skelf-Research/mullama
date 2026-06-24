@@ -76,6 +76,15 @@ impl LoadedModel {
         self.pool.acquire().await
     }
 
+    /// Acquire the specific pool slot a session is pinned to (for cross-turn KV
+    /// reuse). See [`crate::daemon::server::session`].
+    pub async fn acquire_context_at(
+        &self,
+        slot: usize,
+    ) -> tokio::sync::RwLockWriteGuard<'_, Context> {
+        self.pool.acquire_at(slot).await
+    }
+
     pub async fn get_context(&self) -> tokio::sync::RwLockReadGuard<'_, Context> {
         self.pool.read().await
     }

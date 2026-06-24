@@ -64,6 +64,19 @@ impl Daemon {
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
+        // Cross-turn KV reuse: if a session id is present, pin to its slot and
+        // prefill only the new delta this turn.
+        let session_id = params.session.clone().filter(|s| !s.is_empty());
+        let kv_reuse = session_id.as_ref().map(|id| {
+            let (slot, cached) = self
+                .sessions
+                .get(id, &loaded.alias, loaded.pool_size());
+            crate::daemon::server::generation::KvReuse {
+                slot,
+                cached_tokens: cached,
+            }
+        });
+
         let result = self
             .generate_text(
                 &loaded,
@@ -72,13 +85,18 @@ impl Daemon {
                 sampler_params,
                 &all_stops,
                 params.response_format.as_ref(),
+                kv_reuse,
             )
             .await;
 
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens, timings)) => {
+            Ok((text, prompt_tokens, completion_tokens, timings, new_cached)) => {
+                // Write back the updated cached-token sequence for the session.
+                if let (Some(id), Some(cached)) = (session_id.as_ref(), new_cached) {
+                    self.sessions.put(id, cached);
+                }
                 self.store.update_model_stats(
                     &loaded.alias,
                     1,
@@ -127,13 +145,14 @@ impl Daemon {
                 sampler_params,
                 &all_stops,
                 None,
+                None,
             )
             .await;
 
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens, timings)) => {
+            Ok((text, prompt_tokens, completion_tokens, timings, _new_cached)) => {
                 self.store.update_model_stats(
                     &loaded.alias,
                     1,

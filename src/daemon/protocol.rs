@@ -92,6 +92,12 @@ pub struct ChatCompletionParams {
     /// Extended thinking configuration
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
+    /// Optional cross-turn KV-reuse session id. Requests carrying the same
+    /// non-empty `session` reuse the pinned context slot's KV cache: only the
+    /// new prompt delta is prefilled each turn instead of the whole history.
+    /// Omit (or set null) for the stock stateless behaviour.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 /// Parameters for text completion requests

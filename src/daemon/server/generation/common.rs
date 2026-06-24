@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::super::super::protocol::{ResponseFormat, StreamChunk};
 use super::super::prompt::find_stop_in_recent_window;
-use crate::{Context, Model, MullamaError, SamplerChain};
+use crate::{token::TokenId, Context, Model, MullamaError, SamplerChain};
 
 /// Controls whether tokens are buffered or streamed.
 pub(super) enum TokenSink<'a> {
@@ -23,6 +23,12 @@ pub(super) struct GenerationResult {
     pub generated: String,
     pub completion_tokens: u32,
     pub eval_ns: u64,
+    /// Token ids that were actually fed back into the KV cache (i.e. decoded
+    /// via `decode_single`), in order. EOG/stop tokens that broke the loop
+    /// *before* being decoded are excluded — they are not in the KV. Used by
+    /// the cross-turn KV-reuse path to extend the session's cached-token
+    /// sequence so the next turn's prefix match includes this turn's output.
+    pub generated_tokens: Vec<TokenId>,
 }
 
 /// Core token generation loop shared by all generation paths.
@@ -41,6 +47,7 @@ pub(super) fn generate_tokens(
     });
     let mut completion_tokens = 0u32;
     let mut eval_ns = 0u64;
+    let mut generated_tokens: Vec<TokenId> = Vec::with_capacity(max_tokens as usize);
 
     let mut index = 0u32;
     let mut sent_len = 0usize;
@@ -95,6 +102,7 @@ pub(super) fn generate_tokens(
                     generated,
                     completion_tokens,
                     eval_ns,
+                    generated_tokens,
                 });
             }
 
@@ -127,6 +135,7 @@ pub(super) fn generate_tokens(
         let decode_start = Instant::now();
         context.decode_single(next_token)?;
         eval_ns += decode_start.elapsed().as_nanos() as u64;
+        generated_tokens.push(next_token);
         completion_tokens += 1;
     }
 
@@ -148,6 +157,7 @@ pub(super) fn generate_tokens(
         generated,
         completion_tokens,
         eval_ns,
+        generated_tokens,
     })
 }
 

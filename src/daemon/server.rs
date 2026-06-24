@@ -14,8 +14,10 @@ mod dispatch;
 mod generation;
 mod handlers;
 mod prompt;
+mod session;
 
 pub use builder::DaemonBuilder;
+pub(crate) use session::SessionStore;
 pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
 pub(crate) use prompt::resolve_chat_stop_sequences;
 
@@ -34,6 +36,10 @@ pub struct Daemon {
     pub total_requests: AtomicU64,
     /// Cancellation flags for streaming requests (request_id -> cancel flag)
     pub cancellations: Arc<DashMap<String, Arc<AtomicBool>>>,
+    /// Cross-turn KV reuse sessions (session id -> cached tokens + pinned pool
+    /// slot). Lets an agent loop prefill only the new delta each turn instead
+    /// of re-decoding the whole history.
+    pub sessions: Arc<SessionStore>,
     /// Memory monitor for tracking system and GPU memory
     pub memory_monitor: Option<Arc<MemoryMonitor>>,
     /// Recovery manager for handling OOM situations
@@ -92,6 +98,7 @@ impl Daemon {
             active_requests: Arc::new(AtomicU32::new(0)),
             total_requests: AtomicU64::new(0),
             cancellations: Arc::new(DashMap::new()),
+            sessions: Arc::new(SessionStore::new()),
             memory_monitor,
             recovery_manager,
             store,

@@ -416,13 +416,14 @@ async fn handle_messages(
             sampler_params,
             &all_stops,
             None, // Anthropic API doesn't support response_format yet
+            None,
         )
         .await;
     daemon.active_requests.fetch_sub(1, Ordering::Relaxed);
 
     let result = result.map_err(|e| ApiError::generation_failed(e.to_string()))?;
 
-    let (text, prompt_tokens, completion_tokens, _timings) = result;
+    let (text, prompt_tokens, completion_tokens, _timings, _new_cached) = result;
 
     Ok(MessagesResponse {
         id: generate_message_id(),

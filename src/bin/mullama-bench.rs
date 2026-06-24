@@ -138,6 +138,12 @@ struct Args {
     /// whose collapse proves the KV-reuse thesis).
     #[arg(long, default_value_t = 64)]
     agent_max_tokens: u32,
+
+    /// Disable cross-turn KV reuse in agent-loop mode (send no `session` id).
+    /// Use to capture the stock baseline (every turn re-prefills the full
+    /// history) for comparison against the reuse-enabled run.
+    #[arg(long, default_value_t = false)]
+    no_kv_reuse: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +181,11 @@ struct AgentLoopRecord {
     prompt_eval_ns: Option<u64>,
     eval_ns: Option<u64>,
     wall_secs: f64,
+    /// The generated assistant text for this turn. Used to verify that the
+    /// KV-reuse path is numerically identical to the stateless path: the same
+    /// trace run with and without a session must produce identical per-turn
+    /// text (same weights, same positions => same greedy tokens).
+    text: String,
 }
 
 /// A single measured sample from one engine.
@@ -851,9 +862,16 @@ async fn run_agent_loop(
     // send the full message history each turn and let the daemon decide what
     // to prefill (with cross-turn KV reuse, only the delta is actually computed).
     let mut history: Vec<Value> = Vec::new();
+    // A stable session id per (model, trace) pins the context slot so its KV
+    // persists across turns. Omitted when --no-kv-reuse captures the baseline.
+    let session = if args.no_kv_reuse {
+        None
+    } else {
+        Some(format!("{}:{}", model, trace.id))
+    };
     for (i, user_turn) in turns.iter().enumerate() {
         history.push(json!({ "role": "user", "content": user_turn }));
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": history,
             "max_tokens": args.agent_max_tokens,
@@ -861,6 +879,9 @@ async fn run_agent_loop(
             "seed": args.seed,
             "stream": false,
         });
+        if let Some(ref sid) = session {
+            body["session"] = json!(sid);
+        }
         let start = Instant::now();
         let v = post_json(client, &url, body).await?;
         let wall = start.elapsed().as_secs_f64();
@@ -883,6 +904,7 @@ async fn run_agent_loop(
             prompt_eval_ns,
             eval_ns,
             wall_secs: wall,
+            text: text.clone(),
         });
 
         // Feed the assistant reply back as context for the next turn.
