@@ -77,14 +77,16 @@ impl Daemon {
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
         // Cross-turn KV reuse: if a session id is present, pin to its slot and
-        // prefill only the new delta this turn.
+        // prefill only the new delta this turn. A fresh daemon restores the
+        // pinned slot's KV from the durable store first (see `session.rs`).
         let kv_reuse = session_id.as_ref().map(|id| {
-            let (slot, cached) = self
+            let lookup = self
                 .sessions
-                .get(id, &loaded.alias, loaded.pool_size());
+                .get(id, &loaded.alias, loaded.pool_size(), &loaded.kv_compat);
             crate::daemon::server::generation::KvReuse {
-                slot,
-                cached_tokens: cached,
+                slot: lookup.slot,
+                cached_tokens: lookup.cached_tokens,
+                restore: lookup.restore,
             }
         });
 
@@ -103,10 +105,17 @@ impl Daemon {
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens, timings, new_cached)) => {
-                // Write back the updated cached-token sequence for the session.
+            Ok((text, prompt_tokens, completion_tokens, timings, new_cached, seq_state)) => {
+                // Write back the updated cached-token sequence for the session,
+                // and persist the seq-state blob for restart-tolerance.
                 if let (Some(id), Some(cached)) = (session_id.as_ref(), new_cached) {
-                    self.sessions.put(id, cached);
+                    self.sessions.put(
+                        id,
+                        &loaded.alias,
+                        &loaded.kv_compat,
+                        cached,
+                        seq_state,
+                    );
                 }
                 self.store.update_model_stats(
                     &loaded.alias,
@@ -163,7 +172,7 @@ impl Daemon {
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
 
         match result {
-            Ok((text, prompt_tokens, completion_tokens, timings, _new_cached)) => {
+            Ok((text, prompt_tokens, completion_tokens, timings, _new_cached, _seq_state)) => {
                 self.store.update_model_stats(
                     &loaded.alias,
                     1,

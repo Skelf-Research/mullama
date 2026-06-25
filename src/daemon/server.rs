@@ -13,10 +13,12 @@ mod config;
 mod dispatch;
 mod generation;
 mod handlers;
+mod kvstore;
 mod prompt;
 mod session;
 
 pub use builder::DaemonBuilder;
+pub(crate) use kvstore::KvStore;
 pub(crate) use session::SessionStore;
 pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
 pub(crate) use prompt::resolve_chat_stop_sequences;
@@ -98,7 +100,17 @@ impl Daemon {
             active_requests: Arc::new(AtomicU32::new(0)),
             total_requests: AtomicU64::new(0),
             cancellations: Arc::new(DashMap::new()),
-            sessions: Arc::new(SessionStore::new()),
+            sessions: match kvstore::KvStore::open_default() {
+                Ok(kv) => Arc::new(SessionStore::new().with_kv(Arc::new(kv))),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: durable KV store disabled (sled open failed: {}). \
+                         Cross-turn reuse still works in-process; restarts will re-prefill.",
+                        e
+                    );
+                    Arc::new(SessionStore::new())
+                }
+            },
             memory_monitor,
             recovery_manager,
             store,

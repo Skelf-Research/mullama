@@ -19,6 +19,12 @@ pub struct LoadedModel {
     pub active_requests: AtomicU32,
     pub config: ModelConfig,
     pub stats: ModelStats,
+    /// Compatibility digest over the model path + KV-layout-affecting context
+    /// params. Gates durable KV-cache restore across daemon restarts: a blob
+    /// whose digest no longer matches the current config is refused and the
+    /// request falls back to a full decode. See
+    /// [`crate::daemon::server::kvstore`].
+    pub kv_compat: String,
     #[cfg(feature = "multimodal")]
     pub mtmd_context: Option<tokio::sync::RwLock<MtmdContext>>,
 }
@@ -35,6 +41,7 @@ impl LoadedModel {
         config: ModelConfig,
         context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
+        let kv_compat = crate::daemon::server::KvStore::compat_digest(&info.path, &ctx_params);
         let pool = ContextPool::new(model.clone(), context, ctx_params, context_pool_size)?;
 
         Ok(Self {
@@ -45,6 +52,7 @@ impl LoadedModel {
             active_requests: AtomicU32::new(0),
             config,
             stats: ModelStats::new(),
+            kv_compat,
             mtmd_context: mtmd_context.map(tokio::sync::RwLock::new),
         })
     }
@@ -59,6 +67,7 @@ impl LoadedModel {
         config: ModelConfig,
         context_pool_size: usize,
     ) -> Result<Self, MullamaError> {
+        let kv_compat = crate::daemon::server::KvStore::compat_digest(&info.path, &ctx_params);
         let pool = ContextPool::new(model.clone(), context, ctx_params, context_pool_size)?;
 
         Ok(Self {
@@ -69,6 +78,7 @@ impl LoadedModel {
             active_requests: AtomicU32::new(0),
             config,
             stats: ModelStats::new(),
+            kv_compat,
         })
     }
 

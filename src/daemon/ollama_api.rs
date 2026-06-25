@@ -321,7 +321,7 @@ async fn ollama_generate(
         None,
         None,
     ).await {
-        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached)) => {
+        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached, _seq_state)) => {
             let elapsed = start.elapsed();
             OllamaGenerateResponse {
                 model: model_alias,
@@ -470,7 +470,7 @@ async fn ollama_chat(
         None,
         None,
     ).await {
-        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached)) => {
+        Ok((text, prompt_tokens, completion_tokens, _timings, _new_cached, _seq_state)) => {
             let elapsed = start.elapsed();
             OllamaChatResponse {
                 model: model_alias,

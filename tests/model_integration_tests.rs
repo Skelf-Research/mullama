@@ -395,3 +395,108 @@ fn test_config_with_model() {
 
     println!("Config with model path validated successfully");
 }
+
+/// Greedy generation helper: decode `prompt`, then sample up to `n` tokens
+/// (temperature 0 = argmax, no penalties) and return the token-id sequence.
+fn greedy_generate(
+    ctx: &mut mullama::Context,
+    model: &Arc<mullama::Model>,
+    prompt: &[mullama::TokenId],
+    n: usize,
+) -> Vec<mullama::TokenId> {
+    ctx.decode(prompt).expect("decode prompt");
+    let params = mullama::SamplerParams {
+        temperature: 0.0,
+        top_k: 0,
+        top_p: 1.0,
+        min_p: 0.0,
+        typical_p: 1.0,
+        penalty_repeat: 1.0,
+        penalty_freq: 0.0,
+        penalty_present: 0.0,
+        penalty_last_n: 0,
+        penalize_nl: false,
+        ignore_eos: false,
+        seed: mullama::sys::LLAMA_DEFAULT_SEED,
+        ..Default::default()
+    };
+    let mut sampler = params.build_chain(model.clone()).expect("build sampler");
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let tok = sampler.sample(ctx, -1);
+        sampler.accept(tok);
+        if model.token_is_eog(tok) {
+            break;
+        }
+        out.push(tok);
+        ctx.decode(&[tok]).expect("decode token");
+    }
+    out
+}
+
+/// Isolate whether `Context::save_state_seq` -> `load_state_seq` round-trips
+/// the KV bit-exactly. A fresh context that loads the blob and decodes only the
+/// suffix must produce the *same greedy tokens* as a single context that decoded
+/// the whole prompt. If this fails, durable KV restore can't preserve greedy
+/// parity in this build — the determinism gate that `kvstore` relies on.
+#[test]
+fn test_state_seq_roundtrip_is_greedy_identical() {
+    let model_path = require_model!();
+
+    mullama::backend_init();
+
+    // Some test environments can't load ggml backends into the test binary
+    // (a known, pre-existing limitation — `test_tokenization` fails the same
+    // way). Bail rather than panic so this invariant test doesn't add a hard
+    // failure where the runtime can't run it.
+    let model = match mullama::Model::load(&model_path) {
+        Ok(m) => Arc::new(m),
+        Err(e) => {
+            eprintln!("Skipping test: Model::load failed ({e}); backends unavailable in test binary");
+            return;
+        }
+    };
+
+    let prompt = "The quick brown fox jumps over the lazy dog. ";
+    let tokens = model.tokenize(prompt, true, false).expect("tokenize");
+    assert!(tokens.len() > 4, "prompt too short for a split test");
+    let split = tokens.len() / 2;
+    let n_gen = 16;
+
+    // Reference: one context decodes the full prompt and generates greedily.
+    let mut ctx_full = mullama::Context::new(model.clone(), mullama::ContextParams::default())
+        .expect("ctx full");
+    let full_tokens = greedy_generate(&mut ctx_full, &model, &tokens, n_gen);
+
+    // Save the prefix KV, then restore it into a fresh context and decode only
+    // the suffix.
+    let mut ctx_save = mullama::Context::new(model.clone(), mullama::ContextParams::default())
+        .expect("ctx save");
+    ctx_save.decode(&tokens[..split]).expect("decode prefix");
+    let blob = ctx_save.save_state_seq(0);
+    assert!(!blob.is_empty(), "save_state_seq produced empty blob");
+
+    let mut ctx_rest = mullama::Context::new(model.clone(), mullama::ContextParams::default())
+        .expect("ctx restore");
+    ctx_rest.kv_cache_clear();
+    ctx_rest
+        .load_state_seq(0, &blob)
+        .expect("load_state_seq");
+    let rest_tokens = greedy_generate(&mut ctx_rest, &model, &tokens[split..], n_gen);
+
+    println!("full  ({} tokens): {:?}", full_tokens.len(), full_tokens);
+    println!("rest  ({} tokens): {:?}", rest_tokens.len(), rest_tokens);
+    assert_eq!(
+        full_tokens, rest_tokens,
+        "save_state_seq -> load_state_seq round-trip is NOT greedy-identical to a \
+         single full decode in this build; durable KV restore cannot preserve parity"
+    );
+
+    unsafe {
+        mullama::sys::llama_backend_free();
+    }
+}
+
+// keep the unused-SamplerParams-fields import explicit
+#[allow(dead_code)]
+fn _types_helper(_p: mullama::SamplerParams) {}

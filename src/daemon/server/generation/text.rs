@@ -11,15 +11,15 @@ use super::common::{generate_tokens, resolve_grammar, TokenSink};
 use crate::token::TokenId;
 use crate::{MullamaError, SamplerParams};
 
-/// Cross-turn KV reuse inputs: the pinned pool slot and the token-id sequence
-/// currently held in that slot's KV. When present, `generate_text` matches the
-/// new prompt against `cached_tokens`, drops the divergent KV tail, and decodes
-/// only the new suffix instead of clearing and re-decoding the whole prompt.
 /// Cross-turn KV reuse inputs (see [`crate::daemon::server::session`]).
 #[allow(private_interfaces)]
 pub(crate) struct KvReuse {
     pub(crate) slot: usize,
     pub(crate) cached_tokens: Vec<TokenId>,
+    /// Seq-state blob to hydrate the pinned slot's KV with on the first turn
+    /// after a durable restore (fresh daemon). `None` for an in-memory hit —
+    /// the KV is already in the slot.
+    pub(crate) restore: Option<Vec<u8>>,
 }
 
 impl Daemon {
@@ -31,6 +31,7 @@ impl Daemon {
     /// (prompt prefix + this turn's generated tokens) the caller writes back to
     /// the session store. When `kv_reuse` is `None`, the stock stateless path
     /// runs (clear + full decode) and `None` is returned.
+    #[allow(private_interfaces)]
     pub async fn generate_text(
         &self,
         loaded: &LoadedModel,
@@ -40,7 +41,7 @@ impl Daemon {
         stop_sequences: &[String],
         response_format: Option<&ResponseFormat>,
         kv_reuse: Option<KvReuse>,
-    ) -> Result<(String, u32, u32, Timings, Option<Vec<TokenId>>), MullamaError> {
+    ) -> Result<(String, u32, u32, Timings, Option<Vec<TokenId>>, Option<Vec<u8>>), MullamaError> {
         let add_bos = loaded.model.add_bos_token();
         let grammar_gbnf = resolve_grammar(response_format);
         let stop_sequences: Vec<String> = stop_sequences
@@ -64,12 +65,33 @@ impl Daemon {
             let mut cached_tokens: Option<Vec<TokenId>> =
                 kv_reuse.as_ref().map(|r| r.cached_tokens.clone());
 
+            // Durable restore: hydrate the pinned slot's KV from the persisted
+            // blob before the reuse logic runs. Uses the per-sequence
+            // save/load (only the used positions, not the whole n_ctx
+            // allocation — a full-context save would be ~hundreds of MB and
+            // seconds of memcpy at n_ctx=8192). After load_state_seq the KV
+            // holds the cached prefix at its original positions, so the prefix
+            // match + seq_rm + delta-decode below behaves exactly as an
+            // in-memory reuse hit. A failed load (incompatible build/format)
+            // falls back to a full decode — never incorrect. The save side
+            // uses the matching `save_state_seq`, so the blob format matches.
+            if let Some(blob) = kv_reuse.as_ref().and_then(|r| r.restore.as_ref()) {
+                context.kv_cache_clear();
+                if context.load_state_seq(0, blob).is_err() {
+                    // Restore refused by llama.cpp (state-version/format
+                    // mismatch): treat as a fresh session. Never incorrect —
+                    // the reuse path falls through to a full decode below.
+                    cached_tokens = Some(Vec::new());
+                    context.kv_cache_clear();
+                }
+            }
+
             let prompt_eval_ns = if let Some(reuse) = &kv_reuse {
                 // Cross-turn reuse: keep the shared prefix, drop the divergent
                 // tail from the KV, and decode only the new suffix. Positions
                 // auto-continue from seq_pos_max+1 (llama_batch_get_one with
                 // pos=null), so no explicit-position batch is required.
-                let cached = &reuse.cached_tokens;
+                let cached = cached_tokens.as_ref().unwrap_or(&reuse.cached_tokens);
                 let l = common_prefix_len(cached, &tokens);
                 let delta_empty = l >= tokens.len();
                 if l == 0 || delta_empty {
@@ -110,6 +132,19 @@ impl Daemon {
                 s.elapsed().as_nanos() as u64
             };
 
+            // Snapshot the per-sequence KV state for durable persistence (caller
+            // writes it back to the KV store via the session). Only meaningful
+            // for the reuse path; the stateless branch returns None and isn't
+            // pinned. Must be the seq variant to match the `load_state_seq`
+            // restore path — only the used cells are written, not the whole
+            // n_ctx allocation, so the blob is small (KB–low MB) and the load
+            // is fast enough to preserve the delta-prefill win.
+            let seq_state = if kv_reuse.is_some() {
+                Some(context.save_state_seq(0))
+            } else {
+                None
+            };
+
             let mut sampler = sampler_params.build_chain(model.clone())?;
 
             // Repetition penalties include prompt history. Seed the base
@@ -141,7 +176,13 @@ impl Daemon {
                 c.extend_from_slice(&gen_result.generated_tokens);
             }
 
-            Ok::<_, MullamaError>((gen_result, prompt_tokens, prompt_eval_ns, cached_tokens))
+            Ok::<_, MullamaError>((
+                gen_result,
+                prompt_tokens,
+                prompt_eval_ns,
+                cached_tokens,
+                seq_state,
+            ))
         })?;
 
         self.models.add_tokens(result.0.completion_tokens as u64);
@@ -158,6 +199,7 @@ impl Daemon {
             result.0.completion_tokens,
             timings,
             result.3,
+            result.4,
         ))
     }
 

@@ -423,7 +423,7 @@ async fn handle_messages(
 
     let result = result.map_err(|e| ApiError::generation_failed(e.to_string()))?;
 
-    let (text, prompt_tokens, completion_tokens, _timings, _new_cached) = result;
+    let (text, prompt_tokens, completion_tokens, _timings, _new_cached, _seq_state) = result;
 
     Ok(MessagesResponse {
         id: generate_message_id(),
