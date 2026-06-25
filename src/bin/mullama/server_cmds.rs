@@ -354,6 +354,14 @@ pub(crate) async fn run_server(
         None
     };
 
+    // Background idle hydrator: pre-warms durable sessions into free slots
+    // during idle windows so their next request is a hot in-memory hit. A
+    // no-op when the durable KV store is disabled or the daemon is busy.
+    let hydrator_daemon = daemon.clone();
+    let _hydrate_handle = tokio::spawn(async move {
+        hydrator_daemon.run_idle_hydrator().await;
+    });
+
     tokio::signal::ctrl_c().await?;
     println!("\nShutting down...");
 

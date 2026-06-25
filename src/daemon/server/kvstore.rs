@@ -185,6 +185,25 @@ impl KvStore {
         let _ = self.db.flush();
     }
 
+    /// Enumerate every persisted session: `(session_id, model_alias,
+    /// compat_digest)`. The idle hydrator walks this list to pre-warm sessions
+    /// that aren't currently live in memory.
+    pub(crate) fn list_sessions(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for entry in self.manifest.iter() {
+            let Ok((key, bytes)) = entry else { continue };
+            let Ok(m): Result<Manifest, _> = serde_json::from_slice(&bytes) else {
+                continue;
+            };
+            out.push((
+                String::from_utf8_lossy(&key).to_string(),
+                m.model_alias,
+                m.compat_digest,
+            ));
+        }
+        out
+    }
+
     /// Number of tracked sessions (observability / tests).
     #[cfg(test)]
     pub(crate) fn session_count(&self) -> usize {

@@ -13,6 +13,7 @@ mod config;
 mod dispatch;
 mod generation;
 mod handlers;
+mod hydrator;
 mod kvstore;
 mod prompt;
 mod session;
