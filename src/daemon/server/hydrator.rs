@@ -75,6 +75,55 @@ impl Daemon {
         hydrated
     }
 
+    /// Predict the files each active agent session is about to read next and
+    /// surface them. Returns the predicted candidate paths (existing on disk),
+    /// per session, so a caller can pre-read them into page cache or warm
+    /// derived state. This is the file-access prefetch policy applied: the
+    /// observer (fed from conversation content at request time) supplies the
+    /// touched-file history; [`super::prefetch::predict_fs`] ranks the next
+    /// reads via import-following and directory locality.
+    ///
+    /// Only runs when idle. Pre-reading the predicted files warms the OS page
+    /// cache so the agent's next `read` (and the prompt that embeds it) hits
+    /// warm pages instead of cold disk — a safe, correctness-neutral win that
+    /// never touches KV or output.
+    pub async fn prefetch_predicted_files(&self, per_session_limit: usize) -> Vec<(String, Vec<std::path::PathBuf>)> {
+        if self.active_requests.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for session in self.prefetch.sessions() {
+            let touched = self.prefetch.history(&session);
+            if touched.is_empty() {
+                continue;
+            }
+            let preds = tokio::task::block_in_place(|| {
+                super::prefetch::predict_fs(&touched, per_session_limit)
+            });
+            if preds.is_empty() {
+                continue;
+            }
+            let paths: Vec<std::path::PathBuf> = preds.iter().map(|c| c.path.clone()).collect();
+            // Warm the OS page cache by touching each predicted file's bytes.
+            tokio::task::block_in_place(|| {
+                for p in &paths {
+                    let _ = std::fs::read(p);
+                }
+            });
+            for c in &preds {
+                tracing::debug!(
+                    session = %session,
+                    path = %c.path.display(),
+                    score = c.score,
+                    reason = ?c.reason,
+                    "prefetch: warmed predicted next-read"
+                );
+            }
+            out.push((session, paths));
+        }
+        out
+    }
+
     /// Run the idle hydrator forever, waking every [`HYDRATE_INTERVAL`]. Stops
     /// when the daemon is shutting down. Spawn this on a tokio task at serve
     /// time; it's a no-op whenever the durable store is disabled or the daemon
@@ -94,6 +143,8 @@ impl Daemon {
                 break;
             }
             let _ = self.hydrate_idle_sessions().await;
+            // Warm the page cache for each agent's predicted next file reads.
+            let _ = self.prefetch_predicted_files(8).await;
         }
     }
 }

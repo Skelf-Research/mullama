@@ -76,6 +76,16 @@ impl Daemon {
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
+        // Agent file-access prefetch: record source paths mentioned in this
+        // turn's content so the idle hydrator can predict the agent's next
+        // reads. Only the latest turn's messages are scanned (recency); the
+        // observer dedups and bounds its own window.
+        if let Some(id) = session_id.as_ref() {
+            for m in &messages {
+                self.prefetch.observe(id, &m.content.text());
+            }
+        }
+
         // Cross-turn KV reuse: if a session id is present, pin to its slot and
         // prefill only the new delta this turn. A fresh daemon restores the
         // pinned slot's KV from the durable store first (see `session.rs`).

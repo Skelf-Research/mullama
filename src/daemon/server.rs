@@ -15,11 +15,13 @@ mod generation;
 mod handlers;
 mod hydrator;
 mod kvstore;
+mod prefetch;
 mod prompt;
 mod session;
 
 pub use builder::DaemonBuilder;
 pub(crate) use kvstore::KvStore;
+pub(crate) use prefetch::PrefetchObserver;
 pub(crate) use session::SessionStore;
 pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
 pub(crate) use prompt::resolve_chat_stop_sequences;
@@ -43,6 +45,10 @@ pub struct Daemon {
     /// slot). Lets an agent loop prefill only the new delta each turn instead
     /// of re-decoding the whole history.
     pub sessions: Arc<SessionStore>,
+    /// Per-session agent file-access tracker. Records source paths mentioned in
+    /// conversation turns so the idle hydrator can predict (and pre-warm) the
+    /// files an agent is about to read next. See [`prefetch`].
+    pub(crate) prefetch: Arc<PrefetchObserver>,
     /// Memory monitor for tracking system and GPU memory
     pub memory_monitor: Option<Arc<MemoryMonitor>>,
     /// Recovery manager for handling OOM situations
@@ -112,6 +118,7 @@ impl Daemon {
                     Arc::new(SessionStore::new())
                 }
             },
+            prefetch: Arc::new(PrefetchObserver::new()),
             memory_monitor,
             recovery_manager,
             store,
