@@ -21,6 +21,7 @@ portable metrics**.
 | **Sliding-window pruning** | Long sessions vs `n_ctx` overflow | bounds prefill+KV; prevents OOM crash | Sessions longer than `n_ctx` |
 | **Durable KV store** | First turn after a daemon restart | restore keeps the delta-prefill win across restarts | Restart / cold start |
 | **Idle hydration + scheduling** | More sessions than pool slots | moves restore cost off the request path | Many concurrent sessions |
+| **Concurrent multi-session serving** | Parallel requests across pool slots | **1.48× throughput at 2 sessions** (plateaus — memory-bandwidth bound) | Multi-tenant, ≤2 hot sessions |
 | **Prompt-lookup speculation** | Repetitive / structured output | **6.96 tokens/forward-pass, ~6.8× wall-clock** | Code, JSON, repeated text |
 | **INT4 group quantization** | Weight memory | **6.4× smaller** than f32 | Always (weight storage) |
 | **+ Hadamard rotation** | INT4 accuracy on outliers | error 4.53%→4.35% | Only ~1 outlier per group |
@@ -135,6 +136,43 @@ This is a **latency-shaping** win (cost moved to idle time), not a throughput
 number; correctness is guaranteed by a reserve/commit/abort protocol that only
 marks a session live after its KV is genuinely populated.
 
+### Concurrent multi-session throughput — what the pool actually buys
+
+The context pool has N independently-lockable slots, so concurrent requests to
+different sessions *can* decode in parallel. We measured whether they actually
+do, by firing S sessions at the daemon at once (pool size 4, 4 threads/session,
+24-core box) and comparing aggregate tokens/sec to a single session alone:
+
+| concurrent sessions | aggregate tok/s | **throughput scaling** | median latency inflation |
+|---:|---:|---:|---:|
+| 1 | 53.7 | 1.00× | 1.0× |
+| 2 | 78.1 | **1.48×** | 1.35× |
+| 4 | 79.3 | 1.43× | 2.42× |
+
+**Verdict: parallel serving is real but plateaus at ~1.5×.** Scaling rises from
+1.0× to 1.48× at two sessions — proof the pool serves concurrently and is *not*
+single-flight (a lock would pin it at 1.0×). But it saturates there: a 3rd/4th
+session adds latency without adding throughput, because decoding a small model
+is **memory-bandwidth bound** — each token streams the full weight set, and two
+concurrent decodes already saturate the memory subsystem. This is a hardware
+ceiling, not a software lock. (Confirmed: with pool size 1, scaling is 1.1× —
+sessions correctly serialize on the single slot.)
+
+**Implication for "parallel idle-fill".** The original idea of running one
+session's prefill *during* another's decode would only help if there were spare
+memory bandwidth to fill — and there isn't past ~2 concurrent decodes on this
+class of machine. So overlapping work inside the active window is **not worth
+building** here; the idle hydrator (which runs only when fully idle) already
+captures the available headroom. On a GPU or a bandwidth-rich server the ceiling
+would be higher and the calculus could change.
+
+**Reproduce:**
+```bash
+# sweep concurrency at fixed pool size
+python3 bench/concurrent_sessions.py --url http://127.0.0.1:8110 \
+  --model qwen2.5-0.5b --sessions 2 --turns 3 --max-tokens 48
+```
+
 ---
 
 ## 5. Prompt-lookup speculative decoding
@@ -229,6 +267,7 @@ All benchmarks use `bench/trace.jsonl` (3 agent traces: `repo-qna` 5 turns,
 | KV reuse vs baseline | `mullama-bench --mode agent-loop` with/without `--no-kv-reuse` |
 | Pruning (overflow) | `mullama-bench --mode agent-loop --keep-turns 4` |
 | Durable restore | restart daemon between turns, compare prefill |
+| Concurrent throughput | `python3 bench/concurrent_sessions.py --sessions N` |
 | Speculative decoding | `cargo run --release --example speculative_lookup` |
 | INT4 + rotation | `cargo run --release --example int4_rotation_demo` |
 
@@ -244,6 +283,9 @@ For exact Ollama-matched numerics set
   output optimization.
 - **Rotation can lose** outside the ~1-outlier-per-group regime; plain INT4 is
   often better.
+- **Concurrent serving plateaus at ~1.5×** (memory-bandwidth bound on CPU), so
+  in-active-window prefill overlap ("parallel idle-fill") is not worth building
+  on this hardware class — the idle hydrator already captures the headroom.
 - **INT4 + rotation is a standalone kernel**, not yet in the inference graph.
 - Greedy parity vs Ollama is exact only with the matched backend; long
   completions diverge mid-stream on a stock backend (a known build-numerics
