@@ -138,6 +138,7 @@ pub mod websockets;
 pub mod gpu_advanced;
 pub mod grammar;
 pub mod hf;
+pub mod int4_rotation;
 pub mod lora;
 pub mod modelfile;
 pub mod presets;
