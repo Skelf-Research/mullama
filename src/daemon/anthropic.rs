@@ -488,6 +488,7 @@ async fn handle_messages_streaming(
             request.max_tokens,
             sampler_params,
             all_stops,
+            None,
         )
         .await
         .map_err(|e| ApiError::generation_failed(e.to_string()))?;

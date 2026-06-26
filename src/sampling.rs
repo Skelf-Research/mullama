@@ -759,8 +759,31 @@ impl SamplerParams {
     ///
     /// Note: The model parameter is kept for API compatibility but is no longer
     /// required by the penalties sampler in newer llama.cpp versions.
-    pub fn build_chain(&self, _model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
+    pub fn build_chain(&self, model: Arc<Model>) -> Result<SamplerChain, MullamaError> {
+        self.build_chain_with_grammar(model, None)
+    }
+
+    /// Build a sampler chain, optionally inserting a GBNF grammar constraint.
+    ///
+    /// The grammar sampler MUST run before the final selecting sampler (greedy
+    /// or dist): it masks the disallowed tokens out of the logits so selection
+    /// only ever picks a grammar-valid token. If it ran *after* selection, the
+    /// engine's internal `grammar_accept` would be handed an out-of-grammar
+    /// token and abort with "Unexpected empty grammar stack". We place it right
+    /// after penalties (matching llama.cpp's reference ordering), so it
+    /// constrains the full downstream pipeline.
+    pub fn build_chain_with_grammar(
+        &self,
+        model: Arc<Model>,
+        grammar_gbnf: Option<&str>,
+    ) -> Result<SamplerChain, MullamaError> {
         let mut chain = SamplerChain::default();
+        let add_grammar = |chain: &mut SamplerChain| -> Result<(), MullamaError> {
+            if let Some(gbnf) = grammar_gbnf {
+                chain.add(Sampler::grammar(model.clone(), gbnf, "root")?);
+            }
+            Ok(())
+        };
 
         // OpenAI and Ollama define temperature=0 as deterministic argmax.
         // A distribution sampler without temperature scaling is still random.
@@ -776,6 +799,7 @@ impl SamplerParams {
                     self.penalty_present,
                 )?);
             }
+            add_grammar(&mut chain)?;
             chain.add(Sampler::greedy()?);
             return Ok(chain);
         }
@@ -790,6 +814,9 @@ impl SamplerParams {
             )?;
             chain.add(penalties);
         }
+
+        // Grammar masks the vocabulary before any filtering/selection runs.
+        add_grammar(&mut chain)?;
 
         // Add top-k filtering
         if self.top_k > 0 {

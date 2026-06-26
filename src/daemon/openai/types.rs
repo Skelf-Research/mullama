@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
 use crate::daemon::protocol::ResponseFormat;
-use crate::daemon::protocol::{ChatMessage, EmbeddingInput, Timings, Usage};
+use crate::daemon::protocol::{ChatMessage, EmbeddingInput, Timings, Tool, ToolChoice, Usage};
 
 /// Chat completion request (OpenAI compatible)
 #[derive(Debug, Deserialize)]
@@ -38,6 +38,14 @@ pub struct ChatCompletionRequest {
     /// the last N user turns, bounding prompt + KV for long sessions.
     #[serde(default)]
     pub session_keep_turns: Option<u32>,
+    /// Tool/function definitions the model may call (OpenAI compatible).
+    #[serde(default)]
+    pub tools: Option<Vec<Tool>>,
+    /// How the model should pick a tool: "none" | "auto" | "required", or a
+    /// specific `{type:"function", function:{name}}`. When this requires a
+    /// call, decoding is grammar-constrained to a valid tool call.
+    #[serde(default)]
+    pub tool_choice: Option<ToolChoice>,
 }
 
 /// Chat completion response
@@ -286,8 +294,8 @@ impl From<ChatCompletionRequest> for crate::daemon::protocol::ChatCompletionPara
             stream: req.stream,
             stop: req.stop.unwrap_or_default(),
             response_format: req.response_format,
-            tools: None,
-            tool_choice: None,
+            tools: req.tools,
+            tool_choice: req.tool_choice,
             thinking: None,
             session: req.session,
             session_keep_turns: req.session_keep_turns,

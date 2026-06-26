@@ -28,10 +28,22 @@ impl Daemon {
             .apply_default_system_prompt(params.messages, loaded.config.system_prompt.as_deref());
         let prompt = self.build_chat_prompt(&loaded.model, &messages);
         let model_alias = loaded.alias.clone();
+        let grammar = crate::daemon::server::generation::resolve_chat_grammar(
+            params.response_format.as_ref(),
+            params.tools.as_deref(),
+            params.tool_choice.as_ref(),
+        );
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
         match self
-            .generate_text_streaming(loaded, prompt, params.max_tokens, sampler_params, all_stops)
+            .generate_text_streaming(
+                loaded,
+                prompt,
+                params.max_tokens,
+                sampler_params,
+                all_stops,
+                grammar,
+            )
             .await
         {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
@@ -100,6 +112,11 @@ impl Daemon {
             }
         });
 
+        let grammar = crate::daemon::server::generation::resolve_chat_grammar(
+            params.response_format.as_ref(),
+            params.tools.as_deref(),
+            params.tool_choice.as_ref(),
+        );
         let result = self
             .generate_text(
                 &loaded,
@@ -107,7 +124,7 @@ impl Daemon {
                 params.max_tokens,
                 sampler_params,
                 &all_stops,
-                params.response_format.as_ref(),
+                grammar,
                 kv_reuse,
             )
             .await;
@@ -224,6 +241,7 @@ impl Daemon {
                 params.max_tokens,
                 sampler_params,
                 all_stops,
+                None,
             )
             .await
         {

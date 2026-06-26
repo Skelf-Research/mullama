@@ -4,10 +4,10 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 
 use super::super::super::models::{LoadedModel, RequestGuard};
-use super::super::super::protocol::{ResponseFormat, StreamChunk, Timings};
+use super::super::super::protocol::{StreamChunk, Timings};
 use super::super::session::common_prefix_len;
 use super::super::Daemon;
-use super::common::{generate_tokens, resolve_grammar, TokenSink};
+use super::common::{generate_tokens, TokenSink};
 use crate::token::TokenId;
 use crate::{MullamaError, SamplerParams};
 
@@ -39,11 +39,10 @@ impl Daemon {
         max_tokens: u32,
         sampler_params: SamplerParams,
         stop_sequences: &[String],
-        response_format: Option<&ResponseFormat>,
+        grammar_gbnf: Option<String>,
         kv_reuse: Option<KvReuse>,
     ) -> Result<(String, u32, u32, Timings, Option<Vec<TokenId>>, Option<Vec<u8>>), MullamaError> {
         let add_bos = loaded.model.add_bos_token();
-        let grammar_gbnf = resolve_grammar(response_format);
         let stop_sequences: Vec<String> = stop_sequences
             .iter()
             .filter(|s| !s.is_empty())
@@ -145,19 +144,23 @@ impl Daemon {
                 None
             };
 
-            let mut sampler = sampler_params.build_chain(model.clone())?;
+            // Build the sampler with the grammar inserted at the correct
+            // position (before the selecting sampler), so it masks invalid
+            // tokens out of the logits rather than being handed an out-of-
+            // grammar token after selection (which aborts the grammar engine).
+            let mut sampler =
+                sampler_params.build_chain_with_grammar(model.clone(), grammar_gbnf.as_deref())?;
 
-            // Repetition penalties include prompt history. Seed the base
-            // sampler before adding grammar so prompt tokens affect penalties
-            // without being consumed as generated grammar tokens.
-            for &token in &tokens {
-                sampler.accept(token);
-            }
-
-            if let Some(gbnf) = &grammar_gbnf {
-                let grammar_sampler =
-                    crate::sampling::Sampler::grammar(model.clone(), gbnf, "root")?;
-                sampler.add(grammar_sampler);
+            // Repetition penalties include prompt history: seed them by
+            // accepting the prompt tokens. We only do this when there is NO
+            // grammar — a grammar sampler in the chain would try to advance
+            // through the (non-grammar) prompt and abort. Grammar-constrained
+            // requests (structured output / tool calls) are typically temp 0
+            // with no penalties, so skipping the seed is a no-op there.
+            if grammar_gbnf.is_none() {
+                for &token in &tokens {
+                    sampler.accept(token);
+                }
             }
 
             let gen_result = generate_tokens(
@@ -204,6 +207,11 @@ impl Daemon {
     }
 
     /// Generate text with streaming.
+    ///
+    /// `grammar_gbnf`, when `Some`, constrains decoding to the given GBNF — the
+    /// same structured-output / tool-call constraint the non-streaming
+    /// [`Self::generate_text`] applies, so streamed and buffered responses are
+    /// constrained identically.
     pub async fn generate_text_streaming(
         &self,
         loaded: Arc<LoadedModel>,
@@ -211,6 +219,7 @@ impl Daemon {
         max_tokens: u32,
         sampler_params: SamplerParams,
         stop_sequences: Vec<String>,
+        grammar_gbnf: Option<String>,
     ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String), MullamaError> {
         let add_bos = loaded.model.add_bos_token();
         let model_for_tokenize = loaded.model.clone();
@@ -227,9 +236,16 @@ impl Daemon {
 
             let result = tokio::task::block_in_place(|| {
                 context.kv_cache_clear();
-                let mut sampler = sampler_params.build_chain(model.clone())?;
-                for &token in &tokens {
-                    sampler.accept(token);
+                // Grammar inserted in-chain before the selecting sampler (see
+                // `generate_text`); prompt-token penalty seeding is skipped when
+                // a grammar is present so the grammar engine only ever sees
+                // generated tokens.
+                let mut sampler = sampler_params
+                    .build_chain_with_grammar(model.clone(), grammar_gbnf.as_deref())?;
+                if grammar_gbnf.is_none() {
+                    for &token in &tokens {
+                        sampler.accept(token);
+                    }
                 }
                 context.decode(&tokens)?;
 

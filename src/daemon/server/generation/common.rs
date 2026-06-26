@@ -131,7 +131,13 @@ pub(super) fn generate_tokens(
             last_token_id = next_token;
         }
 
-        sampler.accept(next_token);
+        // NOTE: do not call `sampler.accept(next_token)` here. `sampler.sample`
+        // maps to `llama_sampler_sample`, which already accepts the chosen
+        // token into every sampler in the chain (penalties, grammar, ...). A
+        // second manual accept double-advances them: penalties would count each
+        // token twice, and a grammar sampler aborts outright ("Unexpected empty
+        // grammar stack") because it is advanced past a valid parse. One accept
+        // per token, performed inside `sample`, is exactly correct.
         let decode_start = Instant::now();
         context.decode_single(next_token)?;
         eval_ns += decode_start.elapsed().as_nanos() as u64;
