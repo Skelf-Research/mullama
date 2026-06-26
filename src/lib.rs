@@ -141,6 +141,7 @@ pub mod hf;
 pub mod lora;
 pub mod modelfile;
 pub mod presets;
+pub mod prompt_lookup;
 pub mod speculative;
 pub mod structured_output;
 

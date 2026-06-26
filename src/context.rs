@@ -281,6 +281,84 @@ impl Context {
         Ok(())
     }
 
+    /// Decode `tokens` at sequential positions starting at `start_pos` (seq 0),
+    /// requesting logits at **every** position, and return the greedy (argmax)
+    /// token id predicted at each of those positions.
+    ///
+    /// This is the verification primitive for speculative decoding: given a
+    /// draft of K proposed tokens, one call decodes all K in a single forward
+    /// pass and tells us, for each position, what the target model would have
+    /// greedily produced there — so we can accept the longest prefix where the
+    /// draft matches the target. The returned vec has one entry per input
+    /// token: `out[i]` is the argmax of the logits at the position of
+    /// `tokens[i]` (i.e. the model's prediction for the token *after*
+    /// `tokens[i]`).
+    ///
+    /// Positions are set explicitly so the caller controls KV placement; the
+    /// KV for all `tokens` is committed to the cache on success (the caller
+    /// rolls back rejected positions with `kv_cache_seq_rm`).
+    pub fn decode_batch_argmax(
+        &mut self,
+        tokens: &[TokenId],
+        start_pos: i32,
+    ) -> Result<Vec<TokenId>, MullamaError> {
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let n = tokens.len();
+        // Build a batch with explicit positions and logits enabled everywhere.
+        let mut batch = unsafe { sys::llama_batch_init(n as i32, 0, 1) };
+        let mut seq_id_zero: i32 = 0;
+        unsafe {
+            for i in 0..n {
+                *batch.token.add(i) = tokens[i] as sys::llama_token;
+                *batch.pos.add(i) = start_pos + i as i32;
+                *batch.n_seq_id.add(i) = 1;
+                *(*batch.seq_id.add(i)).add(0) = seq_id_zero;
+                *batch.logits.add(i) = 1; // request logits at every position
+            }
+            // keep seq_id_zero alive for the duration of the call
+            let _ = &mut seq_id_zero;
+            batch.n_tokens = n as i32;
+
+            // `llama_decode` takes the batch by value; pass a clone (shares the
+            // same allocations) so we retain `batch` for `llama_batch_free`.
+            let rc = sys::llama_decode(self.ctx_ptr, batch.clone());
+            if rc != 0 {
+                sys::llama_batch_free(batch);
+                return Err(MullamaError::GenerationError(format!(
+                    "Batched verification decode failed with code: {}",
+                    rc
+                )));
+            }
+
+            let n_vocab = self.model.vocab_size() as usize;
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                let logits_ptr = sys::llama_get_logits_ith(self.ctx_ptr, i as i32);
+                if logits_ptr.is_null() {
+                    sys::llama_batch_free(batch);
+                    return Err(MullamaError::GenerationError(format!(
+                        "Null logits at batch position {}",
+                        i
+                    )));
+                }
+                let logits = std::slice::from_raw_parts(logits_ptr, n_vocab);
+                let mut best = 0usize;
+                let mut best_v = f32::NEG_INFINITY;
+                for (tok, &v) in logits.iter().enumerate() {
+                    if v > best_v {
+                        best_v = v;
+                        best = tok;
+                    }
+                }
+                out.push(best as TokenId);
+            }
+            sys::llama_batch_free(batch);
+            Ok(out)
+        }
+    }
+
     /// Generate text from prompt tokens using default sampling parameters
     ///
     /// This is the main generation method that:
