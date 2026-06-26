@@ -1,5 +1,10 @@
 # Mullama Performance Tuning Guide
 
+This guide covers **configuration knobs** (flash attention, KV-cache dtype,
+threads, batch size, …). For the **algorithmic** agent-loop wins — cross-turn
+KV reuse, durable restore, speculative decoding, INT4 quantization — and their
+measured benchmarks, see [`AGENTIC_PERFORMANCE.md`](AGENTIC_PERFORMANCE.md).
+
 ## Flash Attention
 
 Flash attention reduces memory usage and improves throughput for long contexts.
