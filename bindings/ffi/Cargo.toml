@@ -1,6 +1,6 @@
 [package]
 name = "mullama-ffi"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "C ABI FFI layer for Mullama - enables bindings for Node.js, Python, PHP, Go"
 license = "MIT OR Apache-2.0"

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0] - 2026-06-26
+
+### Added
+
+#### Agentic inference — the cache *is* the conversation
+- **Cross-turn KV reuse**: a named `session` pins a context-pool slot and keeps its KV cache alive across turns. Each turn matches the new prompt's longest common prefix against the cached tokens, drops only the divergent tail, and decodes just the new suffix — turning per-turn prefill from `O(history)` into `O(delta)`. Numerically identical to a full decode (greedy parity preserved). Measured up to **27–28× less prefill** by turn 11 of a 12-turn agent loop.
+- **Sliding-window pruning**: `session_keep_turns=N` trims everything older than the last N user turns before rendering, bounding prompt + pinned KV so long sessions can't overflow `n_ctx` (which otherwise crashes the decode).
+- **Durable content-addressed KV store**: a sled-backed CAS (`~/.mullama/kv-cas/`) persists each session's token sequence + per-sequence KV blob, so a daemon restart restores instead of re-prefilling the whole history. Gated by a compatibility digest (model + KV-layout params). Restore keeps the delta-prefill win across restarts; restored output is token-identical.
+- **Multi-session scheduling**: sessions pin to pool slots by affinity with durable-safe LRU eviction (an evicted session's KV is persisted, so it restores rather than re-prefilling). Concurrent requests to different sessions decode in parallel across slots.
+- **Background hydrator with hydration modes**: pre-warms dormant durable sessions into free slots so their next request is a hot in-memory hit. `--hydration off|idle|active`; default is platform-aware — `active` (parallel-fill, pre-warm during live decodes) on macOS / Apple Silicon where unified memory has the bandwidth headroom, `idle` on x86. `active` mode keeps one slot free as headroom for live traffic.
+- **Agent file-access prefetcher**: predicts the files an agent will read next (import-following + directory locality, parsed from conversation content) and warms the OS page cache during idle windows.
+
+#### Constrained decoding
+- **Grammar in the streaming path**: structured-output grammars (`response_format`) now apply to streaming responses identically to non-streaming.
+- **Tool-call constrained decoding**: `tools` + `tool_choice` (`required` / specific function) synthesize a GBNF grammar that forces a valid JSON tool call with the name constrained to the offered tools. Fixes two latent grammar-engine crashes (sampler ordering and a double-`accept` that aborted the grammar / double-counted penalties).
+
+#### Speculative decoding & quantization
+- **Prompt-lookup speculative decoding**: greedy-exact, single-model n-gram speculation — propose next tokens by matching the suffix against history, verify in one batched target pass (`Context::decode_batch_argmax`). Output is token-for-token identical to greedy. Measured **72.6% acceptance / ~6.9 tokens-per-forward-pass / up to 6.8×** on repetitive/structured output (break-even on prose). See `examples/speculative_lookup.rs`.
+- **INT4 group quantization + Hadamard rotation kernel**: a self-contained 4-bit group-quantization runtime kernel (6.4× vs f32) with an optional QuaRot-style rotation. See `examples/int4_rotation_demo.rs`. (Standalone kernel — not yet wired into the llama.cpp graph.)
+
+#### Benchmarks & docs
+- `docs/AGENTIC_PERFORMANCE.md`: measured per-feature performance map with reproduction commands and honest caveats.
+- `bench/run_agentloop.sh`, `bench/concurrent_sessions.py`: reproduction harnesses for the KV-reuse and concurrent-throughput benchmarks.
+
 ## [0.3.1] - 2026-05-20
 
 ### Fixed
