@@ -23,7 +23,9 @@ pub use builder::DaemonBuilder;
 pub(crate) use kvstore::KvStore;
 pub(crate) use prefetch::PrefetchObserver;
 pub(crate) use session::SessionStore;
-pub use config::{DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig, ResourceConfig};
+pub use config::{
+    DaemonConfig, EvictionPolicy, HttpConfig, HydrationMode, ModelDefaultsConfig, ResourceConfig,
+};
 pub(crate) use prompt::resolve_chat_stop_sequences;
 
 use super::models::ModelManager;

@@ -54,6 +54,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             rope_freq_scale,
             split_mode,
             defrag_thold,
+            hydration,
         } => {
             if tls_cert.is_some() || tls_key.is_some() {
                 eprintln!("Note: TLS is not yet supported natively. Use a reverse proxy (nginx, caddy) for HTTPS.");
@@ -85,6 +86,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 rope_freq_scale,
                 split_mode,
                 defrag_thold,
+                hydration,
             )
             .await?;
         }

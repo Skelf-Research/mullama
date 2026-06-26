@@ -36,6 +36,7 @@ pub(crate) async fn run_server(
     rope_freq_scale: Option<f32>,
     split_mode: Option<String>,
     defrag_thold: Option<f32>,
+    hydration: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use mullama::daemon::registry::{resolve_model_name, ResolvedModel};
     use mullama::daemon::OllamaClient;
@@ -233,6 +234,28 @@ pub(crate) async fn run_server(
     daemon.config.model_defaults.rope_freq_scale = rope_freq_scale;
     daemon.config.model_defaults.defrag_thold = defrag_thold;
     daemon.config.model_defaults.split_mode = split_mode.clone();
+
+    // Session pre-warm (hydration) mode. Defaults are platform-aware (active on
+    // macOS / Apple Silicon, idle elsewhere); the --hydration flag overrides.
+    if let Some(ref h) = hydration {
+        use mullama::daemon::HydrationMode;
+        let mode = match h.to_ascii_lowercase().as_str() {
+            "off" | "none" => Some(HydrationMode::Off),
+            "idle" => Some(HydrationMode::Idle),
+            "active" | "parallel" => Some(HydrationMode::Active),
+            other => {
+                eprintln!(
+                    "Warning: unknown --hydration '{}' (expected off|idle|active); using default.",
+                    other
+                );
+                None
+            }
+        };
+        if let Some(mode) = mode {
+            daemon.config.resources.hydration_mode = mode;
+        }
+    }
+    println!("  Hydration:  {:?}", daemon.config.resources.hydration_mode);
 
     for model_config in &mut initial_models {
         if flash_attn {

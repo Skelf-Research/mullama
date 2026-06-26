@@ -123,6 +123,46 @@ pub struct ResourceConfig {
     pub eviction_policy: EvictionPolicy,
     /// Auto-unload models idle for this many seconds
     pub idle_unload_secs: Option<u64>,
+    /// When the background session hydrator pre-warms durable sessions into
+    /// free context-pool slots. See [`HydrationMode`].
+    pub hydration_mode: HydrationMode,
+}
+
+/// Controls when the background hydrator pre-warms durable-but-not-live
+/// sessions into free context-pool slots.
+///
+/// Pre-warming reads a session's persisted KV (`load_state_seq`) into a free
+/// slot so its *next* request is a hot in-memory hit instead of a cold restore.
+/// The question is whether to do it only when the daemon is fully idle, or also
+/// while other slots are actively decoding ("active-window" / parallel fill).
+///
+/// Parallel fill competes for memory bandwidth with the in-flight decode. On a
+/// bandwidth-constrained box (typical x86 desktop, ~50 GB/s DDR) that slows the
+/// active request, so the default there is [`HydrationMode::Idle`]. On Apple
+/// Silicon — unified memory at ~100–400 GB/s plus a Metal GPU for the matmuls —
+/// there is ample headroom, so the macOS default is [`HydrationMode::Active`]:
+/// a waiting session's prefill overlaps another session's decode for free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HydrationMode {
+    /// Never pre-warm; sessions restore lazily on their next request.
+    Off,
+    /// Pre-warm only when the daemon has no active requests (safe everywhere).
+    Idle,
+    /// Pre-warm whenever a free slot exists, even during active decodes
+    /// (parallel fill). Best on high-bandwidth hardware (Apple Silicon).
+    Active,
+}
+
+impl HydrationMode {
+    /// Platform-aware default: `Active` on macOS / Apple Silicon (unified
+    /// high-bandwidth memory makes parallel fill free), `Idle` elsewhere.
+    pub fn platform_default() -> Self {
+        if cfg!(target_os = "macos") {
+            HydrationMode::Active
+        } else {
+            HydrationMode::Idle
+        }
+    }
 }
 
 impl Default for ResourceConfig {
@@ -135,6 +175,7 @@ impl Default for ResourceConfig {
             max_memory_bytes: None,
             eviction_policy: EvictionPolicy::default(),
             idle_unload_secs: None,
+            hydration_mode: HydrationMode::platform_default(),
         }
     }
 }
@@ -166,5 +207,33 @@ impl Default for DaemonConfig {
             tls_cert_path: None,
             tls_key_path: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_default_is_active_on_macos_idle_elsewhere() {
+        let m = HydrationMode::platform_default();
+        if cfg!(target_os = "macos") {
+            assert_eq!(m, HydrationMode::Active);
+        } else {
+            assert_eq!(m, HydrationMode::Idle);
+        }
+    }
+
+    #[test]
+    fn resource_config_default_uses_platform_hydration() {
+        let r = ResourceConfig::default();
+        assert_eq!(r.hydration_mode, HydrationMode::platform_default());
+    }
+
+    #[test]
+    fn hydration_modes_are_distinct() {
+        assert_ne!(HydrationMode::Off, HydrationMode::Idle);
+        assert_ne!(HydrationMode::Idle, HydrationMode::Active);
+        assert_ne!(HydrationMode::Off, HydrationMode::Active);
     }
 }

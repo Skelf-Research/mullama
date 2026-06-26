@@ -98,6 +98,11 @@ pub(crate) enum Commands {
         split_mode: Option<String>,
         #[arg(long)]
         defrag_thold: Option<f32>,
+        /// Session pre-warm mode: `off`, `idle` (only when no requests are in
+        /// flight), or `active` (parallel-fill — pre-warm during live decodes;
+        /// best on Apple Silicon). Defaults to `active` on macOS, `idle` else.
+        #[arg(long)]
+        hydration: Option<String>,
     },
     #[command(alias = "tui")]
     Chat {

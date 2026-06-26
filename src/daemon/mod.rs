@@ -76,8 +76,8 @@ pub use models::{
 
 // Server
 pub use server::{
-    Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy, HttpConfig, ModelDefaultsConfig,
-    ResourceConfig,
+    Daemon, DaemonBuilder, DaemonConfig, EvictionPolicy, HttpConfig, HydrationMode,
+    ModelDefaultsConfig, ResourceConfig,
 };
 
 // Persistent store

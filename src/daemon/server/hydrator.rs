@@ -1,45 +1,66 @@
-//! Idle-window KV hydration: pre-warm durable sessions into free slots.
+//! Background KV hydration: pre-warm durable sessions into free slots.
 //!
 //! Agent workloads are bursty: a session fires several turns, then goes idle
-//! while the user thinks (or another session runs). During that idle window
-//! the daemon has free context slots and idle CPU. This module uses that idle
-//! time to restore — from the durable [`KvStore`] — sessions whose KV isn't
-//! currently live in memory, so their *next* request is a hot in-memory hit
-//! instead of a cold restore + delta prefill.
+//! while the user thinks (or another session runs). During that window the
+//! daemon often has free context slots. This module uses them to restore — from
+//! the durable [`KvStore`] — sessions whose KV isn't currently live in memory,
+//! so their *next* request is a hot in-memory hit instead of a cold restore +
+//! delta prefill.
 //!
-//! Hydration is purely opportunistic:
-//! - only runs when the daemon has no active requests (`active_requests == 0`),
+//! ## Idle vs active (parallel) fill
+//!
+//! [`HydrationMode`] controls *when* this runs:
+//! - **Idle**: only when the daemon has no active requests. Safe everywhere; it
+//!   never competes with a live decode for memory bandwidth.
+//! - **Active**: whenever a free slot exists, *including while other slots are
+//!   decoding* — "parallel fill". This overlaps a waiting session's prefill
+//!   with another session's in-flight decode. It costs memory bandwidth, so it
+//!   only pays off on high-bandwidth hardware (Apple Silicon's unified memory +
+//!   Metal GPU); it's the macOS default. To protect incoming live traffic, in
+//!   Active mode we leave one slot free as headroom when the pool has >1 slot.
+//! - **Off**: never pre-warm.
+//!
+//! Regardless of mode, hydration is correctness-safe:
 //! - only takes a *free* slot (never evicts a live session),
 //! - only commits the session as live after `load_state_seq` succeeds (a failed
 //!   restore releases the reservation — never a stale "hot hit" that would
 //!   decode a suffix against a missing prefix KV),
 //! - skips a session if a request served it in the meantime.
 //!
-//! A failed or racy hydration just wastes some CPU; it can never corrupt
+//! A failed or racy hydration just wastes some bandwidth; it can never corrupt
 //! output, because a session is only marked live once its KV is genuinely
 //! populated in its pinned slot.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use super::config::HydrationMode;
 use super::Daemon;
 
-/// How often the background hydrator wakes to look for idle pre-warm work.
+/// How often the background hydrator wakes to look for pre-warm work.
 const HYDRATE_INTERVAL: Duration = Duration::from_secs(2);
 
 impl Daemon {
-    /// Restore every durable-but-not-live session into a free slot, opportunistically.
-    /// Returns the number of sessions hydrated. Safe to call directly (used by tests and the
-    /// background loop). Only does work when the daemon is idle; otherwise returns 0.
+    /// Pre-warm durable-but-not-live sessions into free slots, honoring the
+    /// configured [`HydrationMode`]. Returns the number of sessions hydrated.
+    /// Safe to call directly (used by tests and the background loop).
     pub async fn hydrate_idle_sessions(&self) -> usize {
-        // Don't compete with real work.
-        if self.active_requests.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        let mode = self.config.resources.hydration_mode;
+        if mode == HydrationMode::Off {
             return 0;
         }
+        // Idle mode: only run when the daemon is fully quiescent.
+        if mode == HydrationMode::Idle && self.active_requests.load(Ordering::SeqCst) > 0 {
+            return 0;
+        }
+
         let candidates = self.sessions.idle_durable_sessions();
         let mut hydrated = 0;
         for (id, alias, digest) in candidates {
-            // Re-check idleness per session: a burst may have arrived mid-loop.
-            if self.active_requests.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            // Idle mode: bail the moment real work arrives mid-loop. Active mode
+            // keeps going — it's allowed to overlap live decodes — but still
+            // respects the per-slot reservation below.
+            if mode == HydrationMode::Idle && self.active_requests.load(Ordering::SeqCst) > 0 {
                 break;
             }
             let loaded = match self.models.get(Some(&alias)).await {
@@ -51,11 +72,19 @@ impl Daemon {
             if loaded.kv_compat != digest {
                 continue;
             }
+            // Active mode: keep one slot free as headroom for incoming live
+            // requests, so parallel fill never starves new traffic of a slot.
+            let pool = loaded.pool_size();
+            let reservable = if mode == HydrationMode::Active && pool > 1 {
+                pool - 1
+            } else {
+                pool
+            };
             let Some((slot, tokens, blob)) =
                 self.sessions
-                    .reserve_hydrate(&id, loaded.pool_size(), &loaded.kv_compat)
+                    .reserve_hydrate(&id, reservable, &loaded.kv_compat)
             else {
-                continue; // already live, no free slot, or blob gone
+                continue; // already live, no free slot within headroom, or blob gone
             };
             let mut ctx = loaded.acquire_context_at(slot).await;
             let ok = tokio::task::block_in_place(|| {
@@ -66,7 +95,7 @@ impl Daemon {
             if ok {
                 if self.sessions.commit_hydrate(&id, &loaded.alias, slot, tokens) {
                     hydrated += 1;
-                    tracing::info!(session = %id, slot, "idle-hydrated session into slot");
+                    tracing::info!(session = %id, slot, mode = ?mode, "hydrated session into slot");
                 }
             } else {
                 self.sessions.abort_hydrate(slot, &id);
@@ -83,12 +112,18 @@ impl Daemon {
     /// touched-file history; [`super::prefetch::predict_fs`] ranks the next
     /// reads via import-following and directory locality.
     ///
-    /// Only runs when idle. Pre-reading the predicted files warms the OS page
-    /// cache so the agent's next `read` (and the prompt that embeds it) hits
-    /// warm pages instead of cold disk — a safe, correctness-neutral win that
-    /// never touches KV or output.
+    /// Pre-reading the predicted files warms the OS page cache so the agent's
+    /// next `read` (and the prompt that embeds it) hits warm pages instead of
+    /// cold disk — a safe, correctness-neutral win that never touches KV or
+    /// output. Disk reads barely touch memory bandwidth, so in `Active` mode
+    /// this runs even alongside live decodes; in `Idle` mode it waits for
+    /// quiescence; in `Off` mode it's skipped.
     pub async fn prefetch_predicted_files(&self, per_session_limit: usize) -> Vec<(String, Vec<std::path::PathBuf>)> {
-        if self.active_requests.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        let mode = self.config.resources.hydration_mode;
+        if mode == HydrationMode::Off {
+            return Vec::new();
+        }
+        if mode == HydrationMode::Idle && self.active_requests.load(Ordering::SeqCst) > 0 {
             return Vec::new();
         }
         let mut out = Vec::new();
@@ -124,22 +159,20 @@ impl Daemon {
         out
     }
 
-    /// Run the idle hydrator forever, waking every [`HYDRATE_INTERVAL`]. Stops
-    /// when the daemon is shutting down. Spawn this on a tokio task at serve
-    /// time; it's a no-op whenever the durable store is disabled or the daemon
-    /// is busy.
+    /// Run the background hydrator forever, waking every [`HYDRATE_INTERVAL`].
+    /// Stops when the daemon is shutting down. Spawn this on a tokio task at
+    /// serve time; it's a no-op when the durable store is disabled, when the
+    /// [`HydrationMode`] is `Off`, or (in `Idle` mode) while the daemon is busy.
     pub async fn run_idle_hydrator(self: std::sync::Arc<Self>) {
-        while !self
-            .shutdown
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        // Nothing to do for the lifetime of the process if hydration is off.
+        if self.config.resources.hydration_mode == HydrationMode::Off {
+            return;
+        }
+        while !self.shutdown.load(Ordering::SeqCst) {
             // Sleep first, then check — avoids a burst of work right at startup
             // competing with model loads.
             tokio::time::sleep(HYDRATE_INTERVAL).await;
-            if self
-                .shutdown
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
+            if self.shutdown.load(Ordering::SeqCst) {
                 break;
             }
             let _ = self.hydrate_idle_sessions().await;

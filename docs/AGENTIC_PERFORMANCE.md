@@ -126,15 +126,43 @@ each turn clobbers another session's KV. mullama pins sessions to slots by
 **affinity** with **durable-safe LRU eviction**: an evicted session's KV is
 persisted, so it just restores on its next request rather than re-prefilling.
 
-A background **idle hydrator** pre-warms durable-but-not-live sessions into free
-slots during idle windows (no active requests), moving the restore cost *off*
-the request path — so the next turn is a hot in-memory hit. Verified: after a
-restart the hydrator pre-warms a session (logged `idle-hydrated session into
-slot`) and the subsequent request is served live, output identical to stateless.
+A background **hydrator** pre-warms durable-but-not-live sessions into free
+slots, moving the restore cost *off* the request path — so the next turn is a
+hot in-memory hit. Verified: after a restart the hydrator pre-warms a session
+(logged `hydrated session into slot`) and the subsequent request is served live,
+output identical to stateless.
 
-This is a **latency-shaping** win (cost moved to idle time), not a throughput
-number; correctness is guaranteed by a reserve/commit/abort protocol that only
-marks a session live after its KV is genuinely populated.
+This is a **latency-shaping** win (cost moved off the request path), not a
+throughput number; correctness is guaranteed by a reserve/commit/abort protocol
+that only marks a session live after its KV is genuinely populated.
+
+### Hydration modes — `--hydration off|idle|active`
+
+*When* the hydrator runs is configurable, because pre-warming costs memory
+bandwidth and whether that's free depends on the hardware:
+
+| mode | runs when | best for |
+|---|---|---|
+| `off` | never (lazy restore on next request) | minimal background work |
+| `idle` | only when no requests are in flight | bandwidth-bound CPU (x86 desktop) |
+| `active` | whenever a free slot exists, *including during live decodes* (**parallel fill**) | high-bandwidth hardware (Apple Silicon) |
+
+**Default is platform-aware:** `active` on macOS / Apple Silicon, `idle`
+elsewhere. The reason is the concurrent-serving ceiling below: on an x86 desktop
+(~50 GB/s DDR) parallel fill would steal bandwidth from the live decode, so we
+wait for idle. Apple Silicon's unified memory (~100–400 GB/s) plus a Metal GPU
+for the matmuls has ample headroom, so a *waiting* session's prefill can overlap
+another session's in-flight decode essentially for free — the dormant session is
+hot the instant its turn arrives, with no cold-restore stall on the request
+path. In `active` mode the hydrator still leaves **one slot free** as headroom
+so incoming live traffic is never starved of a slot.
+
+Verified on both modes: with `--hydration active` a dormant session is
+pre-warmed *while another session is mid-decode* (log shows `mode=Active` during
+the active window); with `--hydration idle` the same session is pre-warmed only
+once the daemon goes quiescent (`mode=Idle`). The reserve/commit/abort protocol
+keeps it correctness-safe in both — a failed or racy parallel fill can never
+mark a session live without its KV genuinely populated.
 
 ### Concurrent multi-session throughput — what the pool actually buys
 
@@ -158,13 +186,14 @@ concurrent decodes already saturate the memory subsystem. This is a hardware
 ceiling, not a software lock. (Confirmed: with pool size 1, scaling is 1.1× —
 sessions correctly serialize on the single slot.)
 
-**Implication for "parallel idle-fill".** The original idea of running one
-session's prefill *during* another's decode would only help if there were spare
-memory bandwidth to fill — and there isn't past ~2 concurrent decodes on this
-class of machine. So overlapping work inside the active window is **not worth
-building** here; the idle hydrator (which runs only when fully idle) already
-captures the available headroom. On a GPU or a bandwidth-rich server the ceiling
-would be higher and the calculus could change.
+**Implication for "parallel idle-fill".** Running one session's prefill *during*
+another's decode only helps if there's spare memory bandwidth — and on this x86
+box there isn't past ~2 concurrent decodes. So the **default on CPU is
+`--hydration idle`** (overlap disabled). But the machinery for it (`active`
+mode) is built and is the **default on Apple Silicon**, whose unified memory has
+4–8× the bandwidth: there the ceiling is far higher, so overlapping a dormant
+session's prefill with a live decode is genuinely free. See the hydration-modes
+section above. This is the one place the hardware flips the answer.
 
 **Reproduce:**
 ```bash
@@ -284,8 +313,10 @@ For exact Ollama-matched numerics set
 - **Rotation can lose** outside the ~1-outlier-per-group regime; plain INT4 is
   often better.
 - **Concurrent serving plateaus at ~1.5×** (memory-bandwidth bound on CPU), so
-  in-active-window prefill overlap ("parallel idle-fill") is not worth building
-  on this hardware class — the idle hydrator already captures the headroom.
+  active-window prefill overlap defaults **off** on x86 (`--hydration idle`) and
+  **on** for Apple Silicon (`--hydration active`), where unified memory has the
+  bandwidth headroom to make it free. The x86 plateau numbers above are not a
+  Mac ARM prediction.
 - **INT4 + rotation is a standalone kernel**, not yet in the inference graph.
 - Greedy parity vs Ollama is exact only with the matched backend; long
   completions diverge mid-stream on a stock backend (a known build-numerics
