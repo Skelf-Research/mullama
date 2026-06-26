@@ -3,9 +3,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The llama.cpp version to use when downloading
-const LLAMA_CPP_VERSION: &str = "b7542";
-const LLAMA_CPP_REPO: &str = "https://github.com/ggml-org/llama.cpp";
+/// The llama.cpp source to use when the submodule isn't checked out (e.g.
+/// `cargo install` from crates.io, or a clone without `--recurse-submodules`).
+///
+/// This MUST be the cognisoc fork at the exact commit the `llama.cpp` submodule
+/// pins, NOT stock upstream `ggml-org/llama.cpp`. The fork carries the
+/// "Align native core with Ollama 0.24.0" patch that mullama's Ollama parity
+/// depends on; downloading upstream instead would silently reintroduce the
+/// parity gap. Keep this commit in sync with `.gitmodules` + the submodule when
+/// bumping llama.cpp. A pinned commit SHA (not a branch) makes the build
+/// reproducible — a branch can move out from under a published release.
+const LLAMA_CPP_VERSION: &str = "55bb64ad5fbfe8e29b158e209a96ae0238f4df41";
+const LLAMA_CPP_REPO: &str = "https://github.com/cognisoc/llama.cpp";
 
 fn main() {
     // Tell cargo to invalidate the built crate whenever wrapper files change
@@ -164,10 +173,10 @@ fn download_llama_cpp(target_path: &PathBuf) {
         fs::remove_dir_all(target_path).ok();
     }
 
-    let archive_url = format!(
-        "{}/archive/refs/tags/{}.tar.gz",
-        LLAMA_CPP_REPO, LLAMA_CPP_VERSION
-    );
+    // GitHub serves both commit SHAs and tags/branches under `/archive/<ref>.tar.gz`
+    // (the `refs/tags/` form is only needed to disambiguate tags from branches of
+    // the same name). A 40-char SHA is unambiguous, so the short form is correct.
+    let archive_url = format!("{}/archive/{}.tar.gz", LLAMA_CPP_REPO, LLAMA_CPP_VERSION);
 
     let archive_path = target_path.parent().unwrap().join("llama-cpp.tar.gz");
 
