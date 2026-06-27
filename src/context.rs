@@ -171,7 +171,13 @@ impl Default for ContextParams {
             embeddings: false,
             offload_kqv: true,
             no_perf: false,
-            op_offload: false,
+            // Match llama.cpp's own `llama_context_default_params()` default of
+            // `true`. On Metal/CUDA this lets the scheduler push small host
+            // tensor ops onto the device — on Apple Silicon's unified memory
+            // the "copy" is free, so launch overhead is the only cost, and the
+            // win is the avoided CPU<->GPU sync. The previous `false` here was
+            // a regression from upstream that quietly forced extra host work.
+            op_offload: true,
             swa_full: true,
             kv_unified: false,
             type_k: KvCacheType::default(),

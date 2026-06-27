@@ -128,6 +128,8 @@ pub(super) async fn api_use_default(
         rope_freq_base: daemon.config.model_defaults.rope_freq_base,
         rope_freq_scale: daemon.config.model_defaults.rope_freq_scale,
         n_batch: daemon.config.model_defaults.n_batch,
+        n_ubatch: daemon.config.model_defaults.n_ubatch,
+        n_seq_max: daemon.config.model_defaults.n_seq_max,
         defrag_thold: daemon.config.model_defaults.defrag_thold,
         split_mode: daemon.config.model_defaults.split_mode.clone(),
     };

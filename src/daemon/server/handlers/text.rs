@@ -35,8 +35,41 @@ impl Daemon {
         );
         let all_stops = resolve_chat_stop_sequences(&loaded, params.stop);
 
-        match self
-            .generate_text_streaming(
+        // Phase-C streaming route: dispatch through the batched scheduler
+        // when present (concurrent streams share one decode call). Falls
+        // back to the legacy pool path on miss — same surface, identical
+        // mpsc<StreamChunk> shape.
+        // Streaming sessions get prefix-reuse too: extract session_id from
+        // params and pass it to the batched scheduler so the slot's cached
+        // tokens are matched. Durable restore via the batched path is also
+        // wired: we look up the session in the session store and pass any
+        // saved KV blob through so cold-restart streams can hydrate.
+        let session_id = params.session.clone().filter(|s| !s.is_empty());
+        let kv_reuse = session_id.as_ref().map(|id| {
+            let lookup = self
+                .sessions
+                .get(id, &loaded.alias, loaded.pool_size(), &loaded.kv_compat);
+            crate::daemon::server::generation::KvReuse {
+                slot: lookup.slot,
+                cached_tokens: lookup.cached_tokens,
+                restore: lookup.restore,
+            }
+        });
+        let batched_available = loaded.batcher.read().await.is_some();
+        let stream_result = if batched_available {
+            self.generate_text_streaming_batched(
+                loaded,
+                prompt,
+                params.max_tokens,
+                sampler_params,
+                all_stops,
+                grammar,
+                session_id,
+                kv_reuse,
+            )
+            .await
+        } else {
+            self.generate_text_streaming(
                 loaded,
                 prompt,
                 params.max_tokens,
@@ -45,7 +78,8 @@ impl Daemon {
                 grammar,
             )
             .await
-        {
+        };
+        match stream_result {
             Ok((rx, prompt_tokens, request_id)) => Ok((rx, prompt_tokens, request_id, model_alias)),
             Err(e) => Err(Response::error(ErrorCode::GenerationFailed, e.to_string())),
         }
@@ -117,8 +151,26 @@ impl Daemon {
             params.tools.as_deref(),
             params.tool_choice.as_ref(),
         );
-        let result = self
-            .generate_text(
+        // Phase-C route: always use the batched scheduler when available.
+        // Both session affinity (cached prefix) AND durable session
+        // restore (load_state_seq from saved blob) are now handled
+        // batched-side. Falls back to the legacy pool path only when no
+        // batcher is configured.
+        let batched_available = loaded.batcher.read().await.is_some();
+        let result = if batched_available {
+            self.generate_text_batched(
+                &loaded,
+                &prompt,
+                params.max_tokens,
+                sampler_params,
+                &all_stops,
+                grammar,
+                session_id.clone(),
+                kv_reuse,
+            )
+            .await
+        } else {
+            self.generate_text(
                 &loaded,
                 &prompt,
                 params.max_tokens,
@@ -127,7 +179,8 @@ impl Daemon {
                 grammar,
                 kv_reuse,
             )
-            .await;
+            .await
+        };
 
         self.active_requests.fetch_sub(1, Ordering::Relaxed);
 

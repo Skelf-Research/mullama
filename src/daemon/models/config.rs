@@ -1,5 +1,21 @@
 /// Default number of contexts in the pool per model.
-/// This allows N concurrent requests to the same model without blocking.
+///
+/// On macOS we default to **1**. Apple's Metal driver has a single command
+/// queue per GPU device, and llama.cpp's GGML CPU threadpool over-subscribes
+/// the cores when N contexts call `llama_decode` concurrently (`N * n_threads`
+/// workers fighting for ~num_cpu cores). The combined effect is pathological:
+/// in the M1 bench, `--context-pool-size 2` with 4 in-flight requests took
+/// 811 s vs 13.6 s with `--context-pool-size 1` (clean serialization at the
+/// slot's write lock). Until single-context multi-seq batched decode lands
+/// (one `llama_decode` interleaving `n_seq_max>1` sessions, matching ollama's
+/// design), pool=1 is the only stable concurrency story on Metal.
+///
+/// Elsewhere we keep the historical default of 4. On CUDA/ROCm each context
+/// gets its own CUDA stream and the GPU schedules them in parallel, so the
+/// queue-serialization pathology doesn't apply.
+#[cfg(target_os = "macos")]
+pub const DEFAULT_CONTEXT_POOL_SIZE: usize = 1;
+#[cfg(not(target_os = "macos"))]
 pub const DEFAULT_CONTEXT_POOL_SIZE: usize = 4;
 
 pub(super) fn detect_quantization_from_path(path: &str) -> Option<String> {
@@ -63,6 +79,11 @@ pub struct ModelLoadConfig {
     pub rope_freq_scale: Option<f32>,
     /// Batch size for prompt processing
     pub n_batch: Option<u32>,
+    /// Physical micro-batch size on Metal/CUDA. Controls kernel-dispatch
+    /// granularity; the right value is hardware-specific.
+    pub n_ubatch: Option<u32>,
+    /// Max concurrent sequences per context (Phase-C prerequisite).
+    pub n_seq_max: Option<u32>,
     /// KV cache defragmentation threshold
     pub defrag_thold: Option<f32>,
     /// Tensor split mode for multi-GPU
@@ -88,6 +109,8 @@ impl ModelLoadConfig {
             rope_freq_base: None,
             rope_freq_scale: None,
             n_batch: None,
+            n_ubatch: None,
+            n_seq_max: None,
             defrag_thold: None,
             split_mode: None,
         }

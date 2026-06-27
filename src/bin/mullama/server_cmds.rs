@@ -32,6 +32,8 @@ pub(crate) async fn run_server(
     no_mmap: bool,
     mlock: bool,
     batch_size: Option<u32>,
+    ubatch_size: Option<u32>,
+    n_seq_max: Option<u32>,
     rope_freq_base: Option<f32>,
     rope_freq_scale: Option<f32>,
     split_mode: Option<String>,
@@ -92,9 +94,44 @@ pub(crate) async fn run_server(
             println!("  HTTP Auth:  disabled (localhost compatibility mode)");
         }
     }
-    println!("  GPU Layers: {}", gpu_layers);
+    // Show the resolved value plus the platform hint when the daemon picked
+    // the macOS default (-1 = full Metal offload). Surfaces the difference
+    // between "user asked for 0" and "platform default put us on CPU".
+    if gpu_layers == mullama::default_gpu_layers() && gpu_layers != 0 {
+        println!(
+            "  GPU Layers: {} (platform default; override with --gpu-layers)",
+            gpu_layers
+        );
+    } else {
+        println!("  GPU Layers: {}", gpu_layers);
+    }
     println!("  Context:    {}", context_size);
     println!("  Ctx Pool:   {}", context_pool_size);
+    {
+        let batched_env = std::env::var("MULLAMA_BATCHED").ok();
+        let on = match batched_env.as_deref() {
+            Some("1") => true,
+            Some("0") => false,
+            _ => cfg!(target_os = "macos"),
+        };
+        if on {
+            let n_slots = std::env::var("MULLAMA_BATCHED_SLOTS")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(if cfg!(target_os = "macos") { 16 } else { 8 });
+            println!(
+                "  Batcher:    Phase-C continuous batching ({} slots){}",
+                n_slots,
+                match batched_env.as_deref() {
+                    Some("1") => " [MULLAMA_BATCHED=1]",
+                    None => " [platform default]",
+                    _ => "",
+                }
+            );
+        } else {
+            println!("  Batcher:    off [MULLAMA_BATCHED=0]");
+        }
+    }
     println!("  Max Tokens: {}", max_tokens_limit);
     println!("  Body Limit: {} MB", max_request_body_mb);
     if let Some(ref mmp) = mmproj {
@@ -230,6 +267,8 @@ pub(crate) async fn run_server(
     daemon.config.model_defaults.cache_type_k = cache_type_k.clone();
     daemon.config.model_defaults.cache_type_v = cache_type_v.clone();
     daemon.config.model_defaults.n_batch = batch_size;
+    daemon.config.model_defaults.n_ubatch = ubatch_size;
+    daemon.config.model_defaults.n_seq_max = n_seq_max;
     daemon.config.model_defaults.rope_freq_base = rope_freq_base;
     daemon.config.model_defaults.rope_freq_scale = rope_freq_scale;
     daemon.config.model_defaults.defrag_thold = defrag_thold;
@@ -275,6 +314,12 @@ pub(crate) async fn run_server(
         }
         if let Some(batch) = batch_size {
             model_config.n_batch = Some(batch);
+        }
+        if let Some(ubatch) = ubatch_size {
+            model_config.n_ubatch = Some(ubatch);
+        }
+        if let Some(seq_max) = n_seq_max {
+            model_config.n_seq_max = Some(seq_max);
         }
         if let Some(base) = rope_freq_base {
             model_config.rope_freq_base = Some(base);

@@ -206,6 +206,163 @@ impl Daemon {
         ))
     }
 
+    /// Phase-C batched-decode path. Submits the request to the model's
+    /// `BatchScheduler` and awaits the response. Returns the same shape
+    /// `generate_text` does (text, prompt_tokens, completion_tokens,
+    /// timings, no kv_reuse, no seq-state blob), so callers can A/B switch
+    /// without changing their unpacking.
+    ///
+    /// Tracer-bullet limitations (lifted in follow-ups):
+    /// - no streaming (returns the full text at end)
+    /// - no session-pinned KV reuse (each request gets a fresh seq slot)
+    /// - no grammar — `grammar_gbnf` is passed through, but the scheduler
+    ///   currently builds a chain with grammar inserted at the head
+    pub async fn generate_text_batched(
+        &self,
+        loaded: &LoadedModel,
+        prompt: &str,
+        max_tokens: u32,
+        sampler_params: SamplerParams,
+        stop_sequences: &[String],
+        grammar_gbnf: Option<String>,
+        session_id: Option<String>,
+        kv_reuse: Option<super::KvReuse>,
+    ) -> Result<
+        (
+            String,
+            u32,
+            u32,
+            crate::daemon::protocol::Timings,
+            Option<Vec<TokenId>>,
+            Option<Vec<u8>>,
+        ),
+        MullamaError,
+    > {
+        let handle = {
+            let guard = loaded.batcher.read().await;
+            guard.clone().ok_or_else(|| {
+                MullamaError::OperationFailed(
+                    "batcher not available for this model — set MULLAMA_BATCHED=1".into(),
+                )
+            })?
+        };
+        let add_bos = loaded.model.add_bos_token();
+        let model_for_tokenize = handle.model.clone();
+        let prompt_owned = prompt.to_string();
+        let tokens = tokio::task::block_in_place(move || {
+            model_for_tokenize.tokenize(&prompt_owned, add_bos, true)
+        })?;
+        let stop_owned: Vec<String> = stop_sequences
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect();
+        // `submit` rebinds the reply channel; the field we set here is a
+        // placeholder that gets replaced.
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        // Convert the legacy `KvReuse` shape into the batcher's
+        // `BatchRestore`. We only need the durable blob — the cached_tokens
+        // are what the blob's KV corresponds to.
+        let restore = kv_reuse
+            .as_ref()
+            .and_then(|r| r.restore.as_ref().map(|blob| (blob.clone(), &r.cached_tokens)))
+            .map(|(blob, cached)| crate::daemon::server::BatchRestore {
+                blob,
+                tokens: cached.clone(),
+            });
+        let task = crate::daemon::server::BatchTask {
+            prompt_tokens: tokens,
+            max_tokens,
+            sampler_params,
+            stop_sequences: stop_owned,
+            grammar_gbnf,
+            reply: crate::daemon::server::ReplyMode::Buffered { tx },
+            session_id,
+            restore,
+            cancel: None,
+        };
+        let outcome = handle.submit(task).await?;
+        self.models.add_tokens(outcome.completion_tokens as u64);
+        Ok((
+            outcome.text,
+            outcome.prompt_tokens,
+            outcome.completion_tokens,
+            outcome.timings,
+            None,
+            None,
+        ))
+    }
+
+    /// Phase-C streaming batched-decode path. Tokenizes the prompt,
+    /// submits a streaming task to the model's scheduler, and returns the
+    /// mpsc receiver of [`StreamChunk`]s plus the prompt-token count and
+    /// the OpenAI-style request id — matching the shape of
+    /// [`Self::generate_text_streaming`]. Cancellation isn't wired through
+    /// the scheduler yet; the receiver dropping is the de-facto cancel
+    /// signal because the scheduler stops emitting when its sender's
+    /// receiver is gone.
+    pub async fn generate_text_streaming_batched(
+        &self,
+        loaded: Arc<LoadedModel>,
+        prompt: String,
+        max_tokens: u32,
+        sampler_params: SamplerParams,
+        stop_sequences: Vec<String>,
+        grammar_gbnf: Option<String>,
+        session_id: Option<String>,
+        kv_reuse: Option<super::KvReuse>,
+    ) -> Result<(mpsc::Receiver<StreamChunk>, u32, String), MullamaError> {
+        let handle = {
+            let guard = loaded.batcher.read().await;
+            guard.clone().ok_or_else(|| {
+                MullamaError::OperationFailed("batcher not available".into())
+            })?
+        };
+        let add_bos = loaded.model.add_bos_token();
+        let model_for_tokenize = handle.model.clone();
+        let tokens = tokio::task::block_in_place(move || {
+            model_for_tokenize.tokenize(&prompt, add_bos, true)
+        })?;
+        let prompt_tokens = tokens.len() as u32;
+        let stop_owned: Vec<String> = stop_sequences
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        let request_id = crate::daemon::protocol::generate_completion_id();
+        let request_id_arc: std::sync::Arc<str> = std::sync::Arc::from(request_id.as_str());
+        // Register cancellation so HTTP-side request_id cancels reach the
+        // scheduler tick. Mirrors the legacy `StreamingSetup::cancel_flag`.
+        let cancel_flag = self.register_cancellation(&request_id);
+        // Convert durable restore (if present).
+        let restore = kv_reuse
+            .as_ref()
+            .and_then(|r| r.restore.as_ref().map(|blob| (blob.clone(), &r.cached_tokens)))
+            .map(|(blob, cached)| crate::daemon::server::BatchRestore {
+                blob,
+                tokens: cached.clone(),
+            });
+        // submit_streaming replaces the placeholder reply with a Streaming
+        // ReplyMode that owns the mpsc sender.
+        let (placeholder_tx, _) = tokio::sync::oneshot::channel();
+        let task = crate::daemon::server::BatchTask {
+            prompt_tokens: tokens,
+            max_tokens,
+            sampler_params,
+            stop_sequences: stop_owned,
+            grammar_gbnf,
+            reply: crate::daemon::server::ReplyMode::Buffered {
+                tx: placeholder_tx,
+            },
+            session_id,
+            restore,
+            cancel: Some(cancel_flag),
+        };
+        let rx = handle
+            .submit_streaming(task, request_id_arc, 0)
+            .await?;
+        Ok((rx, prompt_tokens, request_id))
+    }
+
     /// Generate text with streaming.
     ///
     /// `grammar_gbnf`, when `Some`, constrains decoding to the given GBNF — the

@@ -203,6 +203,23 @@ pub fn supports_gpu_offload() -> bool {
     unsafe { sys::llama_supports_gpu_offload() }
 }
 
+/// Platform-aware default for `n_gpu_layers`.
+///
+/// On macOS we default to full Metal offload (`-1`) — every Apple Silicon Mac
+/// has a usable Metal GPU and unified memory, so leaving weights on CPU forces
+/// CPU↔GPU traffic on every decode and drops decode tok/s by ~20%. On every
+/// other target we default to `0` so users opt into GPU explicitly via
+/// `--gpu-layers` (CUDA/ROCm builds vary widely and we don't want to surprise
+/// CPU-only deployments). `cfg!` is compile-time, so this is a `const` and is
+/// safe to use as a clap `default_value_t`.
+pub const fn default_gpu_layers() -> i32 {
+    if cfg!(target_os = "macos") {
+        -1
+    } else {
+        0
+    }
+}
+
 /// Check if mmap is supported for model loading
 pub fn supports_mmap() -> bool {
     unsafe { sys::llama_supports_mmap() }

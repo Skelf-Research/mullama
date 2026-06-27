@@ -137,11 +137,31 @@ impl Model {
         // Get default model parameters from llama.cpp
         let mut llama_params = unsafe { sys::llama_model_default_params() };
 
-        // Apply all our advanced parameters
-        llama_params.n_gpu_layers = params.n_gpu_layers;
-        // Only set main_gpu when GPU layers are actually being used
-        // This avoids "invalid value for main_gpu" errors when no GPU is available
-        if params.n_gpu_layers > 0 {
+        // Apply all our advanced parameters.
+        //
+        // Mullama uses `n_gpu_layers = -1` as the "all layers on GPU" sentinel
+        // (matches ollama / `llama-cli --n-gpu-layers -1` conventions), but
+        // `llama_model::load_tensors` reads the raw integer and computes
+        // `i_gpu_start = n_layer - n_gpu_layers`. A negative value here makes
+        // `i_gpu_start > n_layer`, so every layer falls into the "below the GPU
+        // start, send to CPU" branch — silently turning off the GPU even though
+        // Metal initialized fine. Translate negative values to llama.cpp's own
+        // sentinel (the `llama_model_default_params` value of 999, which is
+        // larger than any model's `n_layer`).
+        llama_params.n_gpu_layers = if params.n_gpu_layers < 0 {
+            999
+        } else {
+            params.n_gpu_layers
+        };
+        // Only set split_mode/main_gpu when GPU layers are actually requested
+        // (positive count or "all"). Avoids "invalid value for main_gpu" errors
+        // on CPU-only builds. Note: when we *don't* set these, we keep the
+        // C-side defaults (`LLAMA_SPLIT_MODE_LAYER`, `main_gpu = 0`), which is
+        // correct for single-GPU (incl. Apple Silicon Metal); the mullama
+        // `ModelParams::default()` `LLAMA_SPLIT_MODE_NONE` would actively clear
+        // the device list (`llama.cpp::llama_model_load_from_file_impl`
+        // L906–L908).
+        if llama_params.n_gpu_layers != 0 {
             llama_params.split_mode = params.split_mode;
             llama_params.main_gpu = params.main_gpu;
         }

@@ -1,4 +1,4 @@
-FROM /Users/dipankarsarkar/Library/Caches/mullama/models/bartowski--Qwen2.5-0.5B-Instruct-GGUF/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+FROM /Users/dipankarsarkar/Library/Caches/mullama/models/bartowski--Qwen2.5-1.5B-Instruct-GGUF/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
 TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
 {{ end }}{{ if .Prompt }}<|im_start|>user

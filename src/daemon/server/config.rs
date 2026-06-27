@@ -75,6 +75,14 @@ pub struct ModelDefaultsConfig {
     pub cache_type_v: Option<String>,
     /// Batch size for prompt processing
     pub n_batch: Option<u32>,
+    /// Physical micro-batch size (kernel dispatch granularity). On Metal this
+    /// trades dispatch overhead vs SIMD-group occupancy; tunable per workload.
+    pub n_ubatch: Option<u32>,
+    /// Max concurrent sequences per context. Phase-C scaffolding: today the
+    /// daemon serves one request per context, so a higher value mostly buys
+    /// you cheap `kv_cache_seq_cp` for branching agentic patterns. Once the
+    /// continuous-batched scheduler lands this becomes the concurrency knob.
+    pub n_seq_max: Option<u32>,
     /// RoPE frequency base
     pub rope_freq_base: Option<f32>,
     /// RoPE frequency scale
@@ -89,7 +97,7 @@ impl Default for ModelDefaultsConfig {
     fn default() -> Self {
         Self {
             context_size: 4096,
-            gpu_layers: 0,
+            gpu_layers: crate::default_gpu_layers(),
             context_pool_size: DEFAULT_CONTEXT_POOL_SIZE,
             threads_per_model: (num_cpus::get() / 2).max(1) as i32,
             flash_attn: false,
@@ -98,6 +106,8 @@ impl Default for ModelDefaultsConfig {
             cache_type_k: None,
             cache_type_v: None,
             n_batch: None,
+            n_ubatch: None,
+            n_seq_max: None,
             rope_freq_base: None,
             rope_freq_scale: None,
             defrag_thold: None,

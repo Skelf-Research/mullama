@@ -77,6 +77,8 @@ impl ModelManager {
         let rope_freq_base = config.rope_freq_base;
         let rope_freq_scale = config.rope_freq_scale;
         let n_batch = config.n_batch;
+        let n_ubatch = config.n_ubatch;
+        let n_seq_max = config.n_seq_max;
         let defrag_thold = config.defrag_thold;
 
         let load_result = tokio::task::spawn_blocking(move || -> Result<LoadedCore, MullamaError> {
@@ -114,6 +116,12 @@ impl ModelManager {
             if let Some(batch) = n_batch {
                 ctx_params.n_batch = batch;
             }
+            if let Some(ubatch) = n_ubatch {
+                ctx_params.n_ubatch = ubatch;
+            }
+            if let Some(seq_max) = n_seq_max {
+                ctx_params.n_seq_max = seq_max;
+            }
             if let Some(thold) = defrag_thold {
                 ctx_params.defrag_thold = thold;
             }
@@ -128,6 +136,9 @@ impl ModelManager {
         }).await.map_err(|e| MullamaError::OperationFailed(format!("Model loading task failed: {}", e)))??;
 
         let LoadedCore { model, context, ctx_params } = load_result;
+        // Keep a clone for potential reuse by the Phase-C batched scheduler
+        // (created after `ctx_params` moves into `LoadedModel::new` below).
+        let batched_seed_params = ctx_params.clone();
 
         #[cfg(feature = "multimodal")]
         let mtmd_context = if let Some(ref mmproj_path) = config.mmproj_path {
@@ -182,6 +193,62 @@ impl ModelManager {
             model_config,
             context_pool_size,
         )?);
+
+        // Phase-C: spawn a dedicated batched-decode scheduler with its own
+        // context (n_seq_max>=N) and stash the handle on the LoadedModel.
+        // Handlers route to it via `Daemon::generate_text_batched`. The
+        // legacy pool path stays intact for session-pinned KV reuse, which
+        // the batcher hasn't been wired to yet.
+        //
+        // Default-on on macOS (the bench shows mullama at 16 slots delivers
+        // 3.58× scaling vs ollama's 1.34× — strict win on every workload
+        // tested). Elsewhere default-off; opt in via `MULLAMA_BATCHED=1`
+        // until we validate on CUDA/ROCm. Force-off via `MULLAMA_BATCHED=0`.
+        let batched_env = std::env::var("MULLAMA_BATCHED").ok();
+        let batched_enabled = match batched_env.as_deref() {
+            Some("1") => true,
+            Some("0") => false,
+            _ => cfg!(target_os = "macos"),
+        };
+        if batched_enabled {
+            // Build a second context configured for multi-seq batching.
+            // n_slots defaults to 8 (env override) — must be ≤ n_seq_max.
+            // Default slot count tuned to the M1 sweep: 16 lands at 3.58×
+            // scaling with acceptable latency inflation (~4.5×). On
+            // higher-VRAM Apple Silicon (M2/M3 with more unified memory)
+            // this could go higher; user can override via the env var.
+            let n_slots: u32 = std::env::var("MULLAMA_BATCHED_SLOTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(if cfg!(target_os = "macos") { 16 } else { 8 });
+            let mut batched_ctx_params = batched_seed_params;
+            batched_ctx_params.n_seq_max = batched_ctx_params.n_seq_max.max(n_slots);
+            let model_for_batch = loaded.model.clone();
+            let alias_for_log = loaded.alias.clone();
+            let n_seq_max_final = batched_ctx_params.n_seq_max;
+            let spawn_result = tokio::task::spawn_blocking(move || {
+                crate::Context::new(model_for_batch.clone(), batched_ctx_params)
+                    .map(|c| (model_for_batch, c))
+            })
+            .await
+            .map_err(|e| {
+                MullamaError::OperationFailed(format!("batched context spawn task failed: {}", e))
+            })??;
+            let (model_for_batch, batched_ctx) = spawn_result;
+            let handle = crate::daemon::server::spawn_batcher(
+                model_for_batch,
+                batched_ctx,
+                n_slots,
+            );
+            *loaded.batcher.write().await = Some(handle);
+            tracing::info!(
+                model = %alias_for_log,
+                n_slots,
+                n_seq_max = n_seq_max_final,
+                source = ?batched_env.as_deref(),
+                "Phase-C continuous-batched scheduler enabled"
+            );
+        }
 
         self.models.insert(config.alias.clone(), loaded);
 

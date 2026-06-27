@@ -234,6 +234,8 @@ pub(in crate::daemon::openai) async fn api_load_model(
         rope_freq_base: request.rope_freq_base.or(md.rope_freq_base),
         rope_freq_scale: request.rope_freq_scale.or(md.rope_freq_scale),
         n_batch: request.n_batch.or(md.n_batch),
+        n_ubatch: md.n_ubatch,
+        n_seq_max: md.n_seq_max,
         defrag_thold: request.defrag_thold.or(md.defrag_thold),
         split_mode: request.split_mode.or_else(|| md.split_mode.clone()),
     };

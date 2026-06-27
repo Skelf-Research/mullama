@@ -64,7 +64,7 @@ pub(crate) enum Commands {
         max_concurrent_requests: usize,
         #[arg(long, default_value = "200")]
         max_requests_per_second: u64,
-        #[arg(short, long, default_value = "0")]
+        #[arg(short, long, default_value_t = mullama::default_gpu_layers())]
         gpu_layers: i32,
         #[arg(short, long, default_value = "4096")]
         context_size: u32,
@@ -90,6 +90,17 @@ pub(crate) enum Commands {
         mlock: bool,
         #[arg(long)]
         batch_size: Option<u32>,
+        /// Physical micro-batch size (`n_ubatch`). Kernel dispatch granularity
+        /// on Metal/CUDA; defaults to llama.cpp's 512. Tune per-device with a
+        /// bench sweep.
+        #[arg(long)]
+        ubatch_size: Option<u32>,
+        /// Max concurrent sequences per context (`n_seq_max`). Phase-C
+        /// scaffolding; today the daemon still serves one request per context,
+        /// but a higher value enables cheap `kv_cache_seq_cp` for branching
+        /// agentic patterns and is the substrate for batched concurrent decode.
+        #[arg(long)]
+        n_seq_max: Option<u32>,
         #[arg(long)]
         rope_freq_base: Option<f32>,
         #[arg(long)]
@@ -124,7 +135,7 @@ pub(crate) enum Commands {
         image: Option<PathBuf>,
         #[arg(long, default_value = "8080")]
         http_port: u16,
-        #[arg(short, long, default_value = "0")]
+        #[arg(short, long, default_value_t = mullama::default_gpu_layers())]
         gpu_layers: i32,
         #[arg(short, long, default_value = "4096")]
         context_size: u32,
@@ -151,7 +162,7 @@ pub(crate) enum Commands {
     },
     Load {
         spec: String,
-        #[arg(short, long, default_value = "0")]
+        #[arg(short, long, default_value_t = mullama::default_gpu_layers())]
         gpu_layers: i32,
         #[arg(short, long, default_value = "4096")]
         context_size: u32,
@@ -266,7 +277,7 @@ pub(crate) enum DaemonAction {
         api_key: Option<String>,
         #[arg(long)]
         require_api_key: bool,
-        #[arg(short, long, default_value = "0")]
+        #[arg(short, long, default_value_t = mullama::default_gpu_layers())]
         gpu_layers: i32,
         #[arg(short, long, default_value = "4096")]
         context_size: u32,

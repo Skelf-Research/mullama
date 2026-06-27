@@ -40,7 +40,15 @@ fn main() {
     println!("cargo:rerun-if-env-changed=MULLAMA_STATIC");
     println!("cargo:rerun-if-env-changed=MULLAMA_LTO");
     println!("cargo:rerun-if-env-changed=MULLAMA_OPENMP");
-    println!("cargo:rustc-env=MULLAMA_LLAMA_BASELINE=ollama-v0.24.0");
+    // The cognisoc fork branch tip the bundled llama.cpp submodule tracks.
+    // Was "ollama-v0.24.0" while the fork carried the Ollama-aligned squash
+    // (commit 55bb64a). After the top-down rebase onto upstream's
+    // `dev-metal` branch (per-op Metal source split + parallel kernel
+    // compile) the fork follows upstream master closely with mullama-side
+    // patches on top; Ollama-0.24.0's diff is largely absorbed into
+    // upstream now (mem_nvml.cpp / mem_hip.cpp / mem_dxgi_pdh.cpp etc.
+    // are all in upstream).
+    println!("cargo:rustc-env=MULLAMA_LLAMA_BASELINE=upstream-dev-metal");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_ARCHS");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_FORCE_MMQ");
     println!("cargo:rerun-if-env-changed=LLAMA_CUDA_NO_PEER_COPY");

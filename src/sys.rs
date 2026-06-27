@@ -477,6 +477,7 @@ pub struct llama_model_params {
     // Keep booleans together at the end to avoid misalignment
     pub vocab_only: c_bool,
     pub use_mmap: c_bool,
+    pub use_direct_io: c_bool,  // dev-metal: O_DIRECT model load
     pub use_mlock: c_bool,
     pub check_tensors: c_bool,
     pub use_extra_bufts: c_bool,
@@ -484,7 +485,23 @@ pub struct llama_model_params {
     pub no_alloc: c_bool,
 }
 
+// New in dev-metal upstream: context type (default vs MTP). Layout-affecting.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum llama_context_type {
+    LLAMA_CONTEXT_TYPE_DEFAULT = 0,
+    LLAMA_CONTEXT_TYPE_MTP = 1,
+}
+
 // llama_context_params must match llama.h exactly!
+//
+// Layout-bumped for dev-metal upstream (post-2180-commits rebase from
+// the Ollama-0.24.0-aligned base): added `n_rs_seq`, `n_outputs_max`,
+// `ctx_type`, and the trailing `samplers` / `n_samplers` / `ctx_other`
+// fields. If you forget any of these, the C side reads garbage at the
+// shift point (we observed `flash_attn_type` getting an out-of-range
+// enum value → `GGML_ABORT("fatal error")` during context init).
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct llama_context_params {
@@ -492,9 +509,12 @@ pub struct llama_context_params {
     pub n_batch: u32,         // logical maximum batch size
     pub n_ubatch: u32,        // physical maximum batch size
     pub n_seq_max: u32,       // max number of sequences
+    pub n_rs_seq: u32,        // recurrent-state snapshots per seq (0 = no rollback)
+    pub n_outputs_max: u32,   // max outputs in a ubatch (0 = n_batch)
     pub n_threads: i32,       // number of threads for generation
     pub n_threads_batch: i32, // number of threads for batch processing
 
+    pub ctx_type: llama_context_type,
     pub rope_scaling_type: llama_rope_scaling_type,
     pub pooling_type: llama_pooling_type,
     pub attention_type: llama_attention_type,
@@ -521,13 +541,20 @@ pub struct llama_context_params {
     pub abort_callback: ggml_abort_callback,
     pub abort_callback_data: *mut c_void,
 
-    // Keep booleans together at the end
+    // Booleans grouped to avoid alignment padding (per upstream comment).
     pub embeddings: c_bool,
     pub offload_kqv: c_bool,
     pub no_perf: c_bool,
     pub op_offload: c_bool,
     pub swa_full: c_bool,
     pub kv_unified: c_bool,
+
+    // Experimental backend-sampler chain plumbing. We never set these from
+    // mullama (we use llama_sampler_chain_init via the high-level Rust
+    // wrapper); kept as opaque pointers to preserve struct size.
+    pub samplers: *mut c_void,
+    pub n_samplers: usize,
+    pub ctx_other: *mut llama_context,
 }
 
 #[repr(C)]

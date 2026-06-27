@@ -67,6 +67,15 @@ impl Daemon {
                 Ok(l) => l,
                 Err(_) => continue, // model not loaded for this session
             };
+            // Phase-C: skip hydration when the model has a batched scheduler
+            // attached. The batcher does its own restore on-demand in
+            // `assign_to_first_idle` (the request handler builds the kv_reuse
+            // via SessionStore::get and the scheduler calls load_state_seq),
+            // so pre-warming the unused legacy pool slot just burns memory
+            // bandwidth for nothing.
+            if loaded.batcher.read().await.is_some() {
+                continue;
+            }
             // Stale blob (config changed) — leave it; the digest gate in `get`
             // would refuse it too. Don't waste a slot on incompatible state.
             if loaded.kv_compat != digest {
@@ -86,7 +95,16 @@ impl Daemon {
             else {
                 continue; // already live, no free slot within headroom, or blob gone
             };
-            let mut ctx = loaded.acquire_context_at(slot).await;
+            // Non-blocking acquire: if the slot is held by a live request, skip
+            // this candidate and retry on the next hydrate tick. Without this,
+            // an Active-mode hydrator queues behind a long decode (holding its
+            // own reservation the whole time), then load_state_seqs into the
+            // slot just as the live decode releases it — guaranteeing the
+            // `state_read_meta` thrash we observed under concurrent load.
+            let Some(mut ctx) = loaded.try_acquire_context_at(slot) else {
+                self.sessions.abort_hydrate(slot, &id);
+                continue;
+            };
             let ok = tokio::task::block_in_place(|| {
                 ctx.kv_cache_clear();
                 ctx.load_state_seq(0, &blob).is_ok()

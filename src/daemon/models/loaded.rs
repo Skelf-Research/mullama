@@ -25,6 +25,12 @@ pub struct LoadedModel {
     /// request falls back to a full decode. See
     /// [`crate::daemon::server::kvstore`].
     pub kv_compat: String,
+    /// Optional Phase-C batched-decode scheduler. When `Some`, request
+    /// handlers should dispatch to it via `Daemon::generate_text_batched`
+    /// instead of the legacy pool path. Enabled via `MULLAMA_BATCHED=1` at
+    /// load time. Tracer-bullet: non-streaming, no session-pinned KV reuse
+    /// in this initial cut.
+    pub batcher: tokio::sync::RwLock<Option<crate::daemon::server::BatcherHandle>>,
     #[cfg(feature = "multimodal")]
     pub mtmd_context: Option<tokio::sync::RwLock<MtmdContext>>,
 }
@@ -53,6 +59,7 @@ impl LoadedModel {
             config,
             stats: ModelStats::new(),
             kv_compat,
+            batcher: tokio::sync::RwLock::new(None),
             mtmd_context: mtmd_context.map(tokio::sync::RwLock::new),
         })
     }
@@ -79,6 +86,7 @@ impl LoadedModel {
             config,
             stats: ModelStats::new(),
             kv_compat,
+            batcher: tokio::sync::RwLock::new(None),
         })
     }
 
@@ -93,6 +101,17 @@ impl LoadedModel {
         slot: usize,
     ) -> tokio::sync::RwLockWriteGuard<'_, Context> {
         self.pool.acquire_at(slot).await
+    }
+
+    /// Non-blocking variant of [`Self::acquire_context_at`]. Returns `None`
+    /// when a writer already holds the slot — used by the background hydrator
+    /// to skip slots that have an in-flight live request rather than queueing
+    /// behind a decode.
+    pub fn try_acquire_context_at(
+        &self,
+        slot: usize,
+    ) -> Option<tokio::sync::RwLockWriteGuard<'_, Context>> {
+        self.pool.try_acquire_at(slot)
     }
 
     pub async fn get_context(&self) -> tokio::sync::RwLockReadGuard<'_, Context> {

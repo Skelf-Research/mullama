@@ -47,6 +47,19 @@ impl ContextPool {
         self.contexts[idx].write().await
     }
 
+    /// Non-blocking acquire of a specific slot. Returns `None` if the slot is
+    /// currently held by another writer. The background hydrator uses this to
+    /// skip slots that have an in-flight request instead of waiting (the live
+    /// decode is what should win the slot; a pre-warm can always retry next
+    /// tick). Without this, an Active-mode hydrator can sit blocked on a slot
+    /// for the duration of a long decode, which both wastes the hydrator's
+    /// turn and racks up `state_read_meta` load-state work that the live
+    /// session's KV then immediately overwrites.
+    pub fn try_acquire_at(&self, idx: usize) -> Option<RwLockWriteGuard<'_, Context>> {
+        let idx = idx.min(self.contexts.len().saturating_sub(1));
+        self.contexts[idx].try_write().ok()
+    }
+
     pub async fn read(&self) -> RwLockReadGuard<'_, Context> {
         let idx = self.next_context.load(Ordering::Relaxed) % self.contexts.len();
         self.contexts[idx].read().await

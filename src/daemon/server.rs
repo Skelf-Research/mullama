@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 
+mod batcher;
 mod builder;
 mod config;
 mod dispatch;
@@ -19,6 +20,7 @@ mod prefetch;
 mod prompt;
 mod session;
 
+pub(crate) use batcher::{spawn as spawn_batcher, BatchRestore, BatchTask, BatcherHandle, ReplyMode};
 pub use builder::DaemonBuilder;
 pub(crate) use kvstore::KvStore;
 pub(crate) use prefetch::PrefetchObserver;
