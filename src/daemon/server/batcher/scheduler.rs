@@ -4,12 +4,13 @@
 //! exactly one owner — the spawned scheduler task. All concurrency comes
 //! from interleaving `N` `seq_id`s in one `llama_decode` per tick.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::mpsc;
 
+use crate::memory_monitor::{MemoryMonitor, MemoryPressure};
 use crate::sys;
 use crate::token::TokenId;
 use crate::{Context, Model, MullamaError};
@@ -157,6 +158,13 @@ pub struct BatchScheduler {
     /// second. Freed in `Drop`.
     batch_buf: sys::llama_batch,
     batch_capacity: usize,
+    /// Shared shutdown flag. When set, the scheduler stops accepting new
+    /// tasks from the channel and drains all active slots before exiting
+    /// the run loop.
+    shutdown: Arc<AtomicBool>,
+    /// Optional system memory monitor. When present and pressure rises to
+    /// Warning or above, idle slots are LRU-evicted to free memory.
+    memory_monitor: Option<Arc<MemoryMonitor>>,
 }
 
 impl Drop for BatchScheduler {
@@ -180,12 +188,11 @@ impl BatchScheduler {
         context: Context,
         n_slots: u32,
         rx: mpsc::Receiver<BatchTask>,
+        shutdown: Arc<AtomicBool>,
+        memory_monitor: Option<Arc<MemoryMonitor>>,
     ) -> Self {
         let slots = (0..n_slots as i32).map(Slot::new).collect();
         let stats = BatcherStats::from_env(n_slots as usize);
-        // Pre-allocate the per-tick batch once; reused for every decode.
-        // Capacity = n_batch (the largest tick the scheduler will ever
-        // build — limited by the same llama.cpp assert we used to crash on).
         let batch_capacity = context.n_batch() as usize;
         let batch_buf = unsafe { sys::llama_batch_init(batch_capacity as i32, 0, 1) };
         Self {
@@ -196,6 +203,8 @@ impl BatchScheduler {
             stats,
             batch_buf,
             batch_capacity,
+            shutdown,
+            memory_monitor,
         }
     }
 
@@ -222,17 +231,33 @@ impl BatchScheduler {
     async fn assign_pending(&mut self) -> Option<()> {
         let any_busy = self.slots.iter().any(|s| !s.is_idle());
         let any_idle = self.slots.iter().any(|s| s.is_idle());
+        let shutting_down = self.shutdown.load(Ordering::Relaxed);
 
         if any_idle && !any_busy {
-            // Fully idle: block on the channel.
+            if shutting_down {
+                return None;
+            }
             let Some(task) = self.rx.recv().await else { return None; };
             self.assign_to_first_idle(task);
         }
-        // Drain remaining tasks non-blockingly.
-        while self.slots.iter().any(|s| s.is_idle()) {
+        // Drain pending tasks into a buffer, up to the number of idle
+        // slots. Then sort: tasks whose session_id already matches a
+        // cached slot (session-hot) come first. This prevents a burst of
+        // cold-start requests from starving an agentic-loop's next turn
+        // which already has warm KV cache waiting.
+        let idle_count = self.slots.iter().filter(|s| s.is_idle()).count();
+        let mut pending: Vec<BatchTask> = Vec::with_capacity(idle_count);
+        while pending.len() < idle_count {
             match self.rx.try_recv() {
                 Ok(task) => {
-                    self.assign_to_first_idle(task);
+                    if shutting_down {
+                        reply_err(
+                            task.reply,
+                            MullamaError::OperationFailed("daemon shutting down".into()),
+                        );
+                        continue;
+                    }
+                    pending.push(task);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -243,7 +268,65 @@ impl BatchScheduler {
                 }
             }
         }
+        // Session-hot-first sort: tasks whose session_id matches a
+        // currently-idle slot's cached session get priority.
+        if !pending.is_empty() {
+            pending.sort_by(|a, b| {
+                let a_hot = a
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|sid| self.slots.iter().any(|s| s.is_idle() && s.cached.as_ref().is_some_and(|c| c.session_id.as_str() == sid)));
+                let b_hot = b
+                    .session_id
+                    .as_deref()
+                    .is_some_and(|sid| self.slots.iter().any(|s| s.is_idle() && s.cached.as_ref().is_some_and(|c| c.session_id.as_str() == sid)));
+                b_hot.cmp(&a_hot)
+            });
+            for task in pending {
+                self.assign_to_first_idle(task);
+            }
+        }
+
+        // Memory-pressure-aware LRU eviction: when system/GPU memory is
+        // under pressure (≥Warning), shed the idle slot that finished
+        // longest ago. This frees its KV-cache allocation without
+        // disturbing active slots. Under Emergency pressure, evict two.
+        if let Some(ref monitor) = self.memory_monitor {
+            let pressure = monitor.pressure();
+            if pressure >= MemoryPressure::Warning {
+                let evict_count = if pressure >= MemoryPressure::Critical { 2 } else { 1 };
+                for _ in 0..evict_count {
+                    let victim = self
+                        .slots
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.is_idle() && s.cached.is_some())
+                        .min_by_key(|(_, s)| s.last_finalized);
+                    if let Some((idx, _)) = victim {
+                        self.evict_slot(idx);
+                    }
+                }
+            }
+        }
+
+        if shutting_down && self.slots.iter().all(|s| s.is_idle()) {
+            return None;
+        }
         Some(())
+    }
+
+    /// Clear a slot's KV cache and cached metadata so its memory can be
+    /// reused by the OS or other allocations. The slot stays Idle — it
+    /// just loses its cached session affinity.
+    fn evict_slot(&mut self, idx: usize) {
+        let slot = &mut self.slots[idx];
+        let id_seq = slot.id_seq;
+        self.context.kv_cache_seq_rm(id_seq, 0, -1);
+        slot.cached = None;
+        tracing::warn!(
+            slot = idx,
+            "LRU-evicted slot due to memory pressure"
+        );
     }
 
     fn assign_to_first_idle(&mut self, task: BatchTask) -> bool {
@@ -381,24 +464,28 @@ impl BatchScheduler {
     fn tick(&mut self) -> Result<(), MullamaError> {
         let tick_start = Instant::now();
         let mut tstats = TickStats::default();
-        // Cancellation pass: any Generating slot whose cancel flag fired
-        // finalizes early so the caller doesn't wait for max_tokens. We
-        // do this BEFORE building the batch so cancelled slots don't
-        // consume a token slot. Prefilling slots are not yet usefully
-        // cancellable (the prompt is in-flight; cancel takes effect on
-        // the next tick once we transition to Generating).
+        // Cancellation pass: any slot whose cancel flag fired finalizes
+        // early so the caller doesn't wait for max_tokens (Generating)
+        // or the rest of a long prompt (Prefilling). We do this BEFORE
+        // building the batch so cancelled slots don't consume a token
+        // slot. Previously only Generating slots were checked — a
+        // multi-chunk prefill could remain un-cancellable for many ticks.
         let mut cancel_finalize: Vec<usize> = Vec::new();
         for (si, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Generating { .. } = slot.state {
-                if slot
-                    .task
-                    .as_ref()
-                    .and_then(|t| t.cancel.as_ref())
-                    .map(|f| f.load(Ordering::Relaxed))
-                    .unwrap_or(false)
-                {
+            let cancelled = slot
+                .task
+                .as_ref()
+                .and_then(|t| t.cancel.as_ref())
+                .map(|f| f.load(Ordering::Relaxed))
+                .unwrap_or(false);
+            if !cancelled {
+                continue;
+            }
+            match slot.state {
+                SlotState::Generating { .. } | SlotState::Prefilling { .. } => {
                     cancel_finalize.push(si);
                 }
+                SlotState::Idle => {}
             }
         }
         for si in cancel_finalize {

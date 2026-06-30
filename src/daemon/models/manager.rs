@@ -1,13 +1,14 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::Mutex as TokioMutex;
 
 use super::config::{detect_quantization_from_path, ModelLoadConfig};
 use super::loaded::LoadedModel;
 use crate::daemon::protocol::ModelInfo;
+use crate::memory_monitor::MemoryMonitor;
 use crate::{Context, ContextParams, Model, ModelParams, MullamaError};
 
 #[cfg(feature = "multimodal")]
@@ -25,6 +26,8 @@ pub struct ModelManager {
     default_model: RwLock<Option<String>>,
     total_tokens: AtomicU64,
     mutation_lock: TokioMutex<()>,
+    shutdown: Mutex<Option<Arc<AtomicBool>>>,
+    memory_monitor: Mutex<Option<Arc<MemoryMonitor>>>,
 }
 
 impl ModelManager {
@@ -34,7 +37,17 @@ impl ModelManager {
             default_model: RwLock::new(None),
             total_tokens: AtomicU64::new(0),
             mutation_lock: TokioMutex::new(()),
+            shutdown: Mutex::new(None),
+            memory_monitor: Mutex::new(None),
         }
+    }
+
+    pub fn set_shutdown(&self, flag: Arc<AtomicBool>) {
+        *self.shutdown.lock() = Some(flag);
+    }
+
+    pub fn set_memory_monitor(&self, monitor: Arc<MemoryMonitor>) {
+        *self.memory_monitor.lock() = Some(monitor);
     }
 
     pub async fn load(&self, config: ModelLoadConfig) -> Result<ModelInfo, MullamaError> {
@@ -211,20 +224,47 @@ impl ModelManager {
             _ => cfg!(target_os = "macos"),
         };
         if batched_enabled {
-            // Build a second context configured for multi-seq batching.
-            // n_slots defaults to 8 (env override) — must be ≤ n_seq_max.
-            // Default slot count tuned to the M1 sweep: 16 lands at 3.58×
-            // scaling with acceptable latency inflation (~4.5×). On
-            // higher-VRAM Apple Silicon (M2/M3 with more unified memory)
-            // this could go higher; user can override via the env var.
+            let alias_for_log = loaded.alias.clone();
+            // Dynamic slot count: derive from available device memory.
+            // On macOS unified-memory systems this uses system memory;
+            // elsewhere falls back to the env var or a sensible default.
+            // Users can always override via MULLAMA_BATCHED_SLOTS.
             let n_slots: u32 = std::env::var("MULLAMA_BATCHED_SLOTS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(if cfg!(target_os = "macos") { 16 } else { 8 });
+                .unwrap_or_else(|| {
+                    let n_layers = loaded.model.n_layer().max(1) as u32;
+                    let n_ctx = batched_seed_params.n_ctx;
+                    let per_slot_kv: u64 = (n_layers as u64) * 256 * (n_ctx as u64);
+                    let model_bytes = loaded.model.size();
+                    let (total, used) = crate::memory_monitor::get_system_memory()
+                        .map(|(u, t)| (t, u))
+                        .unwrap_or((0, 0));
+                    // Allocate at most 80% of available memory for KV slots.
+                    let available = total.saturating_sub(used);
+                    let usable = (available as f64 * 0.8) as u64;
+                    let headroom = usable.saturating_sub(model_bytes);
+                    let computed = if per_slot_kv > 0 {
+                        headroom / per_slot_kv
+                    } else {
+                        16
+                    };
+                    let computed = computed.clamp(4, 32) as u32;
+                    if computed != 16 {
+                        tracing::info!(
+                            model = %alias_for_log,
+                            available_mb = available / (1024 * 1024),
+                            model_mb = model_bytes / (1024 * 1024),
+                            per_slot_kv_mb = per_slot_kv / (1024 * 1024),
+                            computed_slots = computed,
+                            "dynamically sized slot count from device memory"
+                        );
+                    }
+                    computed
+                });
             let mut batched_ctx_params = batched_seed_params;
             batched_ctx_params.n_seq_max = batched_ctx_params.n_seq_max.max(n_slots);
             let model_for_batch = loaded.model.clone();
-            let alias_for_log = loaded.alias.clone();
             let n_seq_max_final = batched_ctx_params.n_seq_max;
             let spawn_result = tokio::task::spawn_blocking(move || {
                 crate::Context::new(model_for_batch.clone(), batched_ctx_params)
@@ -235,10 +275,16 @@ impl ModelManager {
                 MullamaError::OperationFailed(format!("batched context spawn task failed: {}", e))
             })??;
             let (model_for_batch, batched_ctx) = spawn_result;
+            let shutdown = self.shutdown.lock().clone().unwrap_or_else(|| {
+                Arc::new(AtomicBool::new(false))
+            });
+            let memory_monitor = self.memory_monitor.lock().clone();
             let handle = crate::daemon::server::spawn_batcher(
                 model_for_batch,
                 batched_ctx,
                 n_slots,
+                shutdown,
+                memory_monitor,
             );
             *loaded.batcher.write().await = Some(handle);
             tracing::info!(

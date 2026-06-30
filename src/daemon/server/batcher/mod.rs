@@ -159,18 +159,27 @@ impl BatcherHandle {
 ///
 /// `n_slots` is the number of `seq_id`s the scheduler will multiplex; it
 /// must be ≤ the context's configured `n_seq_max`. Typical: equal to it.
-pub fn spawn(model: Arc<Model>, context: Context, n_slots: u32) -> BatcherHandle {
-    // Bounded queue: back-pressure protects the scheduler from memory blow-up
-    // under load. 256 is a generous bound for typical request rates and small
-    // enough that an unhealthy scheduler can't queue a working set of
-    // half-GB prompts.
+///
+/// `shutdown` is the daemon-wide shutdown flag. When set, the scheduler
+/// stops accepting new tasks and drains all active slots before exiting
+/// its run loop.
+///
+/// `memory_monitor` enables memory-pressure-aware LRU slot eviction when
+/// system/GPU memory runs low.
+pub fn spawn(
+    model: Arc<Model>,
+    context: Context,
+    n_slots: u32,
+    shutdown: Arc<AtomicBool>,
+    memory_monitor: Option<Arc<crate::memory_monitor::MemoryMonitor>>,
+) -> BatcherHandle {
     let (tx, rx) = mpsc::channel::<BatchTask>(256);
     let handle = BatcherHandle {
         tx,
         model: model.clone(),
     };
     tokio::spawn(async move {
-        let mut sched = BatchScheduler::new(model, context, n_slots, rx);
+        let mut sched = BatchScheduler::new(model, context, n_slots, rx, shutdown, memory_monitor);
         sched.run().await;
     });
     handle
