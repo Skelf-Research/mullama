@@ -29,11 +29,11 @@ request-handler level when `session_id.is_some()`, apply
 also keeps the `slot.cached.tokens` length bounded.
 
 ### C3 — Cancellation doesn't reach in-flight prefill chunks
-The scheduler checks `cancel` flag for `Generating` slots only. A slot mid-
-prefill (e.g. on a multi-thousand-token prompt arriving in 512-token
-chunks) keeps prefilling for many ticks before reaching `Generating` state
-— cancellation is delayed by the rest of the prefill. **Fix**: also check
-the flag in the `Prefilling` arm; if set, finalize_err the slot and skip.
+**Status: Fixed.** The scheduler's cancellation pass now checks both
+`Generating` and `Prefilling` slots. A slot mid-prefill (e.g. on a
+multi-thousand-token prompt arriving in 512-token chunks) finalizes
+immediately when its cancel flag is set, instead of waiting for the
+rest of the prefill.
 
 ## High-leverage perf (1-2 days each)
 
@@ -123,16 +123,19 @@ sized for `n_batch`, reuse across ticks (zero `n_tokens` each tick).
 ## Scheduling / fairness
 
 ### S1 — FIFO queue + no priorities
-The mpsc queue is plain FIFO. A burst of fresh requests can push an
-agentic-loop's next turn behind newcomers, breaking expectation. **Fix**:
-priority queue at `assign_pending`; bump priority for tasks whose
-`session_id` already has a hot slot (cache locality + fairness).
+**Status: Fixed.** `assign_pending` now drains up to `idle_count` tasks
+from the channel into a local buffer, sorts them session-hot-first
+(tasks whose `session_id` matches a cached idle slot get priority),
+then assigns in sorted order. This prevents a burst of cold-start
+requests from starving an agentic-loop's next turn which already has
+warm KV cache waiting.
 
 ### S2 — Slot count is fixed at scheduler construction
-`MULLAMA_BATCHED_SLOTS=16` is set once. On macOS unified memory, slots
-cost ~100 MB KV each; if a model loads on a 32 GB Mac vs a 16 GB Mac, we
-should size differently. **Fix**: derive default from available device
-memory at startup.
+**Status: Fixed.** `n_slots` is now derived from available device memory
+at startup. On macOS unified-memory systems this uses
+`get_system_memory()`; the formula is
+`n_slots = (available * 0.8 - model_size) / (n_layers * 256 * n_ctx)`,
+clamped to [4, 32]. Users can still override via `MULLAMA_BATCHED_SLOTS`.
 
 ### S3 — Cross-model serialization not coordinated
 With N `LoadedModel`s, each has its own `BatchScheduler` task. Two models
@@ -151,10 +154,12 @@ elegance; perf delta likely tiny.
 ## Robustness
 
 ### R1 — Memory pressure not observed by scheduler
-The `MemoryMonitor` exists but the batcher never queries it. If we run
-near VRAM/RAM limit, we'll OOM-kill rather than gracefully shedding the
-oldest idle slot. **Fix**: scheduler-side LRU eviction of idle slots
-under memory pressure.
+**Status: Fixed.** The `MemoryMonitor` is now wired into the
+`BatchScheduler`. When pressure rises to `Warning`, the scheduler
+LRU-evicts the idle slot that finished longest ago (clearing its KV
+cache via `kv_cache_seq_rm`). Under `Critical` pressure, two slots are
+evicted per pass. Each `Slot` now carries a `last_finalized` timestamp
+for LRU tracking.
 
 ### R2 — Errors in the scheduler tick fail *all* in-flight slots
 `run()` catches a tick error and calls `finalize_err` on every active slot
@@ -164,9 +169,12 @@ isolate the failing slot by dropping its tokens from the batch and retrying
 the tick.
 
 ### R3 — No graceful shutdown wait for in-flight requests
-SIGTERM kills the daemon; in-flight slots' clients get a closed connection
-mid-stream. **Fix**: drain the scheduler — stop accepting new tasks,
-let active slots finish (with timeout), then exit.
+**Status: Fixed.** The `BatchScheduler` now receives the daemon-wide
+`shutdown: Arc<AtomicBool>` flag. When set, the scheduler stops
+accepting new tasks (rejecting any that arrive during the drain with a
+"daemon shutting down" error) and continues ticking until all active
+slots finish naturally, then exits. This lets `mullama daemon stop`
+drain in-flight requests instead of killing them mid-stream.
 
 ## Code-shape / maintainability
 

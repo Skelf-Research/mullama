@@ -47,6 +47,10 @@ pub(super) struct Slot {
     /// KV and prefill only the divergent tail. `None` = slot is fresh /
     /// just-cleared / belonged to no session.
     pub(super) cached: Option<SlotCache>,
+    /// Wall-clock timestamp of the last `finalize` call. Used for
+    /// memory-pressure-aware LRU eviction: the slot that finished longest
+    /// ago is the best candidate to evict when memory is tight.
+    pub(super) last_finalized: Instant,
 }
 
 pub(super) struct SlotCache {
@@ -98,6 +102,7 @@ impl Slot {
             state: SlotState::Idle,
             task: None,
             cached: None,
+            last_finalized: Instant::now(),
         }
     }
 
@@ -289,15 +294,11 @@ impl Slot {
                 }));
             }
             ReplySink::Streaming { tx, .. } => {
-                // Closing the sender signals "stream ended". The consumer
-                // recovers the per-stream metadata (prompt/completion
-                // counts, timings) from elsewhere — for the legacy SSE
-                // wrapper this is a stand-in for the same close signal
-                // `generate_text_streaming` already produces.
                 drop(tx);
             }
             ReplySink::Buffered(None) => {} // already replied (shouldn't happen)
         }
+        self.last_finalized = Instant::now();
     }
 
     pub(super) fn finalize_err(&mut self, err: MullamaError) {
@@ -316,5 +317,6 @@ impl Slot {
             }
         }
         self.state = SlotState::Idle;
+        self.last_finalized = Instant::now();
     }
 }

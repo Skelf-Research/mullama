@@ -66,6 +66,8 @@ pub struct Daemon {
 impl Daemon {
     /// Create a new daemon
     pub fn new(config: DaemonConfig) -> Self {
+        let shutdown = Arc::new(AtomicBool::new(false));
+
         let memory_monitor = if config.resources.enable_memory_monitoring {
             let monitor = MemoryMonitor::new(config.resources.memory_config.clone());
             monitor.start();
@@ -103,11 +105,17 @@ impl Daemon {
             providers.push(Box::new(hf));
         }
 
+        let models = Arc::new(ModelManager::new());
+        models.set_shutdown(shutdown.clone());
+        if let Some(ref monitor) = memory_monitor {
+            models.set_memory_monitor(Arc::clone(monitor));
+        }
+
         Self {
             config,
-            models: Arc::new(ModelManager::new()),
+            models,
             start_time: Instant::now(),
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown,
             active_requests: Arc::new(AtomicU32::new(0)),
             total_requests: AtomicU64::new(0),
             cancellations: Arc::new(DashMap::new()),
