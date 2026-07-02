@@ -133,7 +133,7 @@ See [the release docs](https://docs.cognisoc.com/mullama/contributing/releasing/
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

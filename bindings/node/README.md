@@ -330,7 +330,7 @@ MULLAMA_TEST_MODEL=/path/to/model.gguf npm test
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

@@ -2,7 +2,7 @@
     "name": "mullama/mullama",
     "description": "High-performance PHP bindings for the Mullama LLM library - local inference with GGUF models",
     "type": "library",
-    "license": "MIT OR Apache-2.0",
+    "license": "MIT",
     "homepage": "https://mullama.cognisoc.com",
     "support": {
         "issues": "https://github.com/cognisoc/mullama/issues",

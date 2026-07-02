@@ -229,7 +229,7 @@ Yes — `cargo build --release -p mullama-ffi` produces `libmullama_ffi.a` along
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

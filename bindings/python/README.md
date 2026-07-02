@@ -302,7 +302,7 @@ MULLAMA_TEST_MODEL=/path/to/model.gguf pytest tests/ -v
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

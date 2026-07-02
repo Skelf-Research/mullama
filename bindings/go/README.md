@@ -296,7 +296,7 @@ GOPROXY=https://proxy.golang.org go list -m github.com/cognisoc/mullama@v0.3.1
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

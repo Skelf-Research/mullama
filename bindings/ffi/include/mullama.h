@@ -5,7 +5,7 @@
  * Node.js, Python, PHP, Go, and other languages.
  *
  * Copyright (c) 2025-2026 Mullama Contributors
- * Licensed under MIT OR Apache-2.0
+ * Licensed under MIT
  */
 
 

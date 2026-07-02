@@ -298,7 +298,7 @@ MULLAMA_TEST_MODEL=./model.gguf composer test
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ---
 

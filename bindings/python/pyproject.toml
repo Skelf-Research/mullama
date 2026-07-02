@@ -7,7 +7,7 @@ name = "mullama"
 version = "0.3.1"
 description = "Python bindings for Mullama LLM library - high-performance local LLM inference"
 readme = "README.md"
-license = { text = "MIT OR Apache-2.0" }
+license = { text = "MIT" }
 requires-python = ">=3.8"
 authors = [
     { name = "Cognisoc", email = "support@cognisoc.com" }

@@ -63,7 +63,7 @@
     "napi"
   ],
   "author": "Cognisoc <support@cognisoc.com>",
-  "license": "MIT OR Apache-2.0",
+  "license": "MIT",
   "homepage": "https://docs.cognisoc.com/mullama/bindings/nodejs/",
   "bugs": {
     "url": "https://github.com/cognisoc/mullama/issues"
