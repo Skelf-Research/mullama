@@ -230,3 +230,20 @@ Yes — `cargo build --release -p mullama-ffi` produces `libmullama_ffi.a` along
 ## License
 
 MIT OR Apache-2.0
+
+---
+
+## Part of the Cognisoc stack
+
+**[Cognisoc](https://www.cognisoc.com)** builds open-source LLM inference for every language and every device — *LLM inference, everywhere.* This project is one of six:
+
+| Project | Language | What it does |
+|---|---|---|
+| mullama **(this project)** | Python · Node · Go · PHP · Rust · C | Local LLM runtime & server, drop-in Ollama alternative |
+| [unillm](https://github.com/cognisoc/unillm) | Rust | Modular inference runtime, 47 architectures |
+| [llamafu](https://github.com/cognisoc/llamafu) | Dart / Flutter | On-device inference for mobile apps |
+| [llmdot](https://github.com/cognisoc/llmdot) | C# / .NET | Local GGUF inference for the .NET ecosystem |
+| [cllm](https://github.com/cognisoc/cllm) | C | Bare-metal unikernel — boots straight into inference |
+| [zigllm](https://github.com/cognisoc/zigllm) | Zig | Learn LLMs by building one, from tensors to text |
+
+🌐 [cognisoc.com](https://www.cognisoc.com) · 📚 [docs.cognisoc.com](https://docs.cognisoc.com) · 🐙 [github.com/cognisoc](https://github.com/cognisoc)

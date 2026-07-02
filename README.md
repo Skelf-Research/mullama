@@ -7,6 +7,8 @@
 [![Documentation](https://img.shields.io/badge/docs-cognisoc.com-blue)](https://docs.cognisoc.com/mullama/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**[Website](https://mullama.cognisoc.com)** · **[Docs](https://docs.cognisoc.com/mullama/)** · **[GitHub](https://github.com/cognisoc/mullama)**
+
 ## What is Mullama?
 
 Mullama is a local LLM runtime built on `llama.cpp` that runs GGUF models — Llama 3.2, Qwen 2.5, DeepSeek R1, Mistral, Phi 3, Gemma 2, LLaVA, and any other GGUF file from Hugging Face — directly inside your application. It exposes the same CLI as Ollama (`mullama run`, `pull`, `serve`, `chat`) plus native bindings for **Rust, Python, Node.js, Go, PHP, and C/C++**, so you can either run it as a server with OpenAI- and Anthropic-compatible HTTP APIs, or embed the inference engine in-process with zero HTTP overhead.
@@ -217,3 +219,20 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## Part of the Cognisoc stack
+
+**[Cognisoc](https://www.cognisoc.com)** builds open-source LLM inference for every language and every device — *LLM inference, everywhere.* This project is one of six:
+
+| Project | Language | What it does |
+|---|---|---|
+| mullama **(this project)** | Python · Node · Go · PHP · Rust · C | Local LLM runtime & server, drop-in Ollama alternative |
+| [unillm](https://github.com/cognisoc/unillm) | Rust | Modular inference runtime, 47 architectures |
+| [llamafu](https://github.com/cognisoc/llamafu) | Dart / Flutter | On-device inference for mobile apps |
+| [llmdot](https://github.com/cognisoc/llmdot) | C# / .NET | Local GGUF inference for the .NET ecosystem |
+| [cllm](https://github.com/cognisoc/cllm) | C | Bare-metal unikernel — boots straight into inference |
+| [zigllm](https://github.com/cognisoc/zigllm) | Zig | Learn LLMs by building one, from tensors to text |
+
+🌐 [cognisoc.com](https://www.cognisoc.com) · 📚 [docs.cognisoc.com](https://docs.cognisoc.com) · 🐙 [github.com/cognisoc](https://github.com/cognisoc)
