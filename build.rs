@@ -286,9 +286,21 @@ fn setup_macos(target_arch: &str) {
         println!("cargo:rustc-link-lib=framework=MetalKit");
         println!("cargo:rustc-link-lib=framework=Foundation");
 
-        // Enable Metal by default on Apple Silicon
+        // Enable Metal by default on Apple Silicon — but only when the Metal
+        // shader compiler is actually usable. Building the ggml-metal backend
+        // needs the Metal Toolchain (`xcrun -sdk macosx metal`); on machines
+        // where it isn't installed the kernels fail to compile and the whole
+        // build breaks. Detect it and fall back to a CPU-only build otherwise.
         if env::var("LLAMA_METAL").is_err() {
-            env::set_var("LLAMA_METAL", "1");
+            if metal_toolchain_available() {
+                env::set_var("LLAMA_METAL", "1");
+            } else {
+                println!(
+                    "cargo:warning=Metal Toolchain not found; building llama.cpp CPU-only. \
+                     Install it with `xcodebuild -downloadComponent MetalToolchain` and rebuild \
+                     (or set LLAMA_METAL=1 to force)."
+                );
+            }
         }
     }
 
@@ -302,6 +314,17 @@ fn setup_macos(target_arch: &str) {
             println!("cargo:rustc-env=CXXFLAGS=-O3 -march=native");
         }
     }
+}
+
+/// Returns true if the Metal shader compiler can actually run. `xcrun --find`
+/// is not enough — the stub may exist while the toolchain component is not
+/// installed — so we invoke the compiler and check it succeeds.
+fn metal_toolchain_available() -> bool {
+    std::process::Command::new("xcrun")
+        .args(["-sdk", "macosx", "metal", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn setup_linux() {
